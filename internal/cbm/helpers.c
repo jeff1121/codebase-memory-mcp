@@ -26,6 +26,27 @@ enum {
 #include <ctype.h>
 #include <stdio.h>
 
+// --- Portable substring search ---
+
+// Hand-rolled memmem: does not rely on the system memmem (GNU/BSD-only;
+// msys2-clang on Windows lacks it), so it compiles identically everywhere.
+void *cbm_memmem(const void *haystack, size_t haystack_len, const void *needle, size_t needle_len) {
+    if (needle_len == 0) {
+        return (void *)haystack;
+    }
+    if (needle_len > haystack_len) {
+        return NULL;
+    }
+    const char *h = (const char *)haystack;
+    size_t last = haystack_len - needle_len;
+    for (size_t i = 0; i <= last; i++) {
+        if (memcmp(h + i, needle, needle_len) == 0) {
+            return (void *)(h + i);
+        }
+    }
+    return NULL;
+}
+
 // --- Node text extraction ---
 
 char *cbm_node_text(CBMArena *a, TSNode node, const char *source) {
@@ -293,11 +314,11 @@ static bool kind_in_set_strcmp(TSNode node, const char *const *types) {
 }
 
 typedef struct {
-    const TSLanguage *lang;    /* NULL = empty slot */
-    const char *const *types;  /* identity key (static spec array pointer) */
-    uint64_t *bits;            /* symbol bitset; NULL when exact==false */
-    uint32_t nsyms;            /* ts_language_symbol_count(lang) */
-    bool exact;                /* false → every name resolved; use strcmp fallback */
+    const TSLanguage *lang;   /* NULL = empty slot */
+    const char *const *types; /* identity key (static spec array pointer) */
+    uint64_t *bits;           /* symbol bitset; NULL when exact==false */
+    uint32_t nsyms;           /* ts_language_symbol_count(lang) */
+    bool exact;               /* false → every name resolved; use strcmp fallback */
 } ks_slot_t;
 
 enum { KS_SLOTS = 512, KS_SLOT_MASK = 511, KS_PROBE = 8 };
@@ -426,15 +447,29 @@ int cbm_count_branching(TSNode node, const char **branching_types) {
 
 // Loop node-type names across tree-sitter grammars, for loop-nesting depth.
 bool cbm_is_loop_node_type(const char *kind) {
-    static const char *const loops[] = {
-        "for_statement",       "while_statement",        "do_statement",
-        "do_while_statement",  "for_in_statement",       "for_of_statement",
-        "for_each_statement",  "foreach_statement",      "enhanced_for_statement",
-        "for_range_loop",      "c_style_for_statement",  "for_expression",
-        "while_expression",    "loop_expression",        "while_let_expression",
-        "repeat_statement",    "repeat_while_statement", "until",
-        "while_modifier",      "until_modifier",         "for",
-        "while",               NULL};
+    static const char *const loops[] = {"for_statement",
+                                        "while_statement",
+                                        "do_statement",
+                                        "do_while_statement",
+                                        "for_in_statement",
+                                        "for_of_statement",
+                                        "for_each_statement",
+                                        "foreach_statement",
+                                        "enhanced_for_statement",
+                                        "for_range_loop",
+                                        "c_style_for_statement",
+                                        "for_expression",
+                                        "while_expression",
+                                        "loop_expression",
+                                        "while_let_expression",
+                                        "repeat_statement",
+                                        "repeat_while_statement",
+                                        "until",
+                                        "while_modifier",
+                                        "until_modifier",
+                                        "for",
+                                        "while",
+                                        NULL};
     for (const char *const *l = loops; *l; l++) {
         if (strcmp(kind, *l) == 0) {
             return true;
@@ -448,18 +483,18 @@ bool cbm_is_loop_node_type(const char *kind) {
 // smell, so unmatched grammars simply report 0 (never wrong, just silent).
 static bool is_member_access_node(const char *kind) {
     static const char *const access[] = {"member_expression",
-                                          "field_expression",
-                                          "selector_expression",
-                                          "field_access",
-                                          "member_access_expression",
-                                          "navigation_expression",
-                                          "attribute",
-                                          "subscript_expression",
-                                          "subscript",
-                                          "index_expression",
-                                          "element_access_expression",
-                                          "scoped_identifier",
-                                          NULL};
+                                         "field_expression",
+                                         "selector_expression",
+                                         "field_access",
+                                         "member_access_expression",
+                                         "navigation_expression",
+                                         "attribute",
+                                         "subscript_expression",
+                                         "subscript",
+                                         "index_expression",
+                                         "element_access_expression",
+                                         "scoped_identifier",
+                                         NULL};
     for (const char *const *a = access; *a; a++) {
         if (strcmp(kind, *a) == 0) {
             return true;

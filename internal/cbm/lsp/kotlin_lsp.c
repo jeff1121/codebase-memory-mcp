@@ -61,11 +61,11 @@
 static void kt_resolve_calls_in_node(KotlinLSPContext *ctx, TSNode node);
 static void kt_process_class_decl(KotlinLSPContext *ctx, TSNode node);
 static void kt_process_object_decl(KotlinLSPContext *ctx, TSNode node, bool is_companion,
-                                const char *outer_class_qn);
+                                   const char *outer_class_qn);
 static void kt_process_function_decl(KotlinLSPContext *ctx, TSNode node);
 static void kt_process_property_decl(KotlinLSPContext *ctx, TSNode node);
 static void kt_register_class_members(KotlinLSPContext *ctx, const char *class_qn, TSNode body,
-                                   bool is_object);
+                                      bool is_object);
 static const CBMType *kt_eval_call_expression_type(KotlinLSPContext *ctx, TSNode node);
 static const CBMType *kt_eval_navigation_expression_type(KotlinLSPContext *ctx, TSNode node);
 static const CBMType *kt_eval_user_type(KotlinLSPContext *ctx, TSNode node);
@@ -81,7 +81,7 @@ static TSNode kt_field_named(TSNode parent, const char *field);
 static bool kt_node_is(TSNode n, const char *kind);
 static bool kt_node_kind_in(TSNode n, const char *const *kinds);
 static const char *kt_resolve_in_default_imports(KotlinLSPContext *ctx, const char *name,
-                                              CBMKotlinUseKind kind);
+                                                 CBMKotlinUseKind kind);
 static const CBMType *kt_try_smart_cast(KotlinLSPContext *ctx, TSNode call_or_nav);
 
 /* ── helpers ──────────────────────────────────────────────────────── */
@@ -263,13 +263,12 @@ static const CBMType *kt_unwrap_nullable(const CBMType *t) {
 
 /* Append a CBMResolvedCall to the output array. */
 static void kt_emit_resolved(KotlinLSPContext *ctx, const char *callee_qn, const char *strategy,
-                          float confidence) {
+                             float confidence) {
     if (ctx->debug) {
         fprintf(stderr, "[kotlin_lsp] EMIT %s -> %s [%s %.2f] (resolved_calls=%p enc=%s)\n",
                 ctx->enclosing_func_qn ? ctx->enclosing_func_qn : "(null)",
-                callee_qn ? callee_qn : "(null)",
-                strategy ? strategy : "(null)", (double)confidence,
-                (void *)ctx->resolved_calls,
+                callee_qn ? callee_qn : "(null)", strategy ? strategy : "(null)",
+                (double)confidence, (void *)ctx->resolved_calls,
                 ctx->enclosing_func_qn ? ctx->enclosing_func_qn : "(null)");
     }
     if (!ctx->resolved_calls || !ctx->enclosing_func_qn || !callee_qn) {
@@ -312,8 +311,8 @@ static void kt_emit_resolved(KotlinLSPContext *ctx, const char *callee_qn, const
  * Returns the inner type node and writes its raw text to `recv_text_out`
  * (arena-allocated). Returns null-node if the function is not an
  * extension function. */
-static TSNode kt_find_extension_receiver(KotlinLSPContext *ctx, TSNode func_node,
-                                         TSNode name_node, char **recv_text_out) {
+static TSNode kt_find_extension_receiver(KotlinLSPContext *ctx, TSNode func_node, TSNode name_node,
+                                         char **recv_text_out) {
     TSNode null_node;
     memset(&null_node, 0, sizeof(null_node));
     if (recv_text_out) {
@@ -333,8 +332,8 @@ static TSNode kt_find_extension_receiver(KotlinLSPContext *ctx, TSNode func_node
     /* Walk named children for a type-shaped node before the name. */
     uint32_t name_start = ts_node_start_byte(name_node);
     uint32_t nc = ts_node_named_child_count(func_node);
-    static const char *type_kinds[] = {"user_type", "nullable_type", "non_nullable_type",
-                                       "parenthesized_type", "type", NULL};
+    static const char *type_kinds[] = {"user_type",          "nullable_type", "non_nullable_type",
+                                       "parenthesized_type", "type",          NULL};
     for (uint32_t i = 0; i < nc; i++) {
         TSNode c = ts_node_named_child(func_node, i);
         if (ts_node_is_null(c)) {
@@ -371,8 +370,13 @@ static TSNode kt_find_return_type(TSNode func_node) {
     TSNode params = kt_child_kind(func_node, "function_value_parameters");
     uint32_t after_params = ts_node_is_null(params) ? 0 : ts_node_end_byte(params);
     uint32_t nc = ts_node_named_child_count(func_node);
-    static const char *type_kinds[] = {"user_type", "nullable_type", "non_nullable_type",
-                                       "parenthesized_type", "type", "function_type", NULL};
+    static const char *type_kinds[] = {"user_type",
+                                       "nullable_type",
+                                       "non_nullable_type",
+                                       "parenthesized_type",
+                                       "type",
+                                       "function_type",
+                                       NULL};
     for (uint32_t i = 0; i < nc; i++) {
         TSNode c = ts_node_named_child(func_node, i);
         if (ts_node_is_null(c)) {
@@ -424,9 +428,8 @@ static const CBMType *kt_build_func_sig_with_return(KotlinLSPContext *ctx,
 /* ── public API ───────────────────────────────────────────────────── */
 
 void kotlin_lsp_init(KotlinLSPContext *ctx, CBMArena *arena, const char *source, int source_len,
-                     const CBMTypeRegistry *registry, const char *package_qn,
-                     const char *module_qn, const char *project_name, const char *rel_path,
-                     CBMResolvedCallArray *out) {
+                     const CBMTypeRegistry *registry, const char *package_qn, const char *module_qn,
+                     const char *project_name, const char *rel_path, CBMResolvedCallArray *out) {
     memset(ctx, 0, sizeof(KotlinLSPContext));
     ctx->arena = arena;
     ctx->source = source;
@@ -442,8 +445,8 @@ void kotlin_lsp_init(KotlinLSPContext *ctx, CBMArena *arena, const char *source,
         (const char **)cbm_arena_alloc(arena, sizeof(const char *) * (size_t)ctx->import_cap);
     ctx->import_targets =
         (const char **)cbm_arena_alloc(arena, sizeof(const char *) * (size_t)ctx->import_cap);
-    ctx->import_kinds = (CBMKotlinUseKind *)cbm_arena_alloc(
-        arena, sizeof(CBMKotlinUseKind) * (size_t)ctx->import_cap);
+    ctx->import_kinds = (CBMKotlinUseKind *)cbm_arena_alloc(arena, sizeof(CBMKotlinUseKind) *
+                                                                       (size_t)ctx->import_cap);
     ctx->import_count = 0;
     ctx->debug = (getenv("CBM_LSP_DEBUG") != NULL);
 
@@ -487,21 +490,18 @@ void kotlin_lsp_add_import(KotlinLSPContext *ctx, const char *local_name, const 
     }
     if (ctx->import_count >= ctx->import_cap) {
         int new_cap = ctx->import_cap * 2;
-        const char **new_locals = (const char **)cbm_arena_alloc(
-            ctx->arena, sizeof(const char *) * (size_t)new_cap);
-        const char **new_targets = (const char **)cbm_arena_alloc(
-            ctx->arena, sizeof(const char *) * (size_t)new_cap);
+        const char **new_locals =
+            (const char **)cbm_arena_alloc(ctx->arena, sizeof(const char *) * (size_t)new_cap);
+        const char **new_targets =
+            (const char **)cbm_arena_alloc(ctx->arena, sizeof(const char *) * (size_t)new_cap);
         CBMKotlinUseKind *new_kinds = (CBMKotlinUseKind *)cbm_arena_alloc(
             ctx->arena, sizeof(CBMKotlinUseKind) * (size_t)new_cap);
         if (!new_locals || !new_targets || !new_kinds) {
             return;
         }
-        memcpy(new_locals, ctx->import_locals,
-               sizeof(const char *) * (size_t)ctx->import_count);
-        memcpy(new_targets, ctx->import_targets,
-               sizeof(const char *) * (size_t)ctx->import_count);
-        memcpy(new_kinds, ctx->import_kinds,
-               sizeof(CBMKotlinUseKind) * (size_t)ctx->import_count);
+        memcpy(new_locals, ctx->import_locals, sizeof(const char *) * (size_t)ctx->import_count);
+        memcpy(new_targets, ctx->import_targets, sizeof(const char *) * (size_t)ctx->import_count);
+        memcpy(new_kinds, ctx->import_kinds, sizeof(CBMKotlinUseKind) * (size_t)ctx->import_count);
         ctx->import_locals = new_locals;
         ctx->import_targets = new_targets;
         ctx->import_kinds = new_kinds;
@@ -627,7 +627,7 @@ const char *kotlin_resolve_function_name(KotlinLSPContext *ctx, const char *name
 }
 
 static const char *kt_resolve_in_default_imports(KotlinLSPContext *ctx, const char *name,
-                                              CBMKotlinUseKind kind) {
+                                                 CBMKotlinUseKind kind) {
     int n = 0;
     const char *const *defs = cbm_kotlin_default_import_packages(&n);
     for (int i = 0; i < n; i++) {
@@ -677,11 +677,16 @@ static bool kt_method_returns_self(const char *class_qn, const char *method) {
         strcmp(class_qn, "kotlin.CharSequence") == 0 ||
         strcmp(class_qn, "kotlin.text.StringBuilder") == 0) {
         const char *self_returning[] = {
-            "trim",         "trimStart",         "trimEnd",      "trimIndent",
-            "trimMargin",   "uppercase",         "lowercase",    "replace",
-            "padStart",     "padEnd",            "repeat",       "removePrefix",
-            "removeSuffix", "removeSurrounding", "replaceFirst", "reversed",
-            "substring",    "intern",            "format",       "plus",
+            "trim",         "trimStart",
+            "trimEnd",      "trimIndent",
+            "trimMargin",   "uppercase",
+            "lowercase",    "replace",
+            "padStart",     "padEnd",
+            "repeat",       "removePrefix",
+            "removeSuffix", "removeSurrounding",
+            "replaceFirst", "reversed",
+            "substring",    "intern",
+            "format",       "plus",
             "subSequence",  NULL,
         };
         for (int i = 0; self_returning[i]; i++) {
@@ -693,13 +698,13 @@ static bool kt_method_returns_self(const char *class_qn, const char *method) {
     if (strstr(class_qn, ".List") || strstr(class_qn, ".MutableList") ||
         strstr(class_qn, ".Iterable") || strstr(class_qn, ".Collection")) {
         const char *self_returning[] = {
-            "filter",     "filterNot",         "filterNotNull",      "filterIndexed",
-            "map",        "mapNotNull",        "mapIndexed",         "flatMap",
-            "sorted",     "sortedBy",          "sortedDescending",   "sortedByDescending",
-            "sortedWith", "reversed",          "distinct",           "distinctBy",
-            "take",       "takeLast",          "takeWhile",          "takeLastWhile",
-            "drop",       "dropLast",          "dropWhile",          "dropLastWhile",
-            "shuffled",   "asReversed",        "toList",             "toMutableList",
+            "filter",     "filterNot",  "filterNotNull",    "filterIndexed",
+            "map",        "mapNotNull", "mapIndexed",       "flatMap",
+            "sorted",     "sortedBy",   "sortedDescending", "sortedByDescending",
+            "sortedWith", "reversed",   "distinct",         "distinctBy",
+            "take",       "takeLast",   "takeWhile",        "takeLastWhile",
+            "drop",       "dropLast",   "dropWhile",        "dropLastWhile",
+            "shuffled",   "asReversed", "toList",           "toMutableList",
             "ifEmpty",    NULL,
         };
         for (int i = 0; self_returning[i]; i++) {
@@ -744,12 +749,11 @@ static const CBMType *kt_stdlib_method_return_type(KotlinLSPContext *ctx, const 
         strcmp(method, "contains") == 0 || strcmp(method, "containsAll") == 0 ||
         strcmp(method, "containsKey") == 0 || strcmp(method, "containsValue") == 0 ||
         strcmp(method, "startsWith") == 0 || strcmp(method, "endsWith") == 0 ||
-        strcmp(method, "equals") == 0 || strcmp(method, "any") == 0 ||
-        strcmp(method, "all") == 0 || strcmp(method, "none") == 0 ||
-        strcmp(method, "matches") == 0 || strcmp(method, "isDigit") == 0 ||
-        strcmp(method, "isLetter") == 0 || strcmp(method, "isWhitespace") == 0 ||
-        strcmp(method, "isFile") == 0 || strcmp(method, "isDirectory") == 0 ||
-        strcmp(method, "exists") == 0) {
+        strcmp(method, "equals") == 0 || strcmp(method, "any") == 0 || strcmp(method, "all") == 0 ||
+        strcmp(method, "none") == 0 || strcmp(method, "matches") == 0 ||
+        strcmp(method, "isDigit") == 0 || strcmp(method, "isLetter") == 0 ||
+        strcmp(method, "isWhitespace") == 0 || strcmp(method, "isFile") == 0 ||
+        strcmp(method, "isDirectory") == 0 || strcmp(method, "exists") == 0) {
         return cbm_type_named(ctx->arena, "kotlin.Boolean");
     }
     if (strcmp(method, "sum") == 0 || strcmp(method, "sumOf") == 0 ||
@@ -1012,9 +1016,13 @@ static void kt_collect_top_level_decls(KotlinLSPContext *ctx, TSNode root) {
             TSNode rhs = kt_field_named(c, "type");
             if (ts_node_is_null(rhs)) {
                 /* Find first type-shaped named child after the name */
-                static const char *type_kinds[] = {"user_type", "nullable_type",
-                                                   "non_nullable_type", "parenthesized_type",
-                                                   "type", "function_type", NULL};
+                static const char *type_kinds[] = {"user_type",
+                                                   "nullable_type",
+                                                   "non_nullable_type",
+                                                   "parenthesized_type",
+                                                   "type",
+                                                   "function_type",
+                                                   NULL};
                 uint32_t name_end = ts_node_end_byte(name);
                 uint32_t kc = ts_node_named_child_count(c);
                 for (uint32_t j = 0; j < kc; j++) {
@@ -1209,9 +1217,9 @@ static void kt_process_class_decl(KotlinLSPContext *ctx, TSNode node) {
                 if (ts_node_is_null(type_node)) {
                     type_node = kt_child_kind(p, "nullable_type");
                 }
-                const CBMType *ft =
-                    ts_node_is_null(type_node) ? cbm_type_unknown()
-                                               : kotlin_parse_type_node(ctx, type_node);
+                const CBMType *ft = ts_node_is_null(type_node)
+                                        ? cbm_type_unknown()
+                                        : kotlin_parse_type_node(ctx, type_node);
                 fnames[field_count] = fname;
                 ftypes[field_count] = ft;
                 field_count++;
@@ -1260,8 +1268,7 @@ static void kt_process_class_decl(KotlinLSPContext *ctx, TSNode node) {
                 for (uint32_t k = 0; k < mnc; k++) {
                     TSNode mc = ts_node_named_child(m, k);
                     const char *mk = ts_node_type(mc);
-                    if (strcmp(mk, "variable_declaration") == 0 ||
-                        strcmp(mk, "modifiers") == 0) {
+                    if (strcmp(mk, "variable_declaration") == 0 || strcmp(mk, "modifiers") == 0) {
                         continue;
                     }
                     pt = kotlin_eval_expr_type(ctx, mc);
@@ -1277,8 +1284,8 @@ static void kt_process_class_decl(KotlinLSPContext *ctx, TSNode node) {
     }
 
     if (field_count > 0) {
-        const char **fn = (const char **)cbm_arena_alloc(
-            ctx->arena, sizeof(const char *) * (size_t)(field_count + 1));
+        const char **fn = (const char **)cbm_arena_alloc(ctx->arena, sizeof(const char *) *
+                                                                         (size_t)(field_count + 1));
         const CBMType **ft = (const CBMType **)cbm_arena_alloc(
             ctx->arena, sizeof(const CBMType *) * (size_t)(field_count + 1));
         if (fn && ft) {
@@ -1309,7 +1316,7 @@ static void kt_process_class_decl(KotlinLSPContext *ctx, TSNode node) {
 }
 
 static void kt_process_object_decl(KotlinLSPContext *ctx, TSNode node, bool is_companion,
-                                const char *outer_class_qn) {
+                                   const char *outer_class_qn) {
     TSNode name = kt_field_named(node, "name");
     if (ts_node_is_null(name)) {
         name = kt_name_child(node);
@@ -1398,7 +1405,7 @@ static void kt_process_object_decl(KotlinLSPContext *ctx, TSNode node, bool is_c
 }
 
 static void kt_register_class_members(KotlinLSPContext *ctx, const char *class_qn, TSNode body,
-                                   bool is_object) {
+                                      bool is_object) {
     (void)is_object;
     if (ts_node_is_null(body)) {
         return;
@@ -1614,8 +1621,7 @@ static void kt_process_property_decl(KotlinLSPContext *ctx, TSNode node) {
                 const char *kk = ts_node_type(last);
                 if (strstr(kk, "expression") || strstr(kk, "literal") ||
                     strcmp(kk, "call_expression") == 0 ||
-                    strcmp(kk, "navigation_expression") == 0 ||
-                    strcmp(kk, "lambda_literal") == 0) {
+                    strcmp(kk, "navigation_expression") == 0 || strcmp(kk, "lambda_literal") == 0) {
                     init = last;
                 }
             }
@@ -1774,8 +1780,7 @@ const CBMType *kotlin_eval_expr_type(KotlinLSPContext *ctx, TSNode node) {
 
     if (strcmp(kind, "expression") == 0 || strcmp(kind, "primary_expression") == 0 ||
         strcmp(kind, "parenthesized_expression") == 0 ||
-        strcmp(kind, "annotated_expression") == 0 ||
-        strcmp(kind, "labeled_expression") == 0) {
+        strcmp(kind, "annotated_expression") == 0 || strcmp(kind, "labeled_expression") == 0) {
         uint32_t nc = ts_node_named_child_count(node);
         if (nc > 0) {
             result = kotlin_eval_expr_type(ctx, ts_node_named_child(node, 0));
@@ -1849,11 +1854,9 @@ const CBMType *kotlin_eval_expr_type(KotlinLSPContext *ctx, TSNode node) {
         result = cbm_type_named(ctx->arena, "kotlin.Boolean");
         goto out;
     }
-    if (strcmp(kind, "binary_expression") == 0 ||
-        strcmp(kind, "additive_expression") == 0 ||
+    if (strcmp(kind, "binary_expression") == 0 || strcmp(kind, "additive_expression") == 0 ||
         strcmp(kind, "multiplicative_expression") == 0 ||
-        strcmp(kind, "comparison_expression") == 0 ||
-        strcmp(kind, "equality_expression") == 0 ||
+        strcmp(kind, "comparison_expression") == 0 || strcmp(kind, "equality_expression") == 0 ||
         strcmp(kind, "range_expression") == 0) {
         /* Operator-convention dispatch: Kotlin desugars `a OP b` to
          * `a.<method>(b)` for a fixed set of operators. We detect the
@@ -1888,42 +1891,42 @@ const CBMType *kotlin_eval_expr_type(KotlinLSPContext *ctx, TSNode node) {
             int between_len = (int)(rhs_start - lhs_end);
             if (between_len > 0 && lhs_end > node_start) {
                 /* Check operators in disambiguation order. */
-                if (memmem(between, (size_t)between_len, "===", 3)) {
-                    op_method = NULL;  /* identity, no method */
-                } else if (memmem(between, (size_t)between_len, "!==", 3)) {
+                if (cbm_memmem(between, (size_t)between_len, "===", 3)) {
+                    op_method = NULL; /* identity, no method */
+                } else if (cbm_memmem(between, (size_t)between_len, "!==", 3)) {
                     op_method = NULL;
-                } else if (memmem(between, (size_t)between_len, "==", 2)) {
+                } else if (cbm_memmem(between, (size_t)between_len, "==", 2)) {
                     op_method = "equals";
-                } else if (memmem(between, (size_t)between_len, "!=", 2)) {
+                } else if (cbm_memmem(between, (size_t)between_len, "!=", 2)) {
                     op_method = "equals";
-                } else if (memmem(between, (size_t)between_len, "..<", 3)) {
+                } else if (cbm_memmem(between, (size_t)between_len, "..<", 3)) {
                     op_method = "rangeUntil";
-                } else if (memmem(between, (size_t)between_len, "..", 2)) {
+                } else if (cbm_memmem(between, (size_t)between_len, "..", 2)) {
                     op_method = "rangeTo";
-                } else if (memmem(between, (size_t)between_len, "+=", 2)) {
+                } else if (cbm_memmem(between, (size_t)between_len, "+=", 2)) {
                     op_method = "plusAssign";
-                } else if (memmem(between, (size_t)between_len, "-=", 2)) {
+                } else if (cbm_memmem(between, (size_t)between_len, "-=", 2)) {
                     op_method = "minusAssign";
-                } else if (memmem(between, (size_t)between_len, "*=", 2)) {
+                } else if (cbm_memmem(between, (size_t)between_len, "*=", 2)) {
                     op_method = "timesAssign";
-                } else if (memmem(between, (size_t)between_len, "/=", 2)) {
+                } else if (cbm_memmem(between, (size_t)between_len, "/=", 2)) {
                     op_method = "divAssign";
-                } else if (memmem(between, (size_t)between_len, "%=", 2)) {
+                } else if (cbm_memmem(between, (size_t)between_len, "%=", 2)) {
                     op_method = "remAssign";
-                } else if (memmem(between, (size_t)between_len, "<=", 2) ||
-                           memmem(between, (size_t)between_len, ">=", 2) ||
-                           memmem(between, (size_t)between_len, "<", 1) ||
-                           memmem(between, (size_t)between_len, ">", 1)) {
+                } else if (cbm_memmem(between, (size_t)between_len, "<=", 2) ||
+                           cbm_memmem(between, (size_t)between_len, ">=", 2) ||
+                           cbm_memmem(between, (size_t)between_len, "<", 1) ||
+                           cbm_memmem(between, (size_t)between_len, ">", 1)) {
                     op_method = "compareTo";
-                } else if (memmem(between, (size_t)between_len, "+", 1)) {
+                } else if (cbm_memmem(between, (size_t)between_len, "+", 1)) {
                     op_method = "plus";
-                } else if (memmem(between, (size_t)between_len, "-", 1)) {
+                } else if (cbm_memmem(between, (size_t)between_len, "-", 1)) {
                     op_method = "minus";
-                } else if (memmem(between, (size_t)between_len, "*", 1)) {
+                } else if (cbm_memmem(between, (size_t)between_len, "*", 1)) {
                     op_method = "times";
-                } else if (memmem(between, (size_t)between_len, "/", 1)) {
+                } else if (cbm_memmem(between, (size_t)between_len, "/", 1)) {
                     op_method = "div";
-                } else if (memmem(between, (size_t)between_len, "%", 1)) {
+                } else if (cbm_memmem(between, (size_t)between_len, "%", 1)) {
                     op_method = "rem";
                 }
             }
@@ -1934,8 +1937,7 @@ const CBMType *kotlin_eval_expr_type(KotlinLSPContext *ctx, TSNode node) {
             if (lhs_qn) {
                 const CBMRegisteredFunc *rf = kotlin_lookup_method(ctx, lhs_qn, op_method);
                 if (rf && rf->qualified_name) {
-                    kt_emit_resolved(ctx, rf->qualified_name, "lsp_kt_operator",
-                                     KT_CONF_METHOD);
+                    kt_emit_resolved(ctx, rf->qualified_name, "lsp_kt_operator", KT_CONF_METHOD);
                     if (rf->signature && rf->signature->kind == CBM_TYPE_FUNC &&
                         rf->signature->data.func.return_types &&
                         rf->signature->data.func.return_types[0]) {
@@ -1949,8 +1951,7 @@ const CBMType *kotlin_eval_expr_type(KotlinLSPContext *ctx, TSNode node) {
         result = lhs_t;
         goto out;
     }
-    if (strcmp(kind, "unary_expression") == 0 ||
-        strcmp(kind, "prefix_expression") == 0 ||
+    if (strcmp(kind, "unary_expression") == 0 || strcmp(kind, "prefix_expression") == 0 ||
         strcmp(kind, "postfix_expression") == 0) {
         /* Unary operator desugars to method call:
          *   +x → x.unaryPlus(), -x → x.unaryMinus(),
@@ -1969,15 +1970,15 @@ const CBMType *kotlin_eval_expr_type(KotlinLSPContext *ctx, TSNode node) {
                 if (op_end > node_start) {
                     const char *prefix = ctx->source + node_start;
                     int prefix_len = (int)(op_end - node_start);
-                    if (memmem(prefix, (size_t)prefix_len, "++", 2)) {
+                    if (cbm_memmem(prefix, (size_t)prefix_len, "++", 2)) {
                         op_method = "inc";
-                    } else if (memmem(prefix, (size_t)prefix_len, "--", 2)) {
+                    } else if (cbm_memmem(prefix, (size_t)prefix_len, "--", 2)) {
                         op_method = "dec";
-                    } else if (memmem(prefix, (size_t)prefix_len, "!", 1)) {
+                    } else if (cbm_memmem(prefix, (size_t)prefix_len, "!", 1)) {
                         op_method = "not";
-                    } else if (memmem(prefix, (size_t)prefix_len, "-", 1)) {
+                    } else if (cbm_memmem(prefix, (size_t)prefix_len, "-", 1)) {
                         op_method = "unaryMinus";
-                    } else if (memmem(prefix, (size_t)prefix_len, "+", 1)) {
+                    } else if (cbm_memmem(prefix, (size_t)prefix_len, "+", 1)) {
                         op_method = "unaryPlus";
                     }
                 }
@@ -2002,7 +2003,7 @@ const CBMType *kotlin_eval_expr_type(KotlinLSPContext *ctx, TSNode node) {
          * `check_expression`; disambiguate via the operator token. */
         char *ntext = kt_node_text(ctx, node);
         bool is_membership =
-            ntext && (memmem(ntext, strlen(ntext), " in ", 4) || strstr(ntext, "!in") != NULL);
+            ntext && (cbm_memmem(ntext, strlen(ntext), " in ", 4) || strstr(ntext, "!in") != NULL);
         uint32_t nc = ts_node_named_child_count(node);
         if (is_membership && nc >= 2) {
             TSNode container = ts_node_named_child(node, nc - 1);
@@ -2011,8 +2012,7 @@ const CBMType *kotlin_eval_expr_type(KotlinLSPContext *ctx, TSNode node) {
             if (cqn) {
                 const CBMRegisteredFunc *rf = kotlin_lookup_method(ctx, cqn, "contains");
                 if (rf && rf->qualified_name) {
-                    kt_emit_resolved(ctx, rf->qualified_name, "lsp_kt_operator",
-                                     KT_CONF_METHOD);
+                    kt_emit_resolved(ctx, rf->qualified_name, "lsp_kt_operator", KT_CONF_METHOD);
                 }
             }
         }
@@ -2029,8 +2029,7 @@ const CBMType *kotlin_eval_expr_type(KotlinLSPContext *ctx, TSNode node) {
             if (rqn) {
                 const CBMRegisteredFunc *rf = kotlin_lookup_method(ctx, rqn, "get");
                 if (rf && rf->qualified_name) {
-                    kt_emit_resolved(ctx, rf->qualified_name, "lsp_kt_operator",
-                                     KT_CONF_METHOD);
+                    kt_emit_resolved(ctx, rf->qualified_name, "lsp_kt_operator", KT_CONF_METHOD);
                     if (rf->signature && rf->signature->kind == CBM_TYPE_FUNC &&
                         rf->signature->data.func.return_types &&
                         rf->signature->data.func.return_types[0]) {
@@ -2082,19 +2081,17 @@ const CBMType *kotlin_eval_expr_type(KotlinLSPContext *ctx, TSNode node) {
                             result = cbm_type_named(ctx->arena, "kotlin.reflect.KClass");
                             goto out;
                         }
-                        const CBMRegisteredFunc *rf =
-                            kotlin_lookup_method(ctx, recv_qn, member);
+                        const CBMRegisteredFunc *rf = kotlin_lookup_method(ctx, recv_qn, member);
                         if (rf && rf->qualified_name) {
-                            kt_emit_resolved(ctx, rf->qualified_name,
-                                             "lsp_kt_callable_ref", KT_CONF_METHOD);
+                            kt_emit_resolved(ctx, rf->qualified_name, "lsp_kt_callable_ref",
+                                             KT_CONF_METHOD);
                         }
                     }
                 } else {
                     /* `::name` — bound to top-level fn or local. */
                     const char *fn_qn = kotlin_resolve_function_name(ctx, member);
                     if (fn_qn) {
-                        kt_emit_resolved(ctx, fn_qn, "lsp_kt_callable_ref",
-                                         KT_CONF_TOP_LEVEL);
+                        kt_emit_resolved(ctx, fn_qn, "lsp_kt_callable_ref", KT_CONF_TOP_LEVEL);
                     }
                 }
             }
@@ -2128,8 +2125,7 @@ const CBMType *kotlin_eval_expr_type(KotlinLSPContext *ctx, TSNode node) {
             }
         }
     }
-    if (strcmp(kind, "lambda_literal") == 0 ||
-        strcmp(kind, "annotated_lambda") == 0 ||
+    if (strcmp(kind, "lambda_literal") == 0 || strcmp(kind, "annotated_lambda") == 0 ||
         strcmp(kind, "anonymous_function") == 0) {
         /* Lambda — result type is unknown without context. */
         result = cbm_type_unknown();
@@ -2178,7 +2174,7 @@ out:
 }
 
 static const CBMType *kt_eval_constructor_or_func_call(KotlinLSPContext *ctx, TSNode call_node,
-                                                    const char *callee_text) {
+                                                       const char *callee_text) {
     /* callee_text is a bare identifier — it may be:
      *   1) A class constructor: `Foo(...)` → returns Foo
      *   2) A top-level function: `foo(...)` → returns its declared return
@@ -2212,8 +2208,8 @@ static const CBMType *kt_eval_constructor_or_func_call(KotlinLSPContext *ctx, TS
     if (cls_qn && ctx->registry) {
         const CBMRegisteredType *rt = cbm_registry_lookup_type(ctx->registry, cls_qn);
         if (rt) {
-            kt_emit_resolved(ctx, kt_join_dot(ctx->arena, cls_qn, "<init>"),
-                          "lsp_kt_constructor", KT_CONF_CONSTRUCTOR);
+            kt_emit_resolved(ctx, kt_join_dot(ctx->arena, cls_qn, "<init>"), "lsp_kt_constructor",
+                             KT_CONF_CONSTRUCTOR);
             return cbm_type_named(ctx->arena, cls_qn);
         }
     }
@@ -2371,8 +2367,8 @@ static const CBMType *kt_eval_navigation_expression_type(KotlinLSPContext *ctx, 
                 return cbm_type_unknown();
             }
             /* Property access? */
-            const CBMType *pt = kotlin_lookup_property_type(ctx, ctx->enclosing_class_qn,
-                                                            member_text);
+            const CBMType *pt =
+                kotlin_lookup_property_type(ctx, ctx->enclosing_class_qn, member_text);
             if (!cbm_type_is_unknown(pt)) {
                 return pt;
             }
@@ -2392,8 +2388,7 @@ static const CBMType *kt_eval_navigation_expression_type(KotlinLSPContext *ctx, 
         if (rf && rf->qualified_name) {
             kt_emit_resolved(ctx, rf->qualified_name, "lsp_kt_method", KT_CONF_METHOD);
             if (rf->signature && rf->signature->kind == CBM_TYPE_FUNC &&
-                rf->signature->data.func.return_types &&
-                rf->signature->data.func.return_types[0]) {
+                rf->signature->data.func.return_types && rf->signature->data.func.return_types[0]) {
                 return rf->signature->data.func.return_types[0];
             }
             /* Heuristic: stdlib self-returning / known-result methods. */
@@ -2410,8 +2405,7 @@ static const CBMType *kt_eval_navigation_expression_type(KotlinLSPContext *ctx, 
         if (rf && rf->qualified_name) {
             kt_emit_resolved(ctx, rf->qualified_name, "lsp_kt_static", KT_CONF_STATIC);
             if (rf->signature && rf->signature->kind == CBM_TYPE_FUNC &&
-                rf->signature->data.func.return_types &&
-                rf->signature->data.func.return_types[0]) {
+                rf->signature->data.func.return_types && rf->signature->data.func.return_types[0]) {
                 return rf->signature->data.func.return_types[0];
             }
             return cbm_type_unknown();
@@ -2441,7 +2435,7 @@ static const CBMType *kt_eval_navigation_expression_type(KotlinLSPContext *ctx, 
                 const CBMRegisteredFunc *rf = kotlin_lookup_method(ctx, it_qn, member_text);
                 if (rf && rf->qualified_name) {
                     kt_emit_resolved(ctx, rf->qualified_name, "lsp_kt_lambda_it",
-                                  KT_CONF_LAMBDA_IT);
+                                     KT_CONF_LAMBDA_IT);
                     return cbm_type_unknown();
                 }
             }
@@ -2511,8 +2505,7 @@ static void kt_bind_property_to_scope(KotlinLSPContext *ctx, TSNode prop) {
         for (uint32_t i = nc; i > 0; i--) {
             TSNode c = ts_node_named_child(prop, i - 1);
             const char *k = ts_node_type(c);
-            if (strcmp(k, "modifiers") == 0 ||
-                strcmp(k, "multi_variable_declaration") == 0) {
+            if (strcmp(k, "modifiers") == 0 || strcmp(k, "multi_variable_declaration") == 0) {
                 continue;
             }
             init = c;
@@ -2545,8 +2538,7 @@ static void kt_bind_property_to_scope(KotlinLSPContext *ctx, TSNode prop) {
                 if (!ts_node_is_null(vid)) {
                     char *vname = kt_node_text(ctx, vid);
                     if (vname) {
-                        cbm_scope_bind(ctx->current_scope,
-                                       cbm_arena_strdup(ctx->arena, vname),
+                        cbm_scope_bind(ctx->current_scope, cbm_arena_strdup(ctx->arena, vname),
                                        cbm_type_unknown());
                     }
                 }
@@ -2600,8 +2592,7 @@ static void kt_bind_property_to_scope(KotlinLSPContext *ctx, TSNode prop) {
                      * the property's source range. */
                     char *src_text = kt_node_text(ctx, prop);
                     if (src_text && strstr(src_text, "var ")) {
-                        const CBMRegisteredFunc *sv =
-                            kotlin_lookup_method(ctx, dqn, "setValue");
+                        const CBMRegisteredFunc *sv = kotlin_lookup_method(ctx, dqn, "setValue");
                         if (sv && sv->qualified_name) {
                             kt_emit_resolved(ctx, sv->qualified_name, "lsp_kt_delegate",
                                              KT_CONF_METHOD);
@@ -2647,7 +2638,7 @@ static void kt_apply_smart_cast(KotlinLSPContext *ctx, TSNode condition_expr, bo
     if (!is_check && kt_node_is(condition_expr, "check_expression")) {
         char *ctext = kt_node_text(ctx, condition_expr);
         if (ctext &&
-            (memmem(ctext, strlen(ctext), " is ", 4) != NULL || strstr(ctext, "!is") != NULL)) {
+            (cbm_memmem(ctext, strlen(ctext), " is ", 4) != NULL || strstr(ctext, "!is") != NULL)) {
             is_check = true;
         }
     }
@@ -2804,8 +2795,7 @@ static void kt_process_for_statement(KotlinLSPContext *ctx, TSNode node) {
             for (int i = 0; protocol[i]; i++) {
                 const CBMRegisteredFunc *rf = kotlin_lookup_method(ctx, iqn, protocol[i]);
                 if (rf && rf->qualified_name) {
-                    kt_emit_resolved(ctx, rf->qualified_name, "lsp_kt_iterator",
-                                     KT_CONF_METHOD);
+                    kt_emit_resolved(ctx, rf->qualified_name, "lsp_kt_iterator", KT_CONF_METHOD);
                 }
             }
         }
@@ -2874,8 +2864,8 @@ static void kt_process_lambda(KotlinLSPContext *ctx, TSNode lambda, const CBMTyp
                 if (name) {
                     /* Type annotation? */
                     TSNode tn = kt_child_kind(pn, "type");
-                    const CBMType *t = ts_node_is_null(tn) ? cbm_type_unknown()
-                                                           : kotlin_parse_type_node(ctx, tn);
+                    const CBMType *t =
+                        ts_node_is_null(tn) ? cbm_type_unknown() : kotlin_parse_type_node(ctx, tn);
                     cbm_scope_bind(ctx->current_scope, cbm_arena_strdup(ctx->arena, name), t);
                 }
             }
@@ -3185,7 +3175,7 @@ static void kt_bind_function_params(KotlinLSPContext *ctx, TSNode func_node) {
             type_node = kt_child_kind(p, "nullable_type");
         }
         const CBMType *t = ts_node_is_null(type_node) ? cbm_type_unknown()
-                                                       : kotlin_parse_type_node(ctx, type_node);
+                                                      : kotlin_parse_type_node(ctx, type_node);
         cbm_scope_bind(ctx->current_scope, cbm_arena_strdup(ctx->arena, pname), t);
     }
 
@@ -3198,7 +3188,7 @@ static void kt_bind_function_params(KotlinLSPContext *ctx, TSNode func_node) {
 /* ── top-level walking ────────────────────────────────────────────── */
 
 static void kt_process_function_body(KotlinLSPContext *ctx, TSNode func_node, const char *func_qn,
-                                  const char *receiver_class_qn) {
+                                     const char *receiver_class_qn) {
     const char *prev_func = ctx->enclosing_func_qn;
     const char *prev_class = ctx->enclosing_class_qn;
     const CBMType *prev_this = ctx->this_type;
@@ -3252,10 +3242,8 @@ static void kt_process_function_body(KotlinLSPContext *ctx, TSNode func_node, co
             const char *k = ts_node_type(c);
             if (strcmp(k, "modifiers") == 0 || strcmp(k, "identifier") == 0 ||
                 strcmp(k, "simple_identifier") == 0 ||
-                strcmp(k, "function_value_parameters") == 0 ||
-                strcmp(k, "type_parameters") == 0 ||
-                strcmp(k, "type_constraints") == 0 ||
-                strcmp(k, "annotation") == 0) {
+                strcmp(k, "function_value_parameters") == 0 || strcmp(k, "type_parameters") == 0 ||
+                strcmp(k, "type_constraints") == 0 || strcmp(k, "annotation") == 0) {
                 continue;
             }
             /* Skip the return-type node — the return type appears AFTER
@@ -3313,7 +3301,7 @@ static void kt_process_function_body(KotlinLSPContext *ctx, TSNode func_node, co
 }
 
 static void kt_walk_top_level_for_resolution(KotlinLSPContext *ctx, TSNode root,
-                                          const char *enclosing_class_qn) {
+                                             const char *enclosing_class_qn) {
     if (ts_node_is_null(root)) {
         return;
     }
@@ -3391,9 +3379,8 @@ static void kt_walk_top_level_for_resolution(KotlinLSPContext *ctx, TSNode root,
             kt_walk_top_level_for_resolution(ctx, body, cls_qn);
             ctx->enclosing_class_qn = prev_class;
         } else if (strcmp(kind, "companion_object") == 0) {
-            const char *companion_qn =
-                kt_join_dot(ctx->arena, enclosing_class_qn ? enclosing_class_qn : ctx->package_qn,
-                            "Companion");
+            const char *companion_qn = kt_join_dot(
+                ctx->arena, enclosing_class_qn ? enclosing_class_qn : ctx->package_qn, "Companion");
             TSNode body = kt_child_kind(c, "class_body");
             kt_walk_top_level_for_resolution(ctx, body, companion_qn);
         } else if (strcmp(kind, "property_declaration") == 0) {
@@ -3466,8 +3453,7 @@ void kotlin_lsp_process_file(KotlinLSPContext *ctx, TSNode root) {
         return;
     }
     if (getenv("CBM_LSP_KOTLIN_AST")) {
-        fprintf(stderr, "=== AST for %s ===\n",
-                ctx->rel_path ? ctx->rel_path : "<unknown>");
+        fprintf(stderr, "=== AST for %s ===\n", ctx->rel_path ? ctx->rel_path : "<unknown>");
         kt_debug_dump_ast(root, ctx->source, 0);
         fprintf(stderr, "=== END AST ===\n");
     }
@@ -3538,8 +3524,7 @@ static char *kt_repair_bodyless_interface_methods(CBMArena *arena, const char *s
     /* Cheap early-out: skip when neither `interface` nor a function-type
      * with a receiver (`X.() ->`) appears anywhere — those are the two
      * grammar pain points this pass repairs. */
-    if (!strstr(src, "interface") && !strstr(src, ".() ->") &&
-        !strstr(src, ".()->")) {
+    if (!strstr(src, "interface") && !strstr(src, ".() ->") && !strstr(src, ".()->")) {
         return NULL;
     }
 
@@ -3564,9 +3549,9 @@ static char *kt_repair_bodyless_interface_methods(CBMArena *arena, const char *s
 
     const char *p = src;
     const char *end = src + src_len;
-    int iface_depth = 0;     /* nesting of `interface ... { ... }` blocks */
-    int brace_depth = 0;     /* total braces (so we can subtract on '}') */
-    int iface_brace_at[16];  /* brace_depth at which each interface opened */
+    int iface_depth = 0;    /* nesting of `interface ... { ... }` blocks */
+    int brace_depth = 0;    /* total braces (so we can subtract on '}') */
+    int iface_brace_at[16]; /* brace_depth at which each interface opened */
     int iface_stack_n = 0;
 
     while (p < end) {
@@ -3654,8 +3639,7 @@ static char *kt_repair_bodyless_interface_methods(CBMArena *arena, const char *s
                 q++;
             }
             /* Identifier */
-            while (q < end &&
-                   (isalnum((unsigned char)*q) || *q == '_' || *q == '`')) {
+            while (q < end && (isalnum((unsigned char)*q) || *q == '_' || *q == '`')) {
                 q++;
             }
             /* Optional generic type parameters */
@@ -3722,8 +3706,8 @@ static char *kt_repair_bodyless_interface_methods(CBMArena *arena, const char *s
      * receiver-binding hint (which we recover separately via
      * decorator_qns at registration time). */
     typedef struct {
-        int start;  /* inclusive */
-        int end;    /* exclusive */
+        int start; /* inclusive */
+        int end;   /* exclusive */
     } cut_range_t;
     enum { MAX_CUTS = 64 };
     cut_range_t cuts[MAX_CUTS];
@@ -3771,8 +3755,7 @@ static char *kt_repair_bodyless_interface_methods(CBMArena *arena, const char *s
                 /* q now points at the last char of the identifier (or
                  * a non-identifier character). */
                 const char *id_end = q + 1;
-                while (q >= src &&
-                       (isalnum((unsigned char)*q) || *q == '_' || *q == '`')) {
+                while (q >= src && (isalnum((unsigned char)*q) || *q == '_' || *q == '`')) {
                     q--;
                 }
                 const char *id_start = q + 1;
@@ -3845,8 +3828,7 @@ static char *kt_repair_bodyless_interface_methods(CBMArena *arena, const char *s
                 p3 += (p3 + 1 < end3 ? 2 : 1);
                 continue;
             }
-            if (*p3 == ':' && p3 + 1 < end3 &&
-                (p3[1] == ' ' || p3[1] == '\t' || p3[1] == '\n')) {
+            if (*p3 == ':' && p3 + 1 < end3 && (p3[1] == ' ' || p3[1] == '\t' || p3[1] == '\n')) {
                 /* Walk back: ensure preceded by `class IDENT[(params)]?`. */
                 /* Walk forward: skip ws, read identifier (possibly dotted),
                  * skip generics, then check for parens or `{`. */
@@ -3965,7 +3947,7 @@ static char *kt_repair_bodyless_interface_methods(CBMArena *arena, const char *s
         }
         /* Skip range [start, end) when cutting */
         if (next_cut < cut_count && cuts[next_cut].start == i) {
-            i = cuts[next_cut].end - 1;  /* loop's i++ moves past `end-1` */
+            i = cuts[next_cut].end - 1; /* loop's i++ moves past `end-1` */
             next_cut++;
             continue;
         }
@@ -3980,8 +3962,8 @@ static char *kt_repair_bodyless_interface_methods(CBMArena *arena, const char *s
     return out;
 }
 
-void cbm_run_kotlin_lsp(CBMArena *arena, CBMFileResult *result, const char *source,
-                        int source_len, TSNode root) {
+void cbm_run_kotlin_lsp(CBMArena *arena, CBMFileResult *result, const char *source, int source_len,
+                        TSNode root) {
     if (!arena || !result || !source || ts_node_is_null(root)) {
         return;
     }
@@ -3992,8 +3974,8 @@ void cbm_run_kotlin_lsp(CBMArena *arena, CBMFileResult *result, const char *sour
      * ERROR nodes and loses parts of the file. Patch the source and
      * re-parse. */
     int patched_len = 0;
-    char *patched_src = kt_repair_bodyless_interface_methods(arena, source, source_len,
-                                                             &patched_len);
+    char *patched_src =
+        kt_repair_bodyless_interface_methods(arena, source, source_len, &patched_len);
     TSTree *patched_tree = NULL;
     TSNode use_root = root;
     const char *use_source = source;
@@ -4013,8 +3995,7 @@ void cbm_run_kotlin_lsp(CBMArena *arena, CBMFileResult *result, const char *sour
                 fprintf(stderr, "[kotlin_lsp] tree_sitter_kotlin lang=%p\n", (void *)lang);
             }
             ts_parser_set_language(parser, lang);
-            patched_tree = ts_parser_parse_string(parser, NULL, patched_src,
-                                                  (uint32_t)patched_len);
+            patched_tree = ts_parser_parse_string(parser, NULL, patched_src, (uint32_t)patched_len);
             ts_parser_delete(parser);
             if (debug) {
                 fprintf(stderr, "[kotlin_lsp] re-parse result tree=%p\n", (void *)patched_tree);
@@ -4061,8 +4042,8 @@ void cbm_run_kotlin_lsp(CBMArena *arena, CBMFileResult *result, const char *sour
     /* Initial package_qn is empty — overridden by kotlin_lsp_process_file
      * when it sees the `package_header` AST node. */
     KotlinLSPContext ctx;
-    kotlin_lsp_init(&ctx, arena, use_source, use_source_len, &registry, "", module_qn,
-                    project_name, /*rel_path=*/NULL, &result->resolved_calls);
+    kotlin_lsp_init(&ctx, arena, use_source, use_source_len, &registry, "", module_qn, project_name,
+                    /*rel_path=*/NULL, &result->resolved_calls);
 
     kotlin_lsp_process_file(&ctx, use_root);
 

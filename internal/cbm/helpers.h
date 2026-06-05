@@ -3,6 +3,12 @@
 
 #include "cbm.h"
 
+// Portable memmem: find first occurrence of `needle` (needle_len bytes) within
+// `haystack` (haystack_len bytes). Returns a pointer into haystack, or NULL.
+// Hand-rolled so it compiles identically on all platforms (GNU/BSD-only
+// memmem is unavailable under msys2-clang on Windows).
+void *cbm_memmem(const void *haystack, size_t haystack_len, const void *needle, size_t needle_len);
+
 // Extract text of a node from source. Returns arena-allocated string.
 char *cbm_node_text(CBMArena *a, TSNode node, const char *source);
 
@@ -44,10 +50,10 @@ int cbm_count_branching(TSNode node, const char **branching_types);
 
 // Per-function structural complexity, computed in a single AST walk.
 typedef struct {
-    int cyclomatic;      // branching-node count (matches def.complexity)
-    int cognitive;       // nesting-weighted flow-break count (Campbell-style approximation)
-    int loop_count;      // total loop constructs in the body
-    int loop_depth;      // maximum nested-loop depth — structural bottleneck proxy
+    int cyclomatic;       // branching-node count (matches def.complexity)
+    int cognitive;        // nesting-weighted flow-break count (Campbell-style approximation)
+    int loop_count;       // total loop constructs in the body
+    int loop_depth;       // maximum nested-loop depth — structural bottleneck proxy
     int max_access_depth; // deepest chained member/subscript access (a.b.c.d → 4) — structure smell
 } cbm_complexity_t;
 
