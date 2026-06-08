@@ -1953,6 +1953,20 @@ static void py_emit_dunder_call(PyLSPContext* ctx, const CBMType* recv, const ch
         py_lookup_attribute(ctx, recv->data.named.qualified_name, dunder);
     if (f && f->qualified_name) {
         py_emit_resolved_call(ctx, f->qualified_name, "lsp_operator_dunder", 0.85f);
+        /* A subscript (`s[k]`) / binary_operator (`a + b`) is not a syntactic
+         * `call` node, so the extractor produced no CBMCall for it and the
+         * resolved_call above would never be matched into a CALLS edge. Inject
+         * a synthetic CBMCall keyed on (enclosing_func_qn, short dunder name)
+         * so resolve_file_calls can pair it with the resolved entry. The
+         * resolved callee QN ends in the dunder, so its short name == dunder.
+         * Mirrors rust_inject_syn_call. */
+        if (ctx->syn_calls && ctx->arena && ctx->enclosing_func_qn) {
+            CBMCall call;
+            memset(&call, 0, sizeof(call));
+            call.callee_name = cbm_arena_strdup(ctx->arena, dunder);
+            call.enclosing_func_qn = ctx->enclosing_func_qn;
+            cbm_calls_push(ctx->syn_calls, ctx->arena, call);
+        }
     }
 }
 
@@ -3038,6 +3052,9 @@ void cbm_run_py_lsp(CBMArena* arena, CBMFileResult* result,
 
     PyLSPContext ctx;
     py_lsp_init(&ctx, arena, source, source_len, &reg, module_qn, &result->resolved_calls);
+    /* Let the resolver inject synthetic syntactic calls for operator/subscript
+     * dunder desugaring so those recovered calls reach the CALLS-edge pipeline. */
+    ctx.syn_calls = &result->calls;
 
     for (int i = 0; i < result->imports.count; i++) {
         CBMImport* imp = &result->imports.items[i];

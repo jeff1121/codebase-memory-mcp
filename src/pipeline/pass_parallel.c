@@ -1914,17 +1914,43 @@ static void resolve_def_decorators(resolve_ctx_t *rc, resolve_worker_state_t *ws
             continue;
         }
         cbm_resolution_t res = cbm_registry_resolve(rc->registry, fn, mq, ik, iv, ic);
-        if (!res.qualified_name || res.qualified_name[0] == '\0') {
-            continue;
+        if ((!res.qualified_name || res.qualified_name[0] == '\0') && !strchr(fn, '.')) {
+            /* C# attributes are referenced by their short name (`[Log]`) but
+             * declared with an `Attribute` suffix (`class LogAttribute`). */
+            char with_suffix[CBM_SZ_256];
+            int wn = snprintf(with_suffix, sizeof(with_suffix), "%sAttribute", fn);
+            if (wn > 0 && (size_t)wn < sizeof(with_suffix)) {
+                res = cbm_registry_resolve(rc->registry, with_suffix, mq, ik, iv, ic);
+            }
         }
-        const cbm_gbuf_node_t *dn = cbm_gbuf_find_by_qn(rc->main_gbuf, res.qualified_name);
-        if (dn && node->id != dn->id) {
+        const cbm_gbuf_node_t *dn = NULL;
+        if (res.qualified_name && res.qualified_name[0] != '\0') {
+            dn = cbm_gbuf_find_by_qn(rc->main_gbuf, res.qualified_name);
+        }
+        int64_t dn_id = 0;
+        if (dn) {
+            dn_id = dn->id;
+        } else {
+            /* External/stdlib decorator (Rust `#[derive(Debug)]`, Swift
+             * `@discardableResult`, Scala `@deprecated`, Python `@cache`,
+             * Java `@Override`, ...): no local symbol resolves.  Materialise a
+             * synthetic "Decorator" node so the DECORATES relation is recorded.
+             * The node is created in the per-worker local_edge_buf (shared-ID
+             * gbuf); the sequential merge dedupes by QN across workers, so all
+             * uses of the same decorator name collapse to one node project-wide
+             * and the edge target IDs are remapped consistently. */
+            char syn_qn[CBM_SZ_512];
+            snprintf(syn_qn, sizeof(syn_qn), "<decorator:%s>", fn);
+            dn_id = cbm_gbuf_upsert_node(ws->local_edge_buf, "Decorator", fn, syn_qn, "", 0, 0,
+                                         "{}");
+        }
+        if (dn_id != 0 && node->id != dn_id) {
             char dp[CBM_SZ_256];
             snprintf(dp, sizeof(dp), "{\"decorator\":\"%s\"}", def->decorators[dc]);
-            cbm_gbuf_insert_edge(ws->local_edge_buf, node->id, dn->id, "DECORATES", dp);
+            cbm_gbuf_insert_edge(ws->local_edge_buf, node->id, dn_id, "DECORATES", dp);
             /* Ensure a reference-style edge exists so the decorator appears in queries
              * without being misclassified as a real call by downstream passes. */
-            cbm_gbuf_insert_edge(ws->local_edge_buf, node->id, dn->id, "USAGE", "{}");
+            cbm_gbuf_insert_edge(ws->local_edge_buf, node->id, dn_id, "USAGE", "{}");
             ws->semantic_resolved++;
         }
     }

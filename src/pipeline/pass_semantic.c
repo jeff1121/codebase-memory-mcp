@@ -343,6 +343,16 @@ int cbm_pipeline_implements_go(cbm_pipeline_ctx_t *ctx) {
     return edge_count;
 }
 
+/* Build the QN of the synthetic node that stands in for an external/stdlib
+ * decorator whose target is not a local symbol (Rust `#[derive(Debug)]`, Swift
+ * `@discardableResult`, Scala `@deprecated`, Python `@cache`, Java `@Override`,
+ * ...).  Namespaced with `<decorator:` so it can never collide with a real
+ * symbol and so all uses of the same decorator name across a project dedupe to
+ * one node by QN. */
+static void synth_decorator_qn(const char *func_name, char *out, size_t outsz) {
+    snprintf(out, outsz, "<decorator:%s>", func_name);
+}
+
 /* Process INHERITS + DECORATES edges for one definition. */
 /* Resolve one decorator and create DECORATES edge. */
 static void resolve_decorator(cbm_pipeline_ctx_t *ctx, const cbm_gbuf_node_t *node,
@@ -367,10 +377,26 @@ static void resolve_decorator(cbm_pipeline_ctx_t *ctx, const cbm_gbuf_node_t *no
                                        imp_count);
         }
     }
-    if (!res.qualified_name || res.qualified_name[0] == '\0') {
-        return;
+    const cbm_gbuf_node_t *dec = NULL;
+    if (res.qualified_name && res.qualified_name[0] != '\0') {
+        dec = cbm_gbuf_find_by_qn(ctx->gbuf, res.qualified_name);
     }
-    const cbm_gbuf_node_t *dec = cbm_gbuf_find_by_qn(ctx->gbuf, res.qualified_name);
+    if (!dec) {
+        /* The decorator target is not a local symbol (external attribute /
+         * stdlib annotation / proc-macro derive).  Materialise a synthetic
+         * "Decorator" node so the DECORATES relation is still recorded.
+         * Upsert dedupes by QN, so every use of the same decorator name shares
+         * one node (one extra node per distinct external decorator, project-
+         * wide).  Created in the single-threaded semantic pass, so direct
+         * ctx->gbuf mutation is safe here (mirrors pass_route_nodes). */
+        char syn_qn[CBM_SZ_512];
+        synth_decorator_qn(func_name, syn_qn, sizeof(syn_qn));
+        int64_t syn_id =
+            cbm_gbuf_upsert_node(ctx->gbuf, "Decorator", func_name, syn_qn, "", 0, 0, "{}");
+        if (syn_id != 0) {
+            dec = cbm_gbuf_find_by_qn(ctx->gbuf, syn_qn);
+        }
+    }
     if (dec && node->id != dec->id) {
         char props[CBM_SZ_256];
         snprintf(props, sizeof(props), "{\"decorator\":\"%s\"}", decorator);
