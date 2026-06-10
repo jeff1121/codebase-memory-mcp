@@ -15,6 +15,7 @@
  *   Service B: create_order() → HANDLES → Route("POST /api/orders")
  */
 #include "foundation/constants.h"
+#include "foundation/str_util.h" // cbm_json_escape
 
 enum {
     RN_MAX_SCHEME = 12,
@@ -588,17 +589,22 @@ static int try_create_data_flow(cbm_gbuf_t *gb, int64_t caller_id, int64_t handl
     char handler_params[CBM_SZ_512];
     extract_param_names(handler_node, handler_params, sizeof(handler_params));
 
+    /* Route names/QNs are sliced source text (URL strings, decorator args) and
+     * can contain quotes — escape them or the edge properties JSON is
+     * malformed (aborts json_extract consumers incl. integrity_check). */
+    char esc_rname[CBM_SZ_256];
+    char esc_rqn[CBM_SZ_512];
+    cbm_json_escape(esc_rname, sizeof(esc_rname), route->name ? route->name : "");
+    cbm_json_escape(esc_rqn, sizeof(esc_rqn), route->qualified_name ? route->qualified_name : "");
     char props[CBM_SZ_2K];
     int n;
     if (via_infra) {
         n = snprintf(props, sizeof(props),
                      "{\"via\":\"%s\",\"route\":\"%s\",\"edge_type\":\"%s\",\"via_infra\":true",
-                     route->name ? route->name : "",
-                     route->qualified_name ? route->qualified_name : "", edge_type);
+                     esc_rname, esc_rqn, edge_type);
     } else {
         n = snprintf(props, sizeof(props), "{\"via\":\"%s\",\"route\":\"%s\",\"edge_type\":\"%s\"",
-                     route->name ? route->name : "",
-                     route->qualified_name ? route->qualified_name : "", edge_type);
+                     esc_rname, esc_rqn, edge_type);
     }
 
     if (n > 0 && (size_t)n < sizeof(props) - RN_PROPS_MARGIN) {

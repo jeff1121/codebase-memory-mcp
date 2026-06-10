@@ -209,7 +209,9 @@ static void handle_route_registration(cbm_pipeline_ctx_t *ctx, const CBMCall *ca
             const cbm_gbuf_node_t *handler = cbm_gbuf_find_by_qn(ctx->gbuf, hres.qualified_name);
             if (handler != NULL) {
                 char hprops[CBM_SZ_256];
-                snprintf(hprops, sizeof(hprops), "{\"handler\":\"%s\"}", hres.qualified_name);
+                char esc_h[CBM_SZ_256];
+                cbm_json_escape(esc_h, sizeof(esc_h), hres.qualified_name);
+                snprintf(hprops, sizeof(hprops), "{\"handler\":\"%s\"}", esc_h);
                 cbm_gbuf_insert_edge(ctx->gbuf, handler->id, route_id, "HANDLES", hprops);
             }
         }
