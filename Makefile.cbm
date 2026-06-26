@@ -434,6 +434,7 @@ TEST_REPRO_SRCS = \
     tests/repro/repro_grammar_scripting.c \
     tests/repro/repro_grammar_functional.c \
     tests/repro/repro_grammar_systems.c \
+    tests/repro/repro_grammar_web.c \
     tests/repro/repro_lsp_c_cpp.c \
     tests/repro/repro_lsp_go_py.c
 
