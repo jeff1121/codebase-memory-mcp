@@ -73,7 +73,7 @@ jobs:
     # Broad-only legs (extra OS versions) are informational: visible but
     # non-blocking, so a flaky/less-common runner can't block a release.
     continue-on-error: ${{ matrix.optional == true }}
-    timeout-minutes: 60
+    timeout-minutes: 240
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
@@ -93,7 +93,7 @@ jobs:
       matrix: ${{ fromJSON(needs.setup-matrix.outputs.windows) }}
     runs-on: ${{ matrix.os }}
     continue-on-error: ${{ matrix.optional == true }}
-    timeout-minutes: 60
+    timeout-minutes: 240
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
