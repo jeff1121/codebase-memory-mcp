@@ -46,6 +46,7 @@ private/
 
 # Build artifacts
 build/
+target/
 node_modules/
 graph-ui/dist/
 

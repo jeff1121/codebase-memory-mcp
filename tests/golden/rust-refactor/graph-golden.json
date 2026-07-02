@@ -1,0 +1,45 @@
+{
+  "edge_type_histogram": {
+    "CALLS": 2,
+    "CONTAINS_FILE": 5,
+    "CONTAINS_FOLDER": 2,
+    "DEFINES": 48,
+    "HAS_BRANCH": 1,
+    "IMPORTS": 2,
+    "USAGE": 3
+  },
+  "node_label_histogram": {
+    "Branch": 1,
+    "Class": 6,
+    "File": 5,
+    "Folder": 2,
+    "Function": 7,
+    "Method": 5,
+    "Module": 4,
+    "Project": 1,
+    "Variable": 1
+  },
+  "project": "rust_refactor_golden",
+  "schema_summary": {
+    "contains_edge_types": [
+      "CALLS",
+      "CONTAINS_FILE",
+      "DEFINES",
+      "IMPORTS",
+      "USAGE"
+    ],
+    "contains_labels": [
+      "Class",
+      "File",
+      "Folder",
+      "Function",
+      "Module"
+    ],
+    "top_level_keys": [
+      "adr_hint",
+      "adr_present",
+      "edge_types",
+      "node_labels"
+    ]
+  }
+}

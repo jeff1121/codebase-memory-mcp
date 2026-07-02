@@ -9,6 +9,7 @@
 #include "../src/foundation/dump_verify.h"
 #include "test_framework.h"
 
+#include <math.h>
 #include <stdlib.h>
 
 TEST(dump_verify_no_baseline) {
@@ -19,6 +20,18 @@ TEST(dump_verify_no_baseline) {
 TEST(dump_verify_sparse_at_floor) {
     ASSERT_FALSE(cbm_dump_verify_is_degraded(50, 10, 0.5, CBM_DUMP_VERIFY_MIN_FLOOR));
     ASSERT_FALSE(cbm_dump_verify_is_degraded(12, 5, 0.5, CBM_DUMP_VERIFY_MIN_FLOOR));
+    PASS();
+}
+
+TEST(dump_verify_floor_plus_one_boundary) {
+    ASSERT_FALSE(cbm_dump_verify_is_degraded(51, 26, 0.5, CBM_DUMP_VERIFY_MIN_FLOOR));
+    ASSERT_TRUE(cbm_dump_verify_is_degraded(51, 25, 0.5, CBM_DUMP_VERIFY_MIN_FLOOR));
+    PASS();
+}
+
+TEST(dump_verify_custom_floor) {
+    ASSERT_FALSE(cbm_dump_verify_is_degraded(25, 12, 0.5, 25));
+    ASSERT_TRUE(cbm_dump_verify_is_degraded(26, 12, 0.5, 25));
     PASS();
 }
 
@@ -57,6 +70,13 @@ TEST(dump_verify_ratio_zero_disables) {
     PASS();
 }
 
+TEST(dump_verify_invalid_ratio_disables) {
+    ASSERT_FALSE(cbm_dump_verify_is_degraded(1000, 10, -0.1, CBM_DUMP_VERIFY_MIN_FLOOR));
+    ASSERT_FALSE(cbm_dump_verify_is_degraded(1000, 10, -INFINITY, CBM_DUMP_VERIFY_MIN_FLOOR));
+    ASSERT_FALSE(cbm_dump_verify_is_degraded(1000, 10, NAN, CBM_DUMP_VERIFY_MIN_FLOOR));
+    PASS();
+}
+
 TEST(dump_verify_loosened_ratio) {
     ASSERT_FALSE(cbm_dump_verify_is_degraded(1000, 600, 0.5, CBM_DUMP_VERIFY_MIN_FLOOR));
     PASS();
@@ -76,6 +96,8 @@ TEST(dump_verify_edges_shrank_nodes_ok) {
 SUITE(dump_verify) {
     RUN_TEST(dump_verify_no_baseline);
     RUN_TEST(dump_verify_sparse_at_floor);
+    RUN_TEST(dump_verify_floor_plus_one_boundary);
+    RUN_TEST(dump_verify_custom_floor);
     RUN_TEST(dump_verify_shortfall_below_ratio);
     RUN_TEST(dump_verify_just_above_ratio);
     RUN_TEST(dump_verify_just_below_ratio);
@@ -83,6 +105,7 @@ SUITE(dump_verify) {
     RUN_TEST(dump_verify_growth);
     RUN_TEST(dump_verify_count_error);
     RUN_TEST(dump_verify_ratio_zero_disables);
+    RUN_TEST(dump_verify_invalid_ratio_disables);
     RUN_TEST(dump_verify_loosened_ratio);
     RUN_TEST(dump_verify_tightened_ratio);
     RUN_TEST(dump_verify_edges_shrank_nodes_ok);

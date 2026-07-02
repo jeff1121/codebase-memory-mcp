@@ -44,7 +44,7 @@ cat >"${tmpdir}/wrapper.sh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 exec 3<>"${FIFO}"
-"${CBM_BINARY}" <&3 >/dev/null 2>"${TMPDIR_PATH}/child.err" &
+CBM_LOG_LEVEL=info "${CBM_BINARY}" <&3 >/dev/null 2>"${TMPDIR_PATH}/child.err" &
 echo "$!" >"${TMPDIR_PATH}/child.pid"
 wait
 SH
@@ -70,6 +70,30 @@ fi
 child_pid="$(cat "${tmpdir}/child.pid")"
 if ! kill -0 "${child_pid}" 2>/dev/null; then
   echo "child did not start" >&2
+  exit 3
+fi
+
+# Wait until the server has passed parent-watchdog initialization. The child
+# PID file is written immediately after fork, before the child has necessarily
+# captured its original ppid; killing the wrapper too early can make the child
+# start already orphaned, which is not the regression this test is checking.
+ready=0
+for _ in {1..50}; do
+  if [[ -s "${tmpdir}/child.err" ]] && grep -q 'server.start' "${tmpdir}/child.err"; then
+    ready=1
+    break
+  fi
+  if ! kill -0 "${child_pid}" 2>/dev/null; then
+    echo "child exited before server startup" >&2
+    [[ -s "${tmpdir}/child.err" ]] && cat "${tmpdir}/child.err" >&2
+    exit 3
+  fi
+  sleep 0.1
+done
+
+if [[ "${ready}" -ne 1 ]]; then
+  echo "child did not report server startup" >&2
+  [[ -s "${tmpdir}/child.err" ]] && cat "${tmpdir}/child.err" >&2
   exit 3
 fi
 

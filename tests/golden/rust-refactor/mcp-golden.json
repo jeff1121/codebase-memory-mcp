@@ -1,0 +1,494 @@
+{
+  "alias_transcript": {
+    "name_is_not_project_alias": {
+      "contains_missing_project_text": true,
+      "isError": true
+    },
+    "project_argument_compatibility": {
+      "project": {
+        "edges": 63,
+        "nodes": 32,
+        "project": "rust_refactor_golden",
+        "status": "ready"
+      },
+      "projectName": {
+        "edges": 63,
+        "nodes": 32,
+        "project": "rust_refactor_golden",
+        "status": "ready"
+      },
+      "project_id": {
+        "edges": 63,
+        "nodes": 32,
+        "project": "rust_refactor_golden",
+        "status": "ready"
+      },
+      "project_name": {
+        "edges": 63,
+        "nodes": 32,
+        "project": "rust_refactor_golden",
+        "status": "ready"
+      }
+    },
+    "tool_name_alias": {
+      "advertised_in_tools_list": false,
+      "alias_isError": true,
+      "alias_tool": "trace_call_path",
+      "canonical_isError": true,
+      "canonical_tool": "trace_path",
+      "contains_function_not_found": true,
+      "same_text": true
+    }
+  },
+  "content_length_ping": {
+    "body_length": 44,
+    "content_length_matches": true,
+    "header_content_length": 44,
+    "request": {
+      "id": "frame-1",
+      "method": "ping"
+    },
+    "response": {
+      "id": "frame-1",
+      "jsonrpc": "2.0",
+      "result_keys": []
+    }
+  },
+  "errors": {
+    "parse_error": {
+      "error": {
+        "code": -32700,
+        "message": "Parse error"
+      },
+      "id": 0,
+      "jsonrpc": "2.0"
+    },
+    "unknown_method": {
+      "error": {
+        "code": -32601,
+        "message": "Method not found"
+      },
+      "id": 20,
+      "jsonrpc": "2.0"
+    }
+  },
+  "indexed_repo_tool_call": {
+    "columns": [
+      "n.label"
+    ],
+    "isError": false,
+    "row_count": 5,
+    "rows": [
+      [
+        "Branch"
+      ],
+      [
+        "Class"
+      ],
+      [
+        "Class"
+      ],
+      [
+        "Class"
+      ],
+      [
+        "Class"
+      ]
+    ],
+    "tool": "query_graph",
+    "total": 5
+  },
+  "initialize": {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "protocolVersion": "2025-06-18",
+    "serverName": "codebase-memory-mcp"
+  },
+  "notifications_initialized": {
+    "expect_response": false
+  },
+  "tools_call": {
+    "unknown_tool": {
+      "content_type_set": [
+        "text"
+      ],
+      "has_unknown_tool_text": true,
+      "id": 21,
+      "isError": true,
+      "jsonrpc": "2.0"
+    }
+  },
+  "tools_list": {
+    "count": 14,
+    "names": [
+      "delete_project",
+      "detect_changes",
+      "get_architecture",
+      "get_code_snippet",
+      "get_graph_schema",
+      "index_repository",
+      "index_status",
+      "ingest_traces",
+      "list_projects",
+      "manage_adr",
+      "query_graph",
+      "search_code",
+      "search_graph",
+      "trace_path"
+    ],
+    "pages": [
+      {
+        "cursor": null,
+        "id": 2,
+        "nextCursor": "8",
+        "tool_key_sets": [
+          [
+            "description",
+            "inputSchema",
+            "name",
+            "outputSchema",
+            "title"
+          ],
+          [
+            "description",
+            "inputSchema",
+            "name",
+            "outputSchema",
+            "title"
+          ],
+          [
+            "description",
+            "inputSchema",
+            "name",
+            "outputSchema",
+            "title"
+          ],
+          [
+            "description",
+            "inputSchema",
+            "name",
+            "outputSchema",
+            "title"
+          ],
+          [
+            "description",
+            "inputSchema",
+            "name",
+            "outputSchema",
+            "title"
+          ],
+          [
+            "description",
+            "inputSchema",
+            "name",
+            "outputSchema",
+            "title"
+          ],
+          [
+            "description",
+            "inputSchema",
+            "name",
+            "outputSchema",
+            "title"
+          ],
+          [
+            "description",
+            "inputSchema",
+            "name",
+            "outputSchema",
+            "title"
+          ]
+        ],
+        "tool_names": [
+          "index_repository",
+          "search_graph",
+          "query_graph",
+          "trace_path",
+          "get_code_snippet",
+          "get_graph_schema",
+          "get_architecture",
+          "search_code"
+        ]
+      },
+      {
+        "cursor": "8",
+        "id": 3,
+        "nextCursor": null,
+        "tool_key_sets": [
+          [
+            "description",
+            "inputSchema",
+            "name",
+            "outputSchema",
+            "title"
+          ],
+          [
+            "description",
+            "inputSchema",
+            "name",
+            "outputSchema",
+            "title"
+          ],
+          [
+            "description",
+            "inputSchema",
+            "name",
+            "outputSchema",
+            "title"
+          ],
+          [
+            "description",
+            "inputSchema",
+            "name",
+            "outputSchema",
+            "title"
+          ],
+          [
+            "description",
+            "inputSchema",
+            "name",
+            "outputSchema",
+            "title"
+          ],
+          [
+            "description",
+            "inputSchema",
+            "name",
+            "outputSchema",
+            "title"
+          ]
+        ],
+        "tool_names": [
+          "list_projects",
+          "delete_project",
+          "index_status",
+          "detect_changes",
+          "manage_adr",
+          "ingest_traces"
+        ]
+      }
+    ],
+    "response_ids": [
+      1,
+      2,
+      3
+    ],
+    "schema_transcript": [
+      {
+        "inputSchema": {
+          "property_keys": [
+            "project"
+          ],
+          "required": [
+            "project"
+          ],
+          "type": "object"
+        },
+        "name": "delete_project"
+      },
+      {
+        "inputSchema": {
+          "property_keys": [
+            "base_branch",
+            "depth",
+            "project",
+            "scope",
+            "since"
+          ],
+          "required": [
+            "project"
+          ],
+          "type": "object"
+        },
+        "name": "detect_changes"
+      },
+      {
+        "inputSchema": {
+          "property_keys": [
+            "aspects",
+            "path",
+            "project"
+          ],
+          "required": [
+            "project"
+          ],
+          "type": "object"
+        },
+        "name": "get_architecture"
+      },
+      {
+        "inputSchema": {
+          "property_keys": [
+            "include_neighbors",
+            "project",
+            "qualified_name"
+          ],
+          "required": [
+            "qualified_name",
+            "project"
+          ],
+          "type": "object"
+        },
+        "name": "get_code_snippet"
+      },
+      {
+        "inputSchema": {
+          "property_keys": [
+            "project"
+          ],
+          "required": [
+            "project"
+          ],
+          "type": "object"
+        },
+        "name": "get_graph_schema"
+      },
+      {
+        "inputSchema": {
+          "property_keys": [
+            "mode",
+            "name",
+            "persistence",
+            "repo_path",
+            "target_projects"
+          ],
+          "required": [
+            "repo_path"
+          ],
+          "type": "object"
+        },
+        "name": "index_repository"
+      },
+      {
+        "inputSchema": {
+          "property_keys": [
+            "project"
+          ],
+          "required": [
+            "project"
+          ],
+          "type": "object"
+        },
+        "name": "index_status"
+      },
+      {
+        "inputSchema": {
+          "property_keys": [
+            "project",
+            "traces"
+          ],
+          "required": [
+            "traces",
+            "project"
+          ],
+          "type": "object"
+        },
+        "name": "ingest_traces"
+      },
+      {
+        "inputSchema": {
+          "property_keys": [],
+          "required": [],
+          "type": "object"
+        },
+        "name": "list_projects"
+      },
+      {
+        "inputSchema": {
+          "property_keys": [
+            "content",
+            "mode",
+            "project",
+            "sections"
+          ],
+          "required": [
+            "project"
+          ],
+          "type": "object"
+        },
+        "name": "manage_adr"
+      },
+      {
+        "inputSchema": {
+          "property_keys": [
+            "max_rows",
+            "project",
+            "query"
+          ],
+          "required": [
+            "query",
+            "project"
+          ],
+          "type": "object"
+        },
+        "name": "query_graph"
+      },
+      {
+        "inputSchema": {
+          "property_keys": [
+            "context",
+            "file_pattern",
+            "limit",
+            "mode",
+            "path_filter",
+            "pattern",
+            "project",
+            "regex"
+          ],
+          "required": [
+            "pattern",
+            "project"
+          ],
+          "type": "object"
+        },
+        "name": "search_code"
+      },
+      {
+        "inputSchema": {
+          "property_keys": [
+            "exclude_entry_points",
+            "file_pattern",
+            "include_connected",
+            "label",
+            "limit",
+            "max_degree",
+            "min_degree",
+            "name_pattern",
+            "offset",
+            "project",
+            "qn_pattern",
+            "query",
+            "relationship",
+            "semantic_query"
+          ],
+          "required": [
+            "project"
+          ],
+          "type": "object"
+        },
+        "name": "search_graph"
+      },
+      {
+        "inputSchema": {
+          "property_keys": [
+            "depth",
+            "direction",
+            "edge_types",
+            "function_name",
+            "include_tests",
+            "mode",
+            "parameter_name",
+            "project",
+            "risk_labels"
+          ],
+          "required": [
+            "function_name",
+            "project"
+          ],
+          "type": "object"
+        },
+        "name": "trace_path"
+      }
+    ]
+  }
+}

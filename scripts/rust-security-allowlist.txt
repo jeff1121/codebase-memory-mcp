@@ -1,0 +1,5 @@
+# kind<TAB>path<TAB>needle<TAB>reason
+unsafe_allow	rust/cbm-core/src/ffi.rs	#![allow(unsafe_code)]	C ABI 邊界集中允許 unsafe linkage surface。
+unsafe	rust/cbm-core/src/ffi.rs	*	C ABI pointer 驗證與 caller-owned buffer 存取集中於此模組。
+filesystem	rust/cbm-core/src/foundation/platform.rs	use std::fs::File	cgroup quota 偵測只需要唯讀開檔。
+filesystem	rust/cbm-core/src/foundation/platform.rs	File::open(path)	cgroup quota 偵測只讀取小型 sysfs/cgroup 檔案。

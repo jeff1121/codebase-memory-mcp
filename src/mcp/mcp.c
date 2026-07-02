@@ -33,6 +33,7 @@ enum {
     MCP_CONTENT_PREFIX = 15, /* strlen("Content-Length:") */
     MCP_RETURN_2 = 2,
     MCP_TOOLS_PAGE_SIZE = 8,
+    MCP_POLL_SLICE_MS = 1000,
 };
 #define MCP_MS_TO_US 1000LL
 #define MCP_S_TO_US 1000000LL
@@ -5410,20 +5411,32 @@ static int poll_for_input_unix(cbm_mcp_server_t *srv, int fd, FILE *in) {
         return CBM_NOT_FOUND;
     }
     if (pr > 0) {
+        if ((pfd.revents & (POLLERR | POLLNVAL)) != 0) {
+            return CBM_NOT_FOUND;
+        }
+        if ((pfd.revents & POLLHUP) != 0 && (pfd.revents & POLLIN) == 0) {
+            return CBM_NOT_FOUND;
+        }
         return SKIP_ONE;
     }
 
     /* Phase 2: peek FILE* buffer */
     int saved_flags = fcntl(fd, F_GETFL);
     if (saved_flags < 0) {
-        /* fcntl failed — fall through to blocking poll */
-        pr = poll(&pfd, SKIP_ONE, STORE_IDLE_TIMEOUT_S * MCP_TIMEOUT_MS);
+        /* fcntl failed — fall through to a sliced blocking poll */
+        pr = poll(&pfd, SKIP_ONE, MCP_POLL_SLICE_MS);
         if (pr < 0) {
             return CBM_NOT_FOUND;
         }
         if (pr == 0) {
             cbm_mcp_server_evict_idle(srv, STORE_IDLE_TIMEOUT_S);
             return 0;
+        }
+        if ((pfd.revents & (POLLERR | POLLNVAL)) != 0) {
+            return CBM_NOT_FOUND;
+        }
+        if ((pfd.revents & POLLHUP) != 0 && (pfd.revents & POLLIN) == 0) {
+            return CBM_NOT_FOUND;
         }
         return SKIP_ONE;
     }
@@ -5437,14 +5450,21 @@ static int poll_for_input_unix(cbm_mcp_server_t *srv, int fd, FILE *in) {
             return CBM_NOT_FOUND; /* true EOF */
         }
         clearerr(in);
-        /* Phase 3: blocking poll */
-        pr = poll(&pfd, SKIP_ONE, STORE_IDLE_TIMEOUT_S * MCP_TIMEOUT_MS);
+        /* Phase 3: blocking poll, sliced so FIFO EOF on platforms that do not
+         * wake a long poll promptly is still observed on the next iteration. */
+        pr = poll(&pfd, SKIP_ONE, MCP_POLL_SLICE_MS);
         if (pr < 0) {
             return CBM_NOT_FOUND;
         }
         if (pr == 0) {
             cbm_mcp_server_evict_idle(srv, STORE_IDLE_TIMEOUT_S);
             return 0;
+        }
+        if ((pfd.revents & (POLLERR | POLLNVAL)) != 0) {
+            return CBM_NOT_FOUND;
+        }
+        if ((pfd.revents & POLLHUP) != 0 && (pfd.revents & POLLIN) == 0) {
+            return CBM_NOT_FOUND;
         }
         return SKIP_ONE;
     }

@@ -18,6 +18,7 @@ enum { CBM_DIR_PERMS = 0755, PL_RING = 4, PL_RING_MASK = 3, PL_SEQ_PASSES = 6, P
 #include "pipeline/artifact.h"
 #include "pipeline/pipeline_internal.h"
 #include "pipeline/pass_lsp_cross.h"
+#include "pipeline/rust_plan.h"
 #include "pipeline/worker_pool.h"
 #include "graph_buffer/graph_buffer.h"
 #include "git/git_context.h"
@@ -604,6 +605,12 @@ static void cbm_pipeline_extract_infra_routes(cbm_gbuf_t *gbuf, const cbm_file_i
 
 /* Run decorator_tags, configlink, and route matching passes. */
 typedef void (*predump_pass_fn)(cbm_pipeline_ctx_t *);
+typedef struct {
+    predump_pass_fn fn;
+    const char *name;
+    bool moderate_only; /* true = skip in fast mode */
+} predump_pass_def_t;
+
 static void predump_deco(cbm_pipeline_ctx_t *ctx) {
     cbm_pipeline_pass_decorator_tags(ctx->gbuf, ctx->project_name);
 }
@@ -623,31 +630,93 @@ static void predump_complexity(cbm_pipeline_ctx_t *ctx) {
     cbm_pipeline_pass_complexity(ctx);
 }
 
-static void run_predump_passes(cbm_pipeline_t *p, cbm_pipeline_ctx_t *ctx) {
-    static const struct {
-        predump_pass_fn fn;
-        const char *name;
-        bool moderate_only; /* true = skip in fast mode */
-    } passes[] = {
-        {predump_deco, "decorator_tags", false}, {predump_cfg, "configlink", false},
-        {predump_route, "route_match", false},   {predump_sim, "similarity", true},
-        {predump_sem, "semantic_edges", true},   {predump_complexity, "complexity", false},
-    };
-    enum { PREDUMP_PASS_COUNT = 6 };
+static const predump_pass_def_t predump_passes[] = {
+    {predump_deco, "decorator_tags", false}, {predump_cfg, "configlink", false},
+    {predump_route, "route_match", false},   {predump_sim, "similarity", true},
+    {predump_sem, "semantic_edges", true},   {predump_complexity, "complexity", false},
+};
+enum { PREDUMP_PASS_COUNT = (int)(sizeof(predump_passes) / sizeof(predump_passes[0])) };
+
+static void run_predump_pass(cbm_pipeline_ctx_t *ctx, const predump_pass_def_t *pass) {
     struct timespec t;
+    cbm_clock_gettime(CLOCK_MONOTONIC, &t);
+    pass->fn(ctx);
+    cbm_log_info("pass.timing", "pass", pass->name, "elapsed_ms", itoa_buf((int)elapsed_ms(t)));
+}
+
+static void run_c_predump_passes(cbm_pipeline_t *p, cbm_pipeline_ctx_t *ctx) {
     for (int i = 0; i < PREDUMP_PASS_COUNT && !check_cancel(p); i++) {
         /* "moderate_only" passes (similarity/semantic edges) run in FULL,
          * MODERATE and ADVANCED — they are skipped only in FAST. Compare
          * explicitly against FAST rather than `> MODERATE` so ADVANCED
          * (numerically 3) is not mistaken for a lighter mode than FULL. */
-        if (passes[i].moderate_only && p->mode == CBM_MODE_FAST) {
+        if (predump_passes[i].moderate_only && p->mode == CBM_MODE_FAST) {
             continue;
         }
-        cbm_clock_gettime(CLOCK_MONOTONIC, &t);
-        passes[i].fn(ctx);
-        cbm_log_info("pass.timing", "pass", passes[i].name, "elapsed_ms",
-                     itoa_buf((int)elapsed_ms(t)));
+        run_predump_pass(ctx, &predump_passes[i]);
     }
+}
+
+#ifdef CBM_USE_RUST_PIPELINE_PLAN
+static const predump_pass_def_t *find_predump_pass(const char *name, size_t len) {
+    if (!name || len == 0) {
+        return NULL;
+    }
+    for (int i = 0; i < PREDUMP_PASS_COUNT; i++) {
+        if (strlen(predump_passes[i].name) == len &&
+            strncmp(predump_passes[i].name, name, len) == 0) {
+            return &predump_passes[i];
+        }
+    }
+    return NULL;
+}
+
+static bool decode_rust_predump_plan(const char *plan, int mode, const predump_pass_def_t **ordered,
+                                     int *out_count) {
+    if (!plan || !ordered || !out_count) {
+        return false;
+    }
+    *out_count = 0;
+    const char *start = plan;
+    while (*start) {
+        const char *end = strchr(start, ',');
+        size_t len = end ? (size_t)(end - start) : strlen(start);
+        const predump_pass_def_t *pass = find_predump_pass(start, len);
+        if (!pass || (pass->moderate_only && mode == CBM_MODE_FAST) ||
+            *out_count >= PREDUMP_PASS_COUNT) {
+            return false;
+        }
+        ordered[(*out_count)++] = pass;
+        if (!end) {
+            break;
+        }
+        start = end + 1;
+    }
+    return *out_count > 0;
+}
+
+static bool run_rust_predump_passes(cbm_pipeline_t *p, cbm_pipeline_ctx_t *ctx) {
+    char plan[CBM_RS_PLAN_PREDUMP_BUF];
+    const predump_pass_def_t *ordered[PREDUMP_PASS_COUNT];
+    int count = 0;
+    if (!cbm_rust_plan_predump(p->mode, plan, sizeof(plan)) ||
+        !decode_rust_predump_plan(plan, p->mode, ordered, &count)) {
+        return false;
+    }
+    for (int i = 0; i < count && !check_cancel(p); i++) {
+        run_predump_pass(ctx, ordered[i]);
+    }
+    return true;
+}
+#endif
+
+static void run_predump_passes(cbm_pipeline_t *p, cbm_pipeline_ctx_t *ctx) {
+#ifdef CBM_USE_RUST_PIPELINE_PLAN
+    if (run_rust_predump_passes(p, ctx)) {
+        return;
+    }
+#endif
+    run_c_predump_passes(p, ctx);
 }
 
 /* Adapter that lets cbm_pipeline_pass_lsp_cross slot into the seq_passes
@@ -1126,9 +1195,15 @@ static int run_extraction_phase(cbm_pipeline_t *p, cbm_pipeline_ctx_t *ctx,
 
     int worker_count = cbm_default_worker_count(true);
     CBM_PROF_START(t_extract_total);
-    int rc = (worker_count > SKIP_ONE && file_count > MIN_FILES_FOR_PARALLEL)
-                 ? run_parallel_pipeline(p, ctx, files, file_count, worker_count, &t)
-                 : run_sequential_pipeline(p, ctx, files, file_count, &t);
+    bool use_parallel = worker_count > SKIP_ONE && file_count > MIN_FILES_FOR_PARALLEL;
+#ifdef CBM_USE_RUST_PIPELINE_PLAN
+    bool rust_use_parallel = false;
+    if (cbm_rust_plan_extracts_parallel(p->mode, worker_count, file_count, &rust_use_parallel)) {
+        use_parallel = rust_use_parallel;
+    }
+#endif
+    int rc = use_parallel ? run_parallel_pipeline(p, ctx, files, file_count, worker_count, &t)
+                          : run_sequential_pipeline(p, ctx, files, file_count, &t);
     CBM_PROF_END_N("pipeline", "2_extraction_total", t_extract_total, file_count);
     if (check_cancel(p)) {
         return CBM_NOT_FOUND;

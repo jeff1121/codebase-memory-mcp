@@ -1,0 +1,32 @@
+# Reusable: Rust refactor gates (lint + unit/FFI + opt-in parity matrices).
+# The C product build stays default; these gates protect the opt-in Rust
+# parity modules (foundation + pipeline registry/plan) and the language-graph
+# parity between the default C path and the Rust pipeline opt-in path.
+# Rust dependency audit + dangerous-API allow-list live in _security.yml.
+name: Rust
+
+on:
+  workflow_call: {}
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Install build deps
+        run: sudo apt-get update && sudo apt-get install -y zlib1g-dev
+
+      # ubuntu-latest ships a stable Rust toolchain; make clippy/rustfmt
+      # explicit so the lint gate never silently degrades.
+      - name: Ensure Rust components
+        run: |
+          rustup component add clippy rustfmt
+          rustc --version && cargo --version && cargo clippy --version
+
+      - name: Rust gates (lint + unit + FFI + opt-in parity)
+        run: make -f Makefile.cbm rust-ci-tests

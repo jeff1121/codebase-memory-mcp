@@ -5,6 +5,44 @@
  * All strings are copied into the arena — the pool owns the memory.
  */
 #include "str_intern.h"
+#ifdef CBM_USE_RUST_STR_INTERN
+#include <stdint.h>
+#include <string.h>
+
+extern CBMInternPool *cbm_rs_intern_create(void);
+extern void cbm_rs_intern_free(CBMInternPool *pool);
+extern const char *cbm_rs_intern_n(CBMInternPool *pool, const unsigned char *s, size_t len);
+extern uint32_t cbm_rs_intern_count(const CBMInternPool *pool);
+extern size_t cbm_rs_intern_bytes(const CBMInternPool *pool);
+
+CBMInternPool *cbm_intern_create(void) {
+    return cbm_rs_intern_create();
+}
+
+void cbm_intern_free(CBMInternPool *pool) {
+    cbm_rs_intern_free(pool);
+}
+
+const char *cbm_intern_n(CBMInternPool *pool, const char *s, size_t len) {
+    return cbm_rs_intern_n(pool, (const unsigned char *)s, len);
+}
+
+const char *cbm_intern(CBMInternPool *pool, const char *s) {
+    if (!s) {
+        return NULL;
+    }
+    return cbm_intern_n(pool, s, strlen(s));
+}
+
+uint32_t cbm_intern_count(const CBMInternPool *pool) {
+    return cbm_rs_intern_count(pool);
+}
+
+size_t cbm_intern_bytes(const CBMInternPool *pool) {
+    return cbm_rs_intern_bytes(pool);
+}
+
+#else
 #include "arena.h"
 #include "foundation/constants.h"
 
@@ -99,6 +137,9 @@ const char *cbm_intern_n(CBMInternPool *pool, const char *s, size_t len) {
     if (!pool || !s) {
         return NULL;
     }
+    if (len > UINT32_MAX) {
+        return NULL;
+    }
 
     uint32_t h = intern_hash(s, len);
     uint32_t idx = h & pool->mask;
@@ -151,3 +192,4 @@ uint32_t cbm_intern_count(const CBMInternPool *pool) {
 size_t cbm_intern_bytes(const CBMInternPool *pool) {
     return pool ? pool->total_bytes : 0;
 }
+#endif

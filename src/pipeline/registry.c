@@ -35,6 +35,24 @@ enum { REG_MAX_CANDIDATES = 256 };
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef CBM_USE_RUST_PIPELINE_REGISTRY
+typedef struct CbmRsRegistryHandle CbmRsRegistryHandle;
+typedef struct {
+    double confidence;
+    int candidate_count;
+    int matched;
+} CbmRsRegistryResolveOut;
+
+extern CbmRsRegistryHandle *cbm_rs_registry_create(void);
+extern void cbm_rs_registry_free(CbmRsRegistryHandle *registry);
+extern int cbm_rs_registry_add(CbmRsRegistryHandle *registry, const char *qualified_name);
+extern int cbm_rs_registry_resolve(const CbmRsRegistryHandle *registry, const char *callee_name,
+                                   const char *module_qn, const char **import_keys,
+                                   const char **import_vals, int import_count, char *qn_buf,
+                                   size_t qn_buf_size, char *strategy_buf, size_t strategy_buf_size,
+                                   CbmRsRegistryResolveOut *out);
+#endif
+
 /* Confidence score → human-readable band label. */
 #define CONF_BAND_HIGH 0.7
 #define CONF_BAND_MEDIUM 0.45
@@ -80,6 +98,10 @@ struct cbm_registry {
 
     /* byName: simpleName → qn_array_t* (heap-owned) */
     CBMHashTable *by_name;
+
+#ifdef CBM_USE_RUST_PIPELINE_REGISTRY
+    CbmRsRegistryHandle *rust_registry;
+#endif
 };
 
 /* ── Helpers ─────────────────────────────────────────────────────── */
@@ -356,6 +378,85 @@ static cbm_resolution_t empty_result(void) {
     return r;
 }
 
+static void cache_resolution(const char *callee_name, cbm_resolution_t res) {
+    if (!_resolve_cache) {
+        return;
+    }
+    resolve_cache_entry_t *e = (resolve_cache_entry_t *)malloc(sizeof(*e));
+    if (!e) {
+        return;
+    }
+    e->res = res;
+    char *kdup = strdup(callee_name);
+    if (kdup) {
+        cbm_ht_set(_resolve_cache, kdup, e);
+    } else {
+        free(e);
+    }
+}
+
+#ifdef CBM_USE_RUST_PIPELINE_REGISTRY
+static const char *rust_strategy_literal(const char *strategy) {
+    if (!strategy || !strategy[0]) {
+        return NULL;
+    }
+    if (strcmp(strategy, "import_map") == 0) {
+        return "import_map";
+    }
+    if (strcmp(strategy, "import_map_suffix") == 0) {
+        return "import_map_suffix";
+    }
+    if (strcmp(strategy, "same_module") == 0) {
+        return "same_module";
+    }
+    if (strcmp(strategy, "qualified_suffix") == 0) {
+        return "qualified_suffix";
+    }
+    if (strcmp(strategy, "unique_name") == 0) {
+        return "unique_name";
+    }
+    if (strcmp(strategy, "suffix_match") == 0) {
+        return "suffix_match";
+    }
+    return NULL;
+}
+
+static cbm_resolution_t resolve_with_rust_registry(const cbm_registry_t *r, const char *callee_name,
+                                                   const char *module_qn,
+                                                   const char **import_map_keys,
+                                                   const char **import_map_vals,
+                                                   int import_map_count, bool *handled) {
+    *handled = false;
+    if (!r->rust_registry) {
+        return empty_result();
+    }
+
+    char qn_buf[CBM_SZ_4K];
+    char strategy_buf[CBM_SZ_64];
+    CbmRsRegistryResolveOut out = {0};
+    int rc = cbm_rs_registry_resolve(r->rust_registry, callee_name, module_qn, import_map_keys,
+                                     import_map_vals, import_map_count, qn_buf, sizeof(qn_buf),
+                                     strategy_buf, sizeof(strategy_buf), &out);
+    if (rc < 0) {
+        return empty_result();
+    }
+
+    *handled = true;
+    if (rc == 0 || !out.matched) {
+        return empty_result();
+    }
+
+    const char *stored_key = cbm_ht_get_key(r->exact, qn_buf);
+    const char *strategy = rust_strategy_literal(strategy_buf);
+    if (!stored_key || !strategy) {
+        *handled = false;
+        return empty_result();
+    }
+
+    return (cbm_resolution_t){stored_key, strategy, out.confidence, out.candidate_count};
+}
+#endif
+
 /* ── Perl builtin guard (#459 follow-up: call-graph noise) ──────────
  * Curated subset of perlfunc core builtins. When a Perl CALL resolves
  * only by the generic short-name matcher (no LSP, no import, after the
@@ -432,6 +533,9 @@ cbm_registry_t *cbm_registry_new(void) {
     }
     r->exact = cbm_ht_create(CBM_SZ_1K);
     r->by_name = cbm_ht_create(CBM_SZ_512);
+#ifdef CBM_USE_RUST_PIPELINE_REGISTRY
+    r->rust_registry = cbm_rs_registry_create();
+#endif
     return r;
 }
 
@@ -462,6 +566,9 @@ void cbm_registry_free(cbm_registry_t *r) {
     cbm_ht_free(r->exact);
     cbm_ht_foreach(r->by_name, free_qn_array, NULL);
     cbm_ht_free(r->by_name);
+#ifdef CBM_USE_RUST_PIPELINE_REGISTRY
+    cbm_rs_registry_free(r->rust_registry);
+#endif
     free(r);
 }
 
@@ -478,6 +585,13 @@ void cbm_registry_add(cbm_registry_t *r, const char *name, const char *qualified
     if (cbm_ht_get(r->exact, qualified_name)) {
         return;
     }
+
+#ifdef CBM_USE_RUST_PIPELINE_REGISTRY
+    if (r->rust_registry && cbm_rs_registry_add(r->rust_registry, qualified_name) < 0) {
+        cbm_rs_registry_free(r->rust_registry);
+        r->rust_registry = NULL;
+    }
+#endif
 
     /* Store in exact map: QN → label */
     cbm_ht_set(r->exact, strdup(qualified_name), strdup(label));
@@ -774,6 +888,17 @@ cbm_resolution_t cbm_registry_resolve(const cbm_registry_t *r, const char *calle
         }
     }
 
+#ifdef CBM_USE_RUST_PIPELINE_REGISTRY
+    bool rust_handled = false;
+    cbm_resolution_t rust_res =
+        resolve_with_rust_registry(r, callee_name, module_qn, import_map_keys, import_map_vals,
+                                   import_map_count, &rust_handled);
+    if (rust_handled) {
+        cache_resolution(callee_name, rust_res);
+        return rust_res;
+    }
+#endif
+
     /* Split callee at the first path separator: "pkg.Func" → prefix="pkg",
      * suffix="Func".  Rust/C++ use "::" rather than ".", so honor whichever
      * separator appears first ("lib::square" → prefix="lib", suffix="square").
@@ -815,18 +940,7 @@ cbm_resolution_t cbm_registry_resolve(const cbm_registry_t *r, const char *calle
 
     /* Cache the result (including empty — caching the negative answer
      * is just as valuable; same name asks the same question). */
-    if (_resolve_cache) {
-        resolve_cache_entry_t *e = (resolve_cache_entry_t *)malloc(sizeof(*e));
-        if (e) {
-            e->res = res;
-            char *kdup = strdup(callee_name);
-            if (kdup) {
-                cbm_ht_set(_resolve_cache, kdup, e);
-            } else {
-                free(e);
-            }
-        }
-    }
+    cache_resolution(callee_name, res);
     return res;
 }
 

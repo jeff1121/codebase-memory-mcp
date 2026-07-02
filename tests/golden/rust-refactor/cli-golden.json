@@ -1,0 +1,68 @@
+{
+  "cli_invocation_forms": {
+    "args_file": {
+      "columns": [
+        "n.label"
+      ],
+      "row_count": 2,
+      "tool": "query_graph"
+    },
+    "flag_form": {
+      "project": "rust_refactor_golden",
+      "status": "ready",
+      "tool": "index_status"
+    },
+    "json_envelope": {
+      "content_type": "text",
+      "isError": false,
+      "top_level_keys": [
+        "content",
+        "isError",
+        "structuredContent"
+      ]
+    },
+    "plain_error": {
+      "exit_code": 1,
+      "stderr": "query is required",
+      "stdout_empty": true
+    },
+    "plain_success": {
+      "exit_code": 0,
+      "project": "rust_refactor_golden",
+      "status": "ready",
+      "stderr_empty": true,
+      "stdout_json": true
+    },
+    "raw_json_args": {
+      "project": "rust_refactor_golden",
+      "status": "ready",
+      "tool": "index_status"
+    },
+    "stdin_json": {
+      "project": "rust_refactor_golden",
+      "status": "ready",
+      "tool": "index_status"
+    }
+  },
+  "index_repository": {
+    "adr_present": false,
+    "artifact_present": false,
+    "edges": 63,
+    "nodes": 32,
+    "project": "rust_refactor_golden",
+    "status": "indexed"
+  },
+  "index_status": {
+    "project": "rust_refactor_golden",
+    "status": "ready"
+  },
+  "list_projects": {
+    "contains": [
+      "rust_refactor_golden"
+    ]
+  },
+  "version": {
+    "program": "codebase-memory-mcp",
+    "version_kind": "dev"
+  }
+}

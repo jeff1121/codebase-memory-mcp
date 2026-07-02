@@ -76,6 +76,22 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Keep the smoke battery hermetic. The MCP server reads user config/cache on
+# startup; inheriting a developer's real auto_index/UI settings can launch
+# background work and make the clean-EOF invariant nondeterministic.
+SMOKE_HOME="$SCRATCH/home"
+SMOKE_CONFIG="$SCRATCH/config"
+SMOKE_APPDATA="$SCRATCH/appdata"
+SMOKE_LOCALAPPDATA="$SCRATCH/localappdata"
+SMOKE_CACHE="$SCRATCH/cache"
+mkdir -p "$SMOKE_HOME" "$SMOKE_CONFIG" "$SMOKE_APPDATA" "$SMOKE_LOCALAPPDATA" "$SMOKE_CACHE"
+export HOME="$(native_path "$SMOKE_HOME")"
+export USERPROFILE="$HOME"
+export XDG_CONFIG_HOME="$(native_path "$SMOKE_CONFIG")"
+export APPDATA="$(native_path "$SMOKE_APPDATA")"
+export LOCALAPPDATA="$(native_path "$SMOKE_LOCALAPPDATA")"
+export CBM_CACHE_DIR="$(native_path "$SMOKE_CACHE")"
+
 # ── Bounded command runner ────────────────────────────────────────────────
 # Run a command with a wall-clock bound WITHOUT `sleep` loops. Prefers the
 # `timeout`/`gtimeout` binaries (coreutils, present on Linux + msys2; on macOS
@@ -454,28 +470,73 @@ inv_tools_list() {
         fail "tools-list" "server not alive"
         return
     fi
-    local req='{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
-    if ! mcp_send_recv "$req" 15; then
-        fail "tools-list" "no response within 15s (hang)"
-        return
-    fi
-    if ! printf '%s' "$MCP_RESP" | is_json; then
-        fail "tools-list" "response not valid JSON"
-        return
-    fi
-    # Extract tool names from result.tools[].name.
-    local got_names got_count
-    got_names="$(printf '%s' "$MCP_RESP" | "$PY" -c '
+
+    # tools/list is paginated. Follow nextCursor until the server reports the
+    # final page, then assert the complete canonical tool set.
+    local cursor=""
+    local all_names=""
+    local pages=0
+    while :; do
+        pages=$((pages + 1))
+        if [ "$pages" -gt 10 ]; then
+            fail "tools-list" "pagination exceeded 10 pages"
+            return
+        fi
+
+        local req
+        if [ -n "$cursor" ]; then
+            req="{\"jsonrpc\":\"2.0\",\"id\":$((MCP_ID++)),\"method\":\"tools/list\",\"params\":{\"cursor\":\"$cursor\"}}"
+        else
+            req="{\"jsonrpc\":\"2.0\",\"id\":$((MCP_ID++)),\"method\":\"tools/list\",\"params\":{}}"
+        fi
+
+        if ! mcp_send_recv "$req" 15; then
+            fail "tools-list" "no response within 15s for page $pages (hang)"
+            return
+        fi
+        if ! printf '%s' "$MCP_RESP" | is_json; then
+            fail "tools-list" "page $pages response not valid JSON"
+            return
+        fi
+
+        local page_names
+        if ! page_names="$(printf '%s' "$MCP_RESP" | "$PY" -c '
+import sys,json
+try:
+    d=json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+tools=(d.get("result") or {}).get("tools")
+if not isinstance(tools, list):
+    sys.exit(1)
+for t in tools:
+    if isinstance(t, dict) and isinstance(t.get("name"), str):
+        print(t["name"])' 2>/dev/null)"; then
+            fail "tools-list" "page $pages response missing result.tools"
+            return
+        fi
+        all_names="${all_names}${page_names}
+"
+
+        local next_cursor
+        next_cursor="$(printf '%s' "$MCP_RESP" | "$PY" -c '
 import sys,json
 try:
     d=json.load(sys.stdin)
 except Exception:
     sys.exit(0)
-tools=(d.get("result") or {}).get("tools") or []
-print(" ".join(sorted(t.get("name","") for t in tools)))' 2>/dev/null)"
-    got_count="$(printf '%s' "$got_names" | tr ' ' '\n' | grep -c . )"
+cursor=(d.get("result") or {}).get("nextCursor")
+if isinstance(cursor, str):
+    print(cursor)' 2>/dev/null)"
+        [ -z "$next_cursor" ] && break
+        cursor="$next_cursor"
+    done
+
+    local got_names got_count
+    got_names="$(printf '%s\n' "$all_names" | grep -v '^$' | sort | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
+    got_count="$(printf '%s\n' "$all_names" | grep -c . )"
     if [ "${got_count:-0}" -ne "$EXPECTED_TOOL_COUNT" ]; then
-        fail "tools-list" "got $got_count tools, expected $EXPECTED_TOOL_COUNT; names=[$got_names]"
+        fail "tools-list" "got $got_count tools across $pages pages, expected $EXPECTED_TOOL_COUNT; names=[$got_names]"
         return
     fi
     local missing=""

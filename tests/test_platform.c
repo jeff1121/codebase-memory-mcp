@@ -8,6 +8,50 @@
 #include <stdlib.h>
 #include <unistd.h>
 
+typedef struct {
+    const char *name;
+    char *value;
+    bool was_set;
+} platform_env_snapshot_t;
+
+static void platform_env_save(platform_env_snapshot_t *snapshot, const char *name) {
+    const char *value = getenv(name);
+    snapshot->name = name;
+    snapshot->was_set = value != NULL;
+    snapshot->value = value ? cbm_strdup(value) : NULL;
+}
+
+static void platform_env_restore(platform_env_snapshot_t *snapshot) {
+    if (snapshot->was_set) {
+        (void)cbm_setenv(snapshot->name, snapshot->value ? snapshot->value : "", 1);
+    } else {
+        (void)cbm_unsetenv(snapshot->name);
+    }
+    free(snapshot->value);
+    snapshot->value = NULL;
+}
+
+static void platform_env_save_many(platform_env_snapshot_t *snapshots, const char **names,
+                                   size_t count) {
+    for (size_t i = 0; i < count; i++) {
+        platform_env_save(&snapshots[i], names[i]);
+    }
+}
+
+static void platform_env_restore_many(platform_env_snapshot_t *snapshots, size_t count) {
+    for (size_t i = 0; i < count; i++) {
+        platform_env_restore(&snapshots[i]);
+    }
+}
+
+static void platform_fill_repeated(char *buf, size_t buf_sz, char ch) {
+    if (buf_sz == 0) {
+        return;
+    }
+    memset(buf, ch, buf_sz - 1);
+    buf[buf_sz - 1] = '\0';
+}
+
 #ifdef __linux__
 /* Linux-only cgroup tests need stdio for FILE*, stdlib for mkdtemp,
  * string for strncpy/strchr, sys/stat for mkdir, dirent for the
@@ -78,6 +122,177 @@ TEST(platform_mmap_nonexistent) {
     size_t sz = 0;
     void *data = cbm_mmap_read("nonexistent_xyz.txt", &sz);
     ASSERT_NULL(data);
+    PASS();
+}
+
+TEST(platform_normalize_path_sep) {
+    char win_path[] = "c:\\Users\\test";
+    ASSERT(cbm_normalize_path_sep(win_path) == win_path);
+    ASSERT_STR_EQ(win_path, "C:/Users/test");
+
+    char bare_drive[] = "z:";
+    ASSERT(cbm_normalize_path_sep(bare_drive) == bare_drive);
+    ASSERT_STR_EQ(bare_drive, "Z:");
+
+    char non_drive[] = "abc:def\\x";
+    ASSERT(cbm_normalize_path_sep(non_drive) == non_drive);
+    ASSERT_STR_EQ(non_drive, "abc:def/x");
+
+    ASSERT_NULL(cbm_normalize_path_sep(NULL));
+    PASS();
+}
+
+TEST(platform_safe_getenv_contract) {
+    const char *name = "CBM_TEST_SAFE_GETENV";
+    platform_env_snapshot_t saved;
+    platform_env_save(&saved, name);
+
+    char buf[32];
+    ASSERT_EQ(cbm_setenv(name, "fixture-value", 1), 0);
+    memset(buf, '?', sizeof(buf));
+    const char *got = cbm_safe_getenv(name, buf, sizeof(buf), "fallback");
+    ASSERT(got == buf);
+    ASSERT_STR_EQ(buf, "fixture-value");
+
+    ASSERT_EQ(cbm_unsetenv(name), 0);
+    memset(buf, '?', sizeof(buf));
+    got = cbm_safe_getenv(name, buf, sizeof(buf), "fallback");
+    ASSERT(got == buf);
+    ASSERT_STR_EQ(buf, "fallback");
+
+    memset(buf, '?', sizeof(buf));
+    got = cbm_safe_getenv(name, buf, sizeof(buf), NULL);
+    ASSERT_NULL(got);
+    ASSERT_STR_EQ(buf, "");
+
+    ASSERT_EQ(cbm_setenv(name, "abcdef", 1), 0);
+    char small[4];
+    memset(small, '?', sizeof(small));
+    got = cbm_safe_getenv(name, small, sizeof(small), NULL);
+    ASSERT(got == small);
+    ASSERT_STR_EQ(small, "abc");
+
+    char sentinel = 'Z';
+    ASSERT_NULL(cbm_safe_getenv(name, NULL, 0, "fallback"));
+    ASSERT_NULL(cbm_safe_getenv(name, &sentinel, 0, "fallback"));
+    ASSERT_EQ(sentinel, 'Z');
+
+    memset(buf, '?', sizeof(buf));
+    ASSERT_NULL(cbm_safe_getenv(NULL, buf, sizeof(buf), "fallback"));
+    ASSERT_STR_EQ(buf, "");
+
+    platform_env_restore(&saved);
+    PASS();
+}
+
+TEST(platform_home_dir_precedence_and_normalization) {
+    const char *names[] = {"HOME", "USERPROFILE"};
+    platform_env_snapshot_t saved[sizeof(names) / sizeof(names[0])];
+    platform_env_save_many(saved, names, sizeof(names) / sizeof(names[0]));
+
+    ASSERT_EQ(cbm_setenv("HOME", "c:\\Home\\Primary", 1), 0);
+    ASSERT_EQ(cbm_setenv("USERPROFILE", "d:\\Profile", 1), 0);
+    ASSERT_STR_EQ(cbm_get_home_dir(), "C:/Home/Primary");
+
+    ASSERT_EQ(cbm_unsetenv("HOME"), 0);
+    ASSERT_STR_EQ(cbm_get_home_dir(), "D:/Profile");
+
+    ASSERT_EQ(cbm_unsetenv("USERPROFILE"), 0);
+    ASSERT_NULL(cbm_get_home_dir());
+
+    platform_env_restore_many(saved, sizeof(saved) / sizeof(saved[0]));
+    PASS();
+}
+
+TEST(platform_app_dirs_precedence_and_fallback) {
+    const char *names[] = {"HOME", "USERPROFILE", "XDG_CONFIG_HOME", "APPDATA", "LOCALAPPDATA"};
+    platform_env_snapshot_t saved[sizeof(names) / sizeof(names[0])];
+    platform_env_save_many(saved, names, sizeof(names) / sizeof(names[0]));
+
+    ASSERT_EQ(cbm_setenv("HOME", "c:\\Home\\Primary", 1), 0);
+    ASSERT_EQ(cbm_unsetenv("USERPROFILE"), 0);
+
+#ifdef _WIN32
+    ASSERT_EQ(cbm_setenv("APPDATA", "e:\\Config\\Roaming", 1), 0);
+    ASSERT_EQ(cbm_setenv("LOCALAPPDATA", "f:\\Config\\Local", 1), 0);
+    ASSERT_STR_EQ(cbm_app_config_dir(), "E:/Config/Roaming");
+    ASSERT_STR_EQ(cbm_app_local_dir(), "F:/Config/Local");
+
+    ASSERT_EQ(cbm_unsetenv("APPDATA"), 0);
+    ASSERT_EQ(cbm_unsetenv("LOCALAPPDATA"), 0);
+    ASSERT_STR_EQ(cbm_app_config_dir(), "C:/Home/Primary/AppData/Roaming");
+    ASSERT_STR_EQ(cbm_app_local_dir(), "C:/Home/Primary/AppData/Local");
+#else
+    ASSERT_EQ(cbm_setenv("XDG_CONFIG_HOME", "/tmp/cbm-config", 1), 0);
+    ASSERT_STR_EQ(cbm_app_config_dir(), "/tmp/cbm-config");
+    ASSERT_STR_EQ(cbm_app_local_dir(), "/tmp/cbm-config");
+
+    ASSERT_EQ(cbm_unsetenv("XDG_CONFIG_HOME"), 0);
+    ASSERT_STR_EQ(cbm_app_config_dir(), "C:/Home/Primary/.config");
+    ASSERT_STR_EQ(cbm_app_local_dir(), "C:/Home/Primary/.config");
+#endif
+
+    ASSERT_EQ(cbm_unsetenv("HOME"), 0);
+    ASSERT_NULL(cbm_app_config_dir());
+    ASSERT_NULL(cbm_app_local_dir());
+
+    platform_env_restore_many(saved, sizeof(saved) / sizeof(saved[0]));
+    PASS();
+}
+
+TEST(platform_cache_dir_override_and_fallback) {
+    const char *names[] = {"HOME", "USERPROFILE", "CBM_CACHE_DIR"};
+    platform_env_snapshot_t saved[sizeof(names) / sizeof(names[0])];
+    platform_env_save_many(saved, names, sizeof(names) / sizeof(names[0]));
+
+    ASSERT_EQ(cbm_setenv("HOME", "c:\\Home\\Primary", 1), 0);
+    ASSERT_EQ(cbm_unsetenv("USERPROFILE"), 0);
+    ASSERT_EQ(cbm_setenv("CBM_CACHE_DIR", "g:\\Cache\\Root", 1), 0);
+    ASSERT_STR_EQ(cbm_resolve_cache_dir(), "G:/Cache/Root");
+
+    ASSERT_EQ(cbm_unsetenv("CBM_CACHE_DIR"), 0);
+    ASSERT_STR_EQ(cbm_resolve_cache_dir(), "C:/Home/Primary/.cache/codebase-memory-mcp");
+
+    ASSERT_EQ(cbm_unsetenv("HOME"), 0);
+    ASSERT_NULL(cbm_resolve_cache_dir());
+
+    platform_env_restore_many(saved, sizeof(saved) / sizeof(saved[0]));
+    PASS();
+}
+
+TEST(platform_env_dir_truncation_contract) {
+    const char *names[] = {"HOME",    "USERPROFILE",  "XDG_CONFIG_HOME",
+                           "APPDATA", "LOCALAPPDATA", "CBM_CACHE_DIR"};
+    platform_env_snapshot_t saved[sizeof(names) / sizeof(names[0])];
+    platform_env_save_many(saved, names, sizeof(names) / sizeof(names[0]));
+
+    char long_home[301];
+    char long_cache[301];
+    platform_fill_repeated(long_home, sizeof(long_home), 'a');
+    platform_fill_repeated(long_cache, sizeof(long_cache), 'b');
+
+    ASSERT_EQ(cbm_setenv("HOME", long_home, 1), 0);
+    ASSERT_EQ(cbm_unsetenv("USERPROFILE"), 0);
+    ASSERT_EQ(cbm_unsetenv("XDG_CONFIG_HOME"), 0);
+    ASSERT_EQ(cbm_unsetenv("APPDATA"), 0);
+    ASSERT_EQ(cbm_unsetenv("LOCALAPPDATA"), 0);
+    ASSERT_EQ(cbm_unsetenv("CBM_CACHE_DIR"), 0);
+
+    ASSERT_NOT_NULL(cbm_get_home_dir());
+    ASSERT_EQ(strlen(cbm_get_home_dir()), 255);
+#ifdef _WIN32
+    ASSERT_EQ(strlen(cbm_app_config_dir()), 255 + strlen("/AppData/Roaming"));
+    ASSERT_EQ(strlen(cbm_app_local_dir()), 255 + strlen("/AppData/Local"));
+#else
+    ASSERT_EQ(strlen(cbm_app_config_dir()), 255 + strlen("/.config"));
+    ASSERT_EQ(strlen(cbm_app_local_dir()), 255 + strlen("/.config"));
+#endif
+
+    ASSERT_EQ(cbm_setenv("CBM_CACHE_DIR", long_cache, 1), 0);
+    ASSERT_NOT_NULL(cbm_resolve_cache_dir());
+    ASSERT_EQ(strlen(cbm_resolve_cache_dir()), 255);
+
+    platform_env_restore_many(saved, sizeof(saved) / sizeof(saved[0]));
     PASS();
 }
 
@@ -313,6 +528,12 @@ SUITE(platform) {
     RUN_TEST(platform_file_size);
     RUN_TEST(platform_mmap);
     RUN_TEST(platform_mmap_nonexistent);
+    RUN_TEST(platform_normalize_path_sep);
+    RUN_TEST(platform_safe_getenv_contract);
+    RUN_TEST(platform_home_dir_precedence_and_normalization);
+    RUN_TEST(platform_app_dirs_precedence_and_fallback);
+    RUN_TEST(platform_cache_dir_override_and_fallback);
+    RUN_TEST(platform_env_dir_truncation_contract);
     RUN_TEST(platform_default_workers_env_override);
     RUN_TEST(platform_default_workers_env_invalid);
     RUN_TEST(platform_default_workers_env_unset);

@@ -266,6 +266,20 @@ TEST(path_join_only_slash_base) {
     PASS();
 }
 
+TEST(path_join_both_slashes) {
+    setup();
+    ASSERT_STR_EQ(cbm_path_join(&a, "/", "/"), "");
+    teardown();
+    PASS();
+}
+
+TEST(path_join_slashy_empty_name) {
+    setup();
+    ASSERT_STR_EQ(cbm_path_join(&a, "src", "///"), "src");
+    teardown();
+    PASS();
+}
+
 TEST(path_join_long_paths) {
     setup();
     char long_base[512];
@@ -287,6 +301,22 @@ TEST(path_join_long_paths) {
 TEST(path_join_n_zero) {
     setup();
     ASSERT_STR_EQ(cbm_path_join_n(&a, NULL, 0), "");
+    teardown();
+    PASS();
+}
+
+TEST(path_join_n_negative) {
+    setup();
+    const char *parts[] = {"a", "b"};
+    ASSERT_STR_EQ(cbm_path_join_n(&a, parts, -1), "");
+    teardown();
+    PASS();
+}
+
+TEST(path_join_n_single) {
+    setup();
+    const char *parts[] = {"single"};
+    ASSERT_STR_EQ(cbm_path_join_n(&a, parts, 1), "single");
     teardown();
     PASS();
 }
@@ -349,6 +379,56 @@ TEST(path_base_just_filename) {
 
 TEST(path_base_trailing_slash) {
     ASSERT_STR_EQ(cbm_path_base("dir/"), "");
+    PASS();
+}
+
+TEST(path_dir_root) {
+    setup();
+    ASSERT_STR_EQ(cbm_path_dir(&a, "/"), "");
+    teardown();
+    PASS();
+}
+
+TEST(path_dir_trailing_slash) {
+    setup();
+    ASSERT_STR_EQ(cbm_path_dir(&a, "dir/"), "dir");
+    teardown();
+    PASS();
+}
+
+TEST(str_strip_ext_hidden_file) {
+    setup();
+    ASSERT_STR_EQ(cbm_str_strip_ext(&a, ".gitignore"), "");
+    teardown();
+    PASS();
+}
+
+TEST(str_strip_ext_dot_directory) {
+    setup();
+    ASSERT_STR_EQ(cbm_str_strip_ext(&a, "dir.name/file"), "dir.name/file");
+    teardown();
+    PASS();
+}
+
+TEST(str_strip_ext_trailing_dot) {
+    setup();
+    ASSERT_STR_EQ(cbm_str_strip_ext(&a, "file."), "file");
+    teardown();
+    PASS();
+}
+
+TEST(str_split_edge_empty_parts) {
+    setup();
+    int count = 0;
+    char **parts = cbm_str_split(&a, "/a//b/", '/', &count);
+    ASSERT_EQ(count, 5);
+    ASSERT_STR_EQ(parts[0], "");
+    ASSERT_STR_EQ(parts[1], "a");
+    ASSERT_STR_EQ(parts[2], "");
+    ASSERT_STR_EQ(parts[3], "b");
+    ASSERT_STR_EQ(parts[4], "");
+    ASSERT_NULL(parts[5]);
+    teardown();
     PASS();
 }
 
@@ -516,8 +596,12 @@ SUITE(str_util) {
     /* path_join edge cases */
     RUN_TEST(path_join_multi_slashes);
     RUN_TEST(path_join_only_slash_base);
+    RUN_TEST(path_join_both_slashes);
+    RUN_TEST(path_join_slashy_empty_name);
     RUN_TEST(path_join_long_paths);
     RUN_TEST(path_join_n_zero);
+    RUN_TEST(path_join_n_negative);
+    RUN_TEST(path_join_n_single);
     RUN_TEST(path_join_n_null_parts);
     /* path_ext edge cases */
     RUN_TEST(path_ext_null);
@@ -531,6 +615,12 @@ SUITE(str_util) {
     RUN_TEST(path_base_empty);
     RUN_TEST(path_base_just_filename);
     RUN_TEST(path_base_trailing_slash);
+    RUN_TEST(path_dir_root);
+    RUN_TEST(path_dir_trailing_slash);
+    RUN_TEST(str_strip_ext_hidden_file);
+    RUN_TEST(str_strip_ext_dot_directory);
+    RUN_TEST(str_strip_ext_trailing_dot);
+    RUN_TEST(str_split_edge_empty_parts);
     /* validate_shell_arg */
     RUN_TEST(validate_shell_arg_null);
     RUN_TEST(validate_shell_arg_safe);

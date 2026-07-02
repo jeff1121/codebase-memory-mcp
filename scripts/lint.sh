@@ -43,4 +43,13 @@ else
     $ARCH_PREFIX make -j3 -f Makefile.cbm lint "${MAKE_ARGS[@]+"${MAKE_ARGS[@]}"}"
 fi
 
+if [ -f "$ROOT/Cargo.toml" ] && [ "${CBM_SKIP_RUST:-0}" != "1" ]; then
+    if command -v cargo >/dev/null 2>&1; then
+        echo "=== Rust lint ==="
+        make -f Makefile.cbm rust-lint
+    else
+        echo "=== Rust lint skipped (cargo not found) ==="
+    fi
+fi
+
 echo "=== All linters passed ==="

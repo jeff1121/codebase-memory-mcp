@@ -121,6 +121,21 @@ TEST(intern_null_returns_null) {
     PASS();
 }
 
+TEST(intern_null_pool_and_null_input_ops) {
+    ASSERT_NULL(cbm_intern(NULL, "abc"));
+    ASSERT_NULL(cbm_intern_n(NULL, "abc", 3));
+    ASSERT_EQ(cbm_intern_count(NULL), 0);
+    ASSERT_EQ(cbm_intern_bytes(NULL), 0);
+    cbm_intern_free(NULL);
+
+    CBMInternPool *pool = cbm_intern_create();
+    ASSERT_NULL(cbm_intern_n(pool, NULL, 3));
+    ASSERT_EQ(cbm_intern_count(pool), 0);
+    ASSERT_EQ(cbm_intern_bytes(pool), 0);
+    cbm_intern_free(pool);
+    PASS();
+}
+
 TEST(intern_n_zero_len) {
     /* intern_n with len=0 should produce an empty string */
     CBMInternPool *pool = cbm_intern_create();
@@ -133,6 +148,38 @@ TEST(intern_n_zero_len) {
     ASSERT_EQ((uintptr_t)s, (uintptr_t)s2);
     ASSERT_EQ(cbm_intern_count(pool), 1);
     cbm_intern_free(pool);
+    PASS();
+}
+
+TEST(intern_n_embedded_nul) {
+    CBMInternPool *pool = cbm_intern_create();
+    const char src1[] = {'a', '\0', 'b'};
+    const char src2[] = {'a', '\0', 'b', 'z'};
+    const char src3[] = {'a', '\0'};
+    const char *s1 = cbm_intern_n(pool, src1, sizeof(src1));
+    const char *s2 = cbm_intern_n(pool, src2, 3);
+    const char *s3 = cbm_intern_n(pool, src3, sizeof(src3));
+    ASSERT_NOT_NULL(s1);
+    ASSERT_EQ((uintptr_t)s1, (uintptr_t)s2);
+    ASSERT_NEQ((uintptr_t)s1, (uintptr_t)s3);
+    ASSERT_MEM_EQ(s1, src1, sizeof(src1));
+    ASSERT_MEM_EQ(s3, src3, sizeof(src3));
+    ASSERT_EQ(cbm_intern_count(pool), 2);
+    ASSERT_EQ(cbm_intern_bytes(pool), 5);
+    cbm_intern_free(pool);
+    PASS();
+}
+
+TEST(intern_n_rejects_len_over_uint32) {
+#if SIZE_MAX > UINT32_MAX
+    CBMInternPool *pool = cbm_intern_create();
+    const char small[] = "x";
+    const char *s = cbm_intern_n(pool, small, (size_t)UINT32_MAX + 1u);
+    ASSERT_NULL(s);
+    ASSERT_EQ(cbm_intern_count(pool), 0);
+    ASSERT_EQ(cbm_intern_bytes(pool), 0);
+    cbm_intern_free(pool);
+#endif
     PASS();
 }
 
@@ -224,7 +271,7 @@ TEST(intern_bytes_tracking) {
     CBMInternPool *pool = cbm_intern_create();
     ASSERT_EQ(cbm_intern_bytes(pool), 0);
 
-    cbm_intern(pool, "abc");   /* 3 bytes */
+    cbm_intern(pool, "abc"); /* 3 bytes */
     ASSERT_EQ(cbm_intern_bytes(pool), 3);
 
     cbm_intern(pool, "defgh"); /* 5 bytes */
@@ -234,10 +281,10 @@ TEST(intern_bytes_tracking) {
     cbm_intern(pool, "abc");
     ASSERT_EQ(cbm_intern_bytes(pool), 8);
 
-    cbm_intern(pool, "");      /* 0 bytes */
+    cbm_intern(pool, ""); /* 0 bytes */
     ASSERT_EQ(cbm_intern_bytes(pool), 8);
 
-    cbm_intern(pool, "x");     /* 1 byte */
+    cbm_intern(pool, "x"); /* 1 byte */
     ASSERT_EQ(cbm_intern_bytes(pool), 9);
 
     cbm_intern_free(pool);
@@ -267,7 +314,10 @@ SUITE(str_intern) {
     RUN_TEST(intern_survives_stack_buffer);
     /* Edge cases */
     RUN_TEST(intern_null_returns_null);
+    RUN_TEST(intern_null_pool_and_null_input_ops);
     RUN_TEST(intern_n_zero_len);
+    RUN_TEST(intern_n_embedded_nul);
+    RUN_TEST(intern_n_rejects_len_over_uint32);
     RUN_TEST(intern_very_long_string);
     RUN_TEST(intern_same_prefix_different_lengths);
     RUN_TEST(intern_pointer_stability);

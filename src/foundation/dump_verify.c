@@ -9,8 +9,16 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef CBM_USE_RUST_DUMP_VERIFY
+extern int cbm_rs_dump_verify_is_degraded(int committed_nodes, int persisted_nodes, double ratio,
+                                          int min_floor);
+#endif
+
 bool cbm_dump_verify_is_degraded(int committed_nodes, int persisted_nodes, double ratio,
                                  int min_floor) {
+#ifdef CBM_USE_RUST_DUMP_VERIFY
+    return cbm_rs_dump_verify_is_degraded(committed_nodes, persisted_nodes, ratio, min_floor) != 0;
+#else
     if (ratio <= 0.0) {
         return false;
     }
@@ -24,6 +32,7 @@ bool cbm_dump_verify_is_degraded(int committed_nodes, int persisted_nodes, doubl
         return true;
     }
     return (double)persisted_nodes < (double)committed_nodes * ratio;
+#endif
 }
 
 double cbm_dump_verify_min_ratio(void) {

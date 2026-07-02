@@ -1,0 +1,345 @@
+{
+  "binary": {
+    "platform": "darwin-arm64",
+    "size_bytes": 269339376,
+    "size_guard_ratio": 1.2
+  },
+  "edge_type_histogram": {
+    "CALLS": 34522,
+    "CONFIGURES": 265,
+    "CONTAINS_FILE": 645,
+    "CONTAINS_FOLDER": 58,
+    "DECORATES": 53,
+    "DEFINES": 14698,
+    "DEFINES_METHOD": 27,
+    "FILE_CHANGES_WITH": 191,
+    "HAS_BRANCH": 1,
+    "IMPORTS": 983,
+    "RAISES": 18,
+    "SEMANTICALLY_RELATED": 2185,
+    "SIMILAR_TO": 12770,
+    "TESTS": 562,
+    "TESTS_FILE": 5,
+    "THROWS": 1,
+    "USAGE": 16515,
+    "WRITES": 1955
+  },
+  "index_repository": {
+    "adr_present": false,
+    "artifact_present": false,
+    "edges": 85454,
+    "excluded_dir_count": 5,
+    "excluded_dir_truncated": false,
+    "expected_edges": 85454,
+    "expected_nodes": 15296,
+    "mode": "full",
+    "nodes": 15296,
+    "project": "rust_refactor_self_index_baseline",
+    "status": "indexed",
+    "wall_time": {
+      "bucket": "lte_guard",
+      "guard_ms": 600000,
+      "within_guard": true
+    }
+  },
+  "latency_smoke": {
+    "get_graph_schema": {
+      "edge_type_kinds": 18,
+      "latency": {
+        "bucket": "lte_guard",
+        "guard_ms": 30000,
+        "within_guard": true
+      },
+      "node_label_kinds": 19
+    },
+    "query_edges": {
+      "columns": [
+        "type(r)"
+      ],
+      "latency": {
+        "bucket": "lte_guard",
+        "guard_ms": 30000,
+        "within_guard": true
+      },
+      "row_count": 5,
+      "total": 5
+    },
+    "query_functions": {
+      "columns": [
+        "f.qualified_name"
+      ],
+      "latency": {
+        "bucket": "lte_guard",
+        "guard_ms": 30000,
+        "within_guard": true
+      },
+      "row_count": 5,
+      "total": 5
+    },
+    "search_code": {
+      "directory_count": 0,
+      "file_count": 5,
+      "latency": {
+        "bucket": "lte_guard",
+        "guard_ms": 30000,
+        "within_guard": true
+      },
+      "raw_match_count": 7,
+      "result_count": 5,
+      "top_level_keys": [
+        "dedup_ratio",
+        "directories",
+        "elapsed_ms",
+        "files",
+        "raw_match_count",
+        "total_grep_matches",
+        "total_results"
+      ],
+      "total_grep_matches": 164,
+      "total_results": 98
+    },
+    "search_graph": {
+      "has_more": true,
+      "latency": {
+        "bucket": "lte_guard",
+        "guard_ms": 30000,
+        "within_guard": true
+      },
+      "result_count": 5,
+      "top_level_keys": [
+        "has_more",
+        "results",
+        "search_mode",
+        "total"
+      ],
+      "total": 952
+    }
+  },
+  "node_label_histogram": {
+    "Branch": 1,
+    "Class": 97,
+    "Decorator": 8,
+    "Enum": 4,
+    "EnvVar": 21,
+    "Field": 353,
+    "File": 645,
+    "Folder": 73,
+    "Function": 10703,
+    "Interface": 28,
+    "Macro": 742,
+    "Method": 32,
+    "Module": 644,
+    "Project": 1,
+    "Route": 6,
+    "Section": 444,
+    "Struct": 8,
+    "Type": 3,
+    "Variable": 1483
+  },
+  "repository": {
+    "binary_file_count": 3,
+    "count_basis": "git ls-files -co --exclude-standard",
+    "file_count": 1806,
+    "loc": 37482583,
+    "root": "default_repo_root",
+    "self_fixture_excluded": true,
+    "text_file_count": 1803
+  },
+  "schema_summary": {
+    "edge_types": [
+      {
+        "count": 34522,
+        "property_count": 8,
+        "type": "CALLS"
+      },
+      {
+        "count": 265,
+        "property_count": 7,
+        "type": "CONFIGURES"
+      },
+      {
+        "count": 645,
+        "property_count": 2,
+        "type": "CONTAINS_FILE"
+      },
+      {
+        "count": 58,
+        "property_count": 2,
+        "type": "CONTAINS_FOLDER"
+      },
+      {
+        "count": 53,
+        "property_count": 3,
+        "type": "DECORATES"
+      },
+      {
+        "count": 14698,
+        "property_count": 2,
+        "type": "DEFINES"
+      },
+      {
+        "count": 27,
+        "property_count": 2,
+        "type": "DEFINES_METHOD"
+      },
+      {
+        "count": 191,
+        "property_count": 5,
+        "type": "FILE_CHANGES_WITH"
+      },
+      {
+        "count": 1,
+        "property_count": 12,
+        "type": "HAS_BRANCH"
+      },
+      {
+        "count": 983,
+        "property_count": 3,
+        "type": "IMPORTS"
+      },
+      {
+        "count": 18,
+        "property_count": 2,
+        "type": "RAISES"
+      },
+      {
+        "count": 2185,
+        "property_count": 4,
+        "type": "SEMANTICALLY_RELATED"
+      },
+      {
+        "count": 12770,
+        "property_count": 4,
+        "type": "SIMILAR_TO"
+      },
+      {
+        "count": 562,
+        "property_count": 2,
+        "type": "TESTS"
+      },
+      {
+        "count": 5,
+        "property_count": 2,
+        "type": "TESTS_FILE"
+      },
+      {
+        "count": 1,
+        "property_count": 2,
+        "type": "THROWS"
+      },
+      {
+        "count": 16515,
+        "property_count": 3,
+        "type": "USAGE"
+      },
+      {
+        "count": 1955,
+        "property_count": 2,
+        "type": "WRITES"
+      }
+    ],
+    "node_labels": [
+      {
+        "count": 1,
+        "label": "Branch",
+        "property_count": 15
+      },
+      {
+        "count": 97,
+        "label": "Class",
+        "property_count": 14
+      },
+      {
+        "count": 8,
+        "label": "Decorator",
+        "property_count": 5
+      },
+      {
+        "count": 4,
+        "label": "Enum",
+        "property_count": 10
+      },
+      {
+        "count": 21,
+        "label": "EnvVar",
+        "property_count": 6
+      },
+      {
+        "count": 353,
+        "label": "Field",
+        "property_count": 12
+      },
+      {
+        "count": 645,
+        "label": "File",
+        "property_count": 8
+      },
+      {
+        "count": 73,
+        "label": "Folder",
+        "property_count": 10
+      },
+      {
+        "count": 10703,
+        "label": "Function",
+        "property_count": 32
+      },
+      {
+        "count": 28,
+        "label": "Interface",
+        "property_count": 11
+      },
+      {
+        "count": 742,
+        "label": "Macro",
+        "property_count": 13
+      },
+      {
+        "count": 32,
+        "label": "Method",
+        "property_count": 29
+      },
+      {
+        "count": 644,
+        "label": "Module",
+        "property_count": 10
+      },
+      {
+        "count": 1,
+        "label": "Project",
+        "property_count": 5
+      },
+      {
+        "count": 6,
+        "label": "Route",
+        "property_count": 7
+      },
+      {
+        "count": 444,
+        "label": "Section",
+        "property_count": 10
+      },
+      {
+        "count": 8,
+        "label": "Struct",
+        "property_count": 12
+      },
+      {
+        "count": 3,
+        "label": "Type",
+        "property_count": 10
+      },
+      {
+        "count": 1483,
+        "label": "Variable",
+        "property_count": 10
+      }
+    ],
+    "top_level_keys": [
+      "adr_hint",
+      "adr_present",
+      "edge_types",
+      "node_labels"
+    ]
+  }
+}

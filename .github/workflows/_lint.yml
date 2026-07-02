@@ -48,4 +48,7 @@ jobs:
         run: echo "/opt/cppcheck/bin" >> "$GITHUB_PATH"
 
       - name: Lint (cppcheck + clang-format, no clang-tidy — enforced locally)
+        # Rust lint runs in its own gate (_rust.yml); keep this job C-only.
+        env:
+          CBM_SKIP_RUST: '1'
         run: scripts/lint.sh --ci CLANG_FORMAT=clang-format-20

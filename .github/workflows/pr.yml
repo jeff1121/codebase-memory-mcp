@@ -26,6 +26,9 @@ jobs:
   lint:
     uses: ./.github/workflows/_lint.yml
 
+  rust:
+    uses: ./.github/workflows/_rust.yml
+
   test:
     needs: [lint]
     if: ${{ !cancelled() && needs.lint.result == 'success' }}
@@ -38,7 +41,7 @@ jobs:
   ci-ok:
     # The one required context (besides dco) — fails unless every PR stage
     # succeeded, so matrix renames can never silently deadlock merges.
-    needs: [security, lint, test]
+    needs: [security, lint, rust, test]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5

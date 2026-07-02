@@ -1,0 +1,13 @@
+{
+  "binary_size_bytes": 269339376,
+  "child_peak_rss_kb": 19488,
+  "fixture": "rust_refactor_golden",
+  "index_wall_ms": 112.475,
+  "platform": "darwin-arm64",
+  "query_edge_types_wall_ms": 7.025,
+  "thresholds": {
+    "binary_size_ratio": 1.2,
+    "wall_time_floor_ms": 500.0,
+    "wall_time_ratio": 2.0
+  }
+}

@@ -14,6 +14,7 @@
 enum { INCR_RING_BUF = 4, INCR_RING_MASK = 3, INCR_TS_BUF = 24, INCR_WAL_BUF = 1040 };
 #include "pipeline/pipeline.h"
 #include "pipeline/artifact.h"
+#include "pipeline/rust_plan.h"
 #include <stdio.h>
 #include <time.h>
 #include "pipeline/pipeline_internal.h"
@@ -541,6 +542,12 @@ static void run_extract_resolve(cbm_pipeline_ctx_t *ctx, cbm_file_info_t *change
 #define MIN_FILES_FOR_PARALLEL_INCR 50
     int worker_count = cbm_default_worker_count(true);
     bool use_parallel = (worker_count > SKIP_ONE && ci > MIN_FILES_FOR_PARALLEL_INCR);
+#ifdef CBM_USE_RUST_PIPELINE_PLAN
+    bool rust_use_parallel = false;
+    if (cbm_rust_plan_extracts_parallel(ctx->mode, worker_count, ci, &rust_use_parallel)) {
+        use_parallel = rust_use_parallel;
+    }
+#endif
 
     if (use_parallel) {
         cbm_log_info("incremental.mode", "mode", "parallel", "workers", itoa_buf(worker_count),

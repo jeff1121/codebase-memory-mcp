@@ -972,7 +972,8 @@ int cbm_store_drop_indexes(cbm_store_t *s) {
                        "DROP INDEX IF EXISTS idx_edges_target;"
                        "DROP INDEX IF EXISTS idx_edges_type;"
                        "DROP INDEX IF EXISTS idx_edges_target_type;"
-                       "DROP INDEX IF EXISTS idx_edges_source_type;");
+                       "DROP INDEX IF EXISTS idx_edges_source_type;"
+                       "DROP INDEX IF EXISTS idx_edges_url_path;");
 }
 
 int cbm_store_create_indexes(cbm_store_t *s) {

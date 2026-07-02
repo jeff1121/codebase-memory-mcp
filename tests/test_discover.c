@@ -96,6 +96,10 @@ TEST(skip_claude) {
     ASSERT_TRUE(cbm_should_skip_dir(".claude", CBM_MODE_FULL));
     PASS();
 }
+TEST(skip_codebase_memory) {
+    ASSERT_TRUE(cbm_should_skip_dir(".codebase-memory", CBM_MODE_FULL));
+    PASS();
+}
 
 /* Not skipped in full mode */
 TEST(no_skip_src) {
@@ -342,6 +346,32 @@ TEST(discover_skips_git_dir) {
     int rc = cbm_discover(base, &opts, &files, &count);
     ASSERT_EQ(rc, 0);
     ASSERT_EQ(count, 1);
+
+    cbm_discover_free(files, count);
+    th_cleanup(base);
+    PASS();
+}
+
+TEST(discover_skips_codebase_memory_dir) {
+    char *base = th_mktempdir("cbm_disc_cbm");
+    ASSERT(base != NULL);
+
+    th_write_file(TH_PATH(base, "src/main.go"), "package main\n");
+    th_write_file(TH_PATH(base, ".codebase-memory/artifact.json"), "{\"schema_version\":1}\n");
+    th_write_file(TH_PATH(base, ".codebase-memory/.gitattributes"), "* binary\n");
+    th_write_file(TH_PATH(base, ".codebase-memory/adr.md"), "# ADR\n");
+
+    cbm_discover_opts_t opts = {.mode = CBM_MODE_FULL};
+    cbm_file_info_t *files = NULL;
+    int count = 0;
+
+    int rc = cbm_discover(base, &opts, &files, &count);
+    ASSERT_EQ(rc, 0);
+    ASSERT_EQ(count, 1);
+    ASSERT_TRUE(discover_has_rel_path(files, count, "src/main.go"));
+    ASSERT_FALSE(discover_has_rel_path(files, count, ".codebase-memory/artifact.json"));
+    ASSERT_FALSE(discover_has_rel_path(files, count, ".codebase-memory/.gitattributes"));
+    ASSERT_FALSE(discover_has_rel_path(files, count, ".codebase-memory/adr.md"));
 
     cbm_discover_free(files, count);
     th_cleanup(base);
@@ -920,8 +950,10 @@ TEST(discover_git_info_exclude_stacks_with_gitignore) {
     bool found_log = false;
     bool found_scratch = false;
     for (int i = 0; i < count; i++) {
-        if (strstr(files[i].rel_path, ".log"))    found_log     = true;
-        if (strstr(files[i].rel_path, "scratch")) found_scratch = true;
+        if (strstr(files[i].rel_path, ".log"))
+            found_log = true;
+        if (strstr(files[i].rel_path, "scratch"))
+            found_scratch = true;
     }
     ASSERT_FALSE(found_log);
     ASSERT_FALSE(found_scratch);
@@ -1024,6 +1056,7 @@ SUITE(discover) {
     RUN_TEST(skip_coverage);
     RUN_TEST(skip_idea);
     RUN_TEST(skip_claude);
+    RUN_TEST(skip_codebase_memory);
 
     /* Not skipped */
     RUN_TEST(no_skip_src);
@@ -1082,6 +1115,7 @@ SUITE(discover) {
     /* Integration tests (cross-platform) */
     RUN_TEST(discover_simple);
     RUN_TEST(discover_skips_git_dir);
+    RUN_TEST(discover_skips_codebase_memory_dir);
     RUN_TEST(discover_with_gitignore);
     RUN_TEST(discover_with_global_xdg_ignore);
     RUN_TEST(discover_global_excludesfile_from_gitconfig_tilde);

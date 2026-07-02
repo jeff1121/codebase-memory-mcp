@@ -301,8 +301,7 @@ TEST(resolve_qualified_disambiguates_same_name) {
     ASSERT_TRUE(!nomatch.strategy || strcmp(nomatch.strategy, "qualified_suffix") != 0);
 
     /* A bare call stays ambiguous (no qualifier → no disambiguation signal). */
-    cbm_resolution_t bare =
-        cbm_registry_resolve(r, "save", "proj.lib.App.Caller", NULL, NULL, 0);
+    cbm_resolution_t bare = cbm_registry_resolve(r, "save", "proj.lib.App.Caller", NULL, NULL, 0);
     ASSERT_TRUE(!bare.strategy || strcmp(bare.strategy, "qualified_suffix") != 0);
 
     cbm_registry_free(r);
@@ -688,6 +687,35 @@ TEST(fuzzy_no_import_map_passthrough) {
     PASS();
 }
 
+#ifdef CBM_USE_RUST_PIPELINE_REGISTRY
+TEST(rust_optin_resolve_cache_returns_stable_result) {
+    cbm_registry_t *r = cbm_registry_new();
+    ASSERT_NOT_NULL(r);
+    cbm_registry_add(r, "Foo", "proj.pkg.Foo", "Function");
+    cbm_registry_add(r, "Bar", "proj.other.Bar", "Function");
+
+    cbm_registry_resolve_cache_begin(4);
+    cbm_resolution_t first = cbm_registry_resolve(r, "Foo", "proj.pkg", NULL, NULL, 0);
+    cbm_resolution_t second = cbm_registry_resolve(r, "Foo", "proj.pkg", NULL, NULL, 0);
+    cbm_registry_resolve_cache_end();
+
+    ASSERT_STR_EQ(first.qualified_name, "proj.pkg.Foo");
+    ASSERT_STR_EQ(first.strategy, "same_module");
+    ASSERT_STR_EQ(second.qualified_name, "proj.pkg.Foo");
+    ASSERT_STR_EQ(second.strategy, "same_module");
+    ASSERT_TRUE(first.qualified_name == second.qualified_name);
+    ASSERT_TRUE(first.strategy == second.strategy);
+    ASSERT_STR_EQ(cbm_registry_label_of(r, first.qualified_name), "Function");
+
+    cbm_resolution_t unique = cbm_registry_resolve(r, "Bar", "proj.pkg", NULL, NULL, 0);
+    ASSERT_STR_EQ(unique.qualified_name, "proj.other.Bar");
+    ASSERT_STR_EQ(unique.strategy, "unique_name");
+
+    cbm_registry_free(r);
+    PASS();
+}
+#endif
+
 /* ── Perl builtin guard (#459 follow-up: call-graph noise) ───────── */
 
 TEST(perl_builtin_set_recognizes_core_builtins) {
@@ -802,6 +830,9 @@ SUITE(registry) {
     RUN_TEST(fuzzy_resolve_confidence_distance);
     RUN_TEST(fuzzy_penalty_unreachable_import);
     RUN_TEST(fuzzy_no_import_map_passthrough);
+#ifdef CBM_USE_RUST_PIPELINE_REGISTRY
+    RUN_TEST(rust_optin_resolve_cache_returns_stable_result);
+#endif
 
     /* Perl builtin guard */
     RUN_TEST(perl_builtin_set_recognizes_core_builtins);

@@ -40,6 +40,12 @@ enum { DEFAULT_CORES = 1, MIN_WORKERS = 1, CBM_WORKERS_MAX = 256 };
 #include <unistd.h>
 #endif
 
+#if defined(CBM_USE_RUST_PLATFORM_CGROUP) && !defined(_WIN32) && !defined(__APPLE__) && \
+    !defined(__NetBSD__) && !defined(__FreeBSD__) && !defined(__OpenBSD__)
+extern int cbm_rs_detect_cgroup_cpus(const char *cgroup_root);
+extern size_t cbm_rs_detect_cgroup_mem(const char *cgroup_root);
+#endif
+
 /* ── macOS detection ─────────────────────────────────────────────── */
 
 #ifdef __APPLE__
@@ -130,6 +136,9 @@ static int read_small_file(const char *path, char *buf, size_t bufsz) {
 
 /* Effective CPU count from a cgroup file tree. See header for contract. */
 int cbm_detect_cgroup_cpus(const char *cgroup_root) {
+#ifdef CBM_USE_RUST_PLATFORM_CGROUP
+    return cbm_rs_detect_cgroup_cpus(cgroup_root);
+#else
     char path[CBM_PATH_MAX];
     char buf[CBM_SZ_64];
 
@@ -170,10 +179,14 @@ int cbm_detect_cgroup_cpus(const char *cgroup_root) {
 
     long n = (quota + period - 1) / period;
     return n > 0 ? (int)n : MIN_WORKERS;
+#endif
 }
 
 /* Effective memory limit from a cgroup file tree. See header for contract. */
 size_t cbm_detect_cgroup_mem(const char *cgroup_root) {
+#ifdef CBM_USE_RUST_PLATFORM_CGROUP
+    return cbm_rs_detect_cgroup_mem(cgroup_root);
+#else
     char path[CBM_PATH_MAX];
     char buf[CBM_SZ_64];
 
@@ -204,6 +217,7 @@ size_t cbm_detect_cgroup_mem(const char *cgroup_root) {
         return 0;
     }
     return (size_t)n;
+#endif
 }
 
 static cbm_system_info_t detect_system_linux(void) {

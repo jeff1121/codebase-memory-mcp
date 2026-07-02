@@ -42,6 +42,84 @@ static char g_diag_ndjson_path[CBM_SZ_256] = "";
 static size_t g_diag_ndjson_size = 0;
 #define DIAG_NDJSON_CAP_BYTES (8u * 1024u * 1024u) /* rotate to .1 past this */
 
+/* ── 純函式輔助工具 ────────────────────────────────────────────── */
+
+static int diag_format_result(int n, size_t buf_sz) {
+    if (n < 0 || (size_t)n >= buf_sz) {
+        return CBM_NOT_FOUND;
+    }
+    return n;
+}
+
+bool cbm_diag_env_enabled_value(const char *value) {
+    return value != NULL && (strcmp(value, "1") == 0 || strcmp(value, "true") == 0);
+}
+
+void cbm_diag_query_stats_snapshot(cbm_query_stats_t *stats, cbm_diag_query_snapshot_t *out) {
+    if (out == NULL) {
+        return;
+    }
+    memset(out, 0, sizeof(*out));
+    if (stats == NULL) {
+        return;
+    }
+
+    out->count = atomic_load(&stats->count);
+    out->errors = atomic_load(&stats->errors);
+    out->total_us = atomic_load(&stats->time_us);
+    out->max_us = atomic_load(&stats->max_us);
+    out->avg_us = out->count > 0 ? out->total_us / out->count : 0;
+}
+
+int cbm_diag_format_path(char *buf, size_t buf_sz, const char *tmpdir, int pid, const char *ext) {
+    if (buf == NULL || buf_sz == 0 || tmpdir == NULL || ext == NULL) {
+        return CBM_NOT_FOUND;
+    }
+    int n = snprintf(buf, buf_sz, "%s/cbm-diagnostics-%d.%s", tmpdir, pid, ext);
+    return diag_format_result(n, buf_sz);
+}
+
+int cbm_diag_format_json(char *buf, size_t buf_sz, const cbm_diag_snapshot_t *snapshot) {
+    if (buf == NULL || buf_sz == 0 || snapshot == NULL) {
+        return CBM_NOT_FOUND;
+    }
+    const cbm_diag_query_snapshot_t *q = &snapshot->queries;
+    int n = snprintf(buf, buf_sz,
+                     "{\n"
+                     "  \"uptime_s\": %ld,\n"
+                     "  \"rss_bytes\": %zu,\n"
+                     "  \"peak_rss_bytes\": %zu,\n"
+                     "  \"heap_committed_bytes\": %zu,\n"
+                     "  \"peak_committed_bytes\": %zu,\n"
+                     "  \"page_faults\": %zu,\n"
+                     "  \"fd_count\": %d,\n"
+                     "  \"query_count\": %d,\n"
+                     "  \"query_errors\": %d,\n"
+                     "  \"query_total_us\": %lld,\n"
+                     "  \"query_avg_us\": %lld,\n"
+                     "  \"query_max_us\": %lld,\n"
+                     "  \"pid\": %d\n"
+                     "}\n",
+                     snapshot->uptime_s, snapshot->rss_bytes, snapshot->peak_rss_bytes,
+                     snapshot->heap_committed_bytes, snapshot->peak_committed_bytes,
+                     snapshot->page_faults, snapshot->fd_count, q->count, q->errors, q->total_us,
+                     q->avg_us, q->max_us, snapshot->pid);
+    return diag_format_result(n, buf_sz);
+}
+
+int cbm_diag_format_ndjson(char *buf, size_t buf_sz, const cbm_diag_snapshot_t *snapshot) {
+    if (buf == NULL || buf_sz == 0 || snapshot == NULL) {
+        return CBM_NOT_FOUND;
+    }
+    int n = snprintf(buf, buf_sz,
+                     "{\"uptime_s\":%ld,\"rss\":%zu,\"peak_rss\":%zu,\"committed\":%zu,"
+                     "\"peak_committed\":%zu,\"page_faults\":%zu,\"fd\":%d,\"queries\":%d}\n",
+                     snapshot->uptime_s, snapshot->rss_bytes, snapshot->peak_rss_bytes,
+                     snapshot->heap_committed_bytes, snapshot->peak_committed_bytes,
+                     snapshot->page_faults, snapshot->fd_count, snapshot->queries.count);
+    return diag_format_result(n, buf_sz);
+}
+
 /* ── Query stats ─────────────────────────────────────────────────── */
 
 void cbm_diag_record_query(long long duration_us, bool is_error) {
@@ -99,8 +177,7 @@ static int count_open_fds(void) {
  * <path>.1 once it passes the cap. Best-effort: a failed append never disrupts
  * the server. The trajectory (a monotonic rss/committed climb over hours) is
  * what reveals a slow leak like #581 — the single latest-snapshot file cannot. */
-static void append_trajectory(long uptime, size_t rss, size_t peak_rss, size_t commit,
-                              size_t peak_commit, size_t page_faults, int fds, int qcount) {
+static void append_trajectory(const cbm_diag_snapshot_t *snapshot) {
     if (g_diag_ndjson_path[0] == '\0') {
         return;
     }
@@ -114,11 +191,9 @@ static void append_trajectory(long uptime, size_t rss, size_t peak_rss, size_t c
     if (!f) {
         return;
     }
-    int n = fprintf(f,
-                    "{\"uptime_s\":%ld,\"rss\":%zu,\"peak_rss\":%zu,\"committed\":%zu,"
-                    "\"peak_committed\":%zu,\"page_faults\":%zu,\"fd\":%d,\"queries\":%d}\n",
-                    uptime, rss, peak_rss, commit, peak_commit, page_faults, fds, qcount);
-    if (n > 0) {
+    char line[CBM_SZ_512];
+    int n = cbm_diag_format_ndjson(line, sizeof(line), snapshot);
+    if (n >= 0 && fputs(line, f) != EOF) {
         g_diag_ndjson_size += (size_t)n;
     }
     (void)fclose(f);
@@ -146,11 +221,17 @@ static void write_diagnostics(void) {
     time_t now = time(NULL);
     long uptime = (long)(now - g_start_time);
 
-    int qcount = atomic_load(&g_query_stats.count);
-    int qerrors = atomic_load(&g_query_stats.errors);
-    long long qtime = atomic_load(&g_query_stats.time_us);
-    long long qmax = atomic_load(&g_query_stats.max_us);
-    long long qavg = qcount > 0 ? qtime / qcount : 0;
+    cbm_diag_snapshot_t snapshot = {
+        .uptime_s = uptime,
+        .rss_bytes = current_rss,
+        .peak_rss_bytes = peak_rss,
+        .heap_committed_bytes = current_commit,
+        .peak_committed_bytes = peak_commit,
+        .page_faults = page_faults,
+        .fd_count = fds,
+        .pid = (int)getpid(),
+    };
+    cbm_diag_query_stats_snapshot(&g_query_stats, &snapshot.queries);
 
     /* Write to .tmp then rename (atomic) */
     char tmp_path[sizeof(g_diag_path) + DIAG_PATH_EXTRA];
@@ -161,24 +242,8 @@ static void write_diagnostics(void) {
         return;
     }
 
-    if (fprintf(f,
-                "{\n"
-                "  \"uptime_s\": %ld,\n"
-                "  \"rss_bytes\": %zu,\n"
-                "  \"peak_rss_bytes\": %zu,\n"
-                "  \"heap_committed_bytes\": %zu,\n"
-                "  \"peak_committed_bytes\": %zu,\n"
-                "  \"page_faults\": %zu,\n"
-                "  \"fd_count\": %d,\n"
-                "  \"query_count\": %d,\n"
-                "  \"query_errors\": %d,\n"
-                "  \"query_total_us\": %lld,\n"
-                "  \"query_avg_us\": %lld,\n"
-                "  \"query_max_us\": %lld,\n"
-                "  \"pid\": %d\n"
-                "}\n",
-                uptime, current_rss, peak_rss, current_commit, peak_commit, page_faults, fds,
-                qcount, qerrors, qtime, qavg, qmax, (int)getpid()) < 0) {
+    char json[CBM_SZ_2K];
+    if (cbm_diag_format_json(json, sizeof(json), &snapshot) < 0 || fputs(json, f) == EOF) {
         (void)fclose(f);
         return;
     }
@@ -188,8 +253,7 @@ static void write_diagnostics(void) {
     (void)rename(tmp_path, g_diag_path);
 
     /* Also append to the persistent trajectory (kept on exit for users to send). */
-    append_trajectory(uptime, current_rss, peak_rss, current_commit, peak_commit, page_faults, fds,
-                      qcount);
+    append_trajectory(&snapshot);
 }
 
 static void *diag_thread_fn(void *arg) {
@@ -209,17 +273,19 @@ static void *diag_thread_fn(void *arg) {
 bool cbm_diag_start(void) {
     char env_buf[CBM_SZ_32] = "";
     cbm_safe_getenv("CBM_DIAGNOSTICS", env_buf, sizeof(env_buf), NULL);
-    if (env_buf[0] == '\0' || (strcmp(env_buf, "1") != 0 && strcmp(env_buf, "true") != 0)) {
+    if (!cbm_diag_env_enabled_value(env_buf)) {
         return false;
     }
 
     g_start_time = time(NULL);
     atomic_store(&g_diag_stop, 0);
 
-    snprintf(g_diag_path, sizeof(g_diag_path), "%s/cbm-diagnostics-%d.json", cbm_tmpdir(),
-             (int)getpid());
-    snprintf(g_diag_ndjson_path, sizeof(g_diag_ndjson_path), "%s/cbm-diagnostics-%d.ndjson",
-             cbm_tmpdir(), (int)getpid());
+    if (cbm_diag_format_path(g_diag_path, sizeof(g_diag_path), cbm_tmpdir(), (int)getpid(),
+                             "json") < 0 ||
+        cbm_diag_format_path(g_diag_ndjson_path, sizeof(g_diag_ndjson_path), cbm_tmpdir(),
+                             (int)getpid(), "ndjson") < 0) {
+        return false;
+    }
     g_diag_ndjson_size = 0;
 
     if (cbm_thread_create(&g_diag_thread, 0, diag_thread_fn, NULL) != 0) {

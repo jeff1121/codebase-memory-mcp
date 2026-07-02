@@ -48,6 +48,32 @@ make -f Makefile.cbm security
 
 Runs 8 security layers: static allow-list audit, binary string scan, UI audit, install audit, network egress test, MCP robustness (fuzz), vendored dependency integrity, and frontend integrity.
 
+## Rust Core (experimental, opt-in)
+
+The default product binary is still **pure C with zero dependencies** — this is
+unchanged. A Rust workspace lives under `rust/` and is being introduced
+incrementally under the plan in [`Rust-Refactor.md`](Rust-Refactor.md) (progress
+tracked in [`Tasks.md`](Tasks.md)). It is **never linked into the default build**;
+it only participates through explicit `CBM_USE_RUST_*` opt-in flags.
+
+```bash
+scripts/rust-check.sh                       # cargo fmt + clippy + test + FFI smoke
+make -f Makefile.cbm rust-ci-tests          # all Rust gates (lint, unit, FFI, opt-in parity)
+make -f Makefile.cbm rust-language-graph-parity   # default-C vs Rust-opt-in graph parity
+```
+
+Opt-in parity builds (each keeps the default C path as the reference), e.g.:
+
+```bash
+make -f Makefile.cbm CBM_USE_RUST_STR_UTIL=1 test-foundation
+make -f Makefile.cbm CBM_USE_RUST_PIPELINE_REGISTRY=1 CBM_USE_RUST_PIPELINE_PLAN=1 cbm
+```
+
+The C/Rust FFI ownership and error rules are documented in
+[`rust/CBM_FFI.md`](rust/CBM_FFI.md). Any new `unsafe`, process, network, or
+filesystem call on the Rust side must be added to
+`scripts/rust-security-allowlist.txt`.
+
 ## Project Structure
 
 ```

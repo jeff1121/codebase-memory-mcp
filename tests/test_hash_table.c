@@ -37,6 +37,67 @@ TEST(ht_set_overwrite) {
     PASS();
 }
 
+TEST(ht_null_args_contract) {
+    int v = 7;
+    ASSERT_NULL(cbm_ht_set(NULL, "key", &v));
+    ASSERT_NULL(cbm_ht_get(NULL, "key"));
+    ASSERT_FALSE(cbm_ht_has(NULL, "key"));
+    ASSERT_NULL(cbm_ht_delete(NULL, "key"));
+
+    CBMHashTable *ht = cbm_ht_create(8);
+    ASSERT_NOT_NULL(ht);
+    ASSERT_NULL(cbm_ht_set(ht, NULL, &v));
+    ASSERT_NULL(cbm_ht_get(ht, NULL));
+    ASSERT_FALSE(cbm_ht_has(ht, NULL));
+    ASSERT_NULL(cbm_ht_delete(ht, NULL));
+    ASSERT_EQ(cbm_ht_count(ht), 0);
+    cbm_ht_free(ht);
+    PASS();
+}
+
+TEST(ht_lookup_uses_key_contents_not_pointer) {
+    CBMHashTable *ht = cbm_ht_create(8);
+    ASSERT_NOT_NULL(ht);
+
+    char stored_key[] = "same-content";
+    char lookup_key[] = "same-content";
+    int v = 123;
+    ASSERT_NULL(cbm_ht_set(ht, stored_key, &v));
+
+    ASSERT_TRUE(cbm_ht_has(ht, lookup_key));
+    ASSERT_EQ(cbm_ht_get(ht, lookup_key), &v);
+    ASSERT_EQ((uintptr_t)cbm_ht_get_key(ht, lookup_key), (uintptr_t)stored_key);
+    ASSERT_EQ(cbm_ht_delete(ht, lookup_key), &v);
+    ASSERT_FALSE(cbm_ht_has(ht, stored_key));
+    ASSERT_EQ(cbm_ht_count(ht), 0);
+
+    cbm_ht_free(ht);
+    PASS();
+}
+
+TEST(ht_overwrite_replaces_key_pointer_contract) {
+    CBMHashTable *ht = cbm_ht_create(8);
+    ASSERT_NOT_NULL(ht);
+
+    char first_key[] = "overwrite";
+    char second_key[] = "overwrite";
+    int v1 = 11, v2 = 22;
+
+    ASSERT_NULL(cbm_ht_set(ht, first_key, &v1));
+    ASSERT_EQ((uintptr_t)cbm_ht_get_key(ht, first_key), (uintptr_t)first_key);
+
+    void *prev = cbm_ht_set(ht, second_key, &v2);
+    ASSERT_EQ(prev, &v1);
+    ASSERT_EQ(cbm_ht_get(ht, first_key), &v2);
+    ASSERT_EQ(cbm_ht_get(ht, second_key), &v2);
+    ASSERT_EQ(cbm_ht_count(ht), 1);
+    ASSERT_EQ((uintptr_t)cbm_ht_get_key(ht, first_key), (uintptr_t)second_key);
+    ASSERT_EQ((uintptr_t)cbm_ht_get_key(ht, second_key), (uintptr_t)second_key);
+
+    cbm_ht_free(ht);
+    PASS();
+}
+
 TEST(ht_get_missing) {
     CBMHashTable *ht = cbm_ht_create(8);
     ASSERT_NULL(cbm_ht_get(ht, "nope"));
@@ -50,6 +111,24 @@ TEST(ht_has) {
     cbm_ht_set(ht, "exists", &v);
     ASSERT_TRUE(cbm_ht_has(ht, "exists"));
     ASSERT_FALSE(cbm_ht_has(ht, "missing"));
+    cbm_ht_free(ht);
+    PASS();
+}
+
+TEST(ht_null_value_still_counts_as_existing_entry) {
+    CBMHashTable *ht = cbm_ht_create(8);
+    ASSERT_NOT_NULL(ht);
+
+    ASSERT_NULL(cbm_ht_set(ht, "nullable", NULL));
+    ASSERT_NULL(cbm_ht_get(ht, "nullable"));
+    ASSERT_TRUE(cbm_ht_has(ht, "nullable"));
+    ASSERT_STR_EQ(cbm_ht_get_key(ht, "nullable"), "nullable");
+    ASSERT_EQ(cbm_ht_count(ht), 1);
+
+    ASSERT_NULL(cbm_ht_delete(ht, "nullable"));
+    ASSERT_FALSE(cbm_ht_has(ht, "nullable"));
+    ASSERT_EQ(cbm_ht_count(ht), 0);
+
     cbm_ht_free(ht);
     PASS();
 }
@@ -129,6 +208,77 @@ TEST(ht_foreach) {
     PASS();
 }
 
+typedef struct {
+    void *expected_userdata;
+    bool bad_userdata;
+    bool duplicate;
+    bool unexpected;
+    bool key_mismatch;
+    bool seen[4];
+    int count;
+    int sum;
+} ForeachContractCtx;
+
+static void foreach_contract_cb(const char *key, void *value, void *userdata) {
+    ForeachContractCtx *ctx = (ForeachContractCtx *)userdata;
+    if (!ctx) {
+        return;
+    }
+    if (userdata != ctx->expected_userdata) {
+        ctx->bad_userdata = true;
+        return;
+    }
+    if (!key || !value) {
+        ctx->unexpected = true;
+        return;
+    }
+
+    int idx = *(int *)value;
+    if (idx < 0 || idx >= 4) {
+        ctx->unexpected = true;
+        return;
+    }
+
+    const char *expected_keys[] = {"fa", "fb", "fc", "fd"};
+    if (strcmp(key, expected_keys[idx]) != 0) {
+        ctx->key_mismatch = true;
+    }
+    if (ctx->seen[idx]) {
+        ctx->duplicate = true;
+    }
+    ctx->seen[idx] = true;
+    ctx->count++;
+    ctx->sum += idx;
+}
+
+TEST(ht_foreach_userdata_and_exactly_once) {
+    CBMHashTable *ht = cbm_ht_create(8);
+    ASSERT_NOT_NULL(ht);
+
+    int vals[] = {0, 1, 2, 3};
+    cbm_ht_set(ht, "fa", &vals[0]);
+    cbm_ht_set(ht, "fb", &vals[1]);
+    cbm_ht_set(ht, "fc", &vals[2]);
+    cbm_ht_set(ht, "fd", &vals[3]);
+
+    ForeachContractCtx ctx = {.expected_userdata = NULL};
+    ctx.expected_userdata = &ctx;
+    cbm_ht_foreach(ht, foreach_contract_cb, &ctx);
+
+    ASSERT_FALSE(ctx.bad_userdata);
+    ASSERT_FALSE(ctx.duplicate);
+    ASSERT_FALSE(ctx.unexpected);
+    ASSERT_FALSE(ctx.key_mismatch);
+    ASSERT_EQ(ctx.count, 4);
+    ASSERT_EQ(ctx.sum, 6);
+    for (int i = 0; i < 4; i++) {
+        ASSERT_TRUE(ctx.seen[i]);
+    }
+
+    cbm_ht_free(ht);
+    PASS();
+}
+
 TEST(ht_clear) {
     CBMHashTable *ht = cbm_ht_create(8);
     int v = 1;
@@ -159,6 +309,25 @@ TEST(ht_long_key) {
     int v = 99;
     cbm_ht_set(ht, long_key, &v);
     ASSERT_EQ(*(int *)cbm_ht_get(ht, long_key), 99);
+    cbm_ht_free(ht);
+    PASS();
+}
+
+TEST(ht_non_utf8_high_bit_c_string_key) {
+    CBMHashTable *ht = cbm_ht_create(8);
+    ASSERT_NOT_NULL(ht);
+
+    char stored_key[] = {(char)0xff, (char)0x80, 'k', (char)0xfe, '\0'};
+    char lookup_key[] = {(char)0xff, (char)0x80, 'k', (char)0xfe, '\0'};
+    int v = 88;
+    ASSERT_NULL(cbm_ht_set(ht, stored_key, &v));
+
+    ASSERT_TRUE(cbm_ht_has(ht, lookup_key));
+    ASSERT_EQ(cbm_ht_get(ht, lookup_key), &v);
+    const char *got_key = cbm_ht_get_key(ht, lookup_key);
+    ASSERT_EQ((uintptr_t)got_key, (uintptr_t)stored_key);
+    ASSERT_MEM_EQ(got_key, stored_key, sizeof(stored_key));
+
     cbm_ht_free(ht);
     PASS();
 }
@@ -367,16 +536,22 @@ SUITE(hash_table) {
     RUN_TEST(ht_create_free);
     RUN_TEST(ht_set_get);
     RUN_TEST(ht_set_overwrite);
+    RUN_TEST(ht_null_args_contract);
+    RUN_TEST(ht_lookup_uses_key_contents_not_pointer);
+    RUN_TEST(ht_overwrite_replaces_key_pointer_contract);
     RUN_TEST(ht_get_missing);
     RUN_TEST(ht_has);
+    RUN_TEST(ht_null_value_still_counts_as_existing_entry);
     RUN_TEST(ht_delete);
     RUN_TEST(ht_delete_missing);
     RUN_TEST(ht_many_entries);
     RUN_TEST(ht_delete_then_reinsert);
     RUN_TEST(ht_foreach);
+    RUN_TEST(ht_foreach_userdata_and_exactly_once);
     RUN_TEST(ht_clear);
     RUN_TEST(ht_empty_string_key);
     RUN_TEST(ht_long_key);
+    RUN_TEST(ht_non_utf8_high_bit_c_string_key);
     RUN_TEST(ht_create_small_capacity);
     /* Edge cases */
     RUN_TEST(ht_get_key_returns_stored_pointer);

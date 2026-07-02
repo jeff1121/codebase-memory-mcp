@@ -1,0 +1,11 @@
+[workspace]
+members = ["rust/cbm-core"]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+rust-version = "1.76"
+
+[workspace.lints.rust]
+unsafe_code = "deny"

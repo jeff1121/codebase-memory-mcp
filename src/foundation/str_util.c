@@ -7,6 +7,38 @@
 #include <string.h>
 #include <ctype.h>
 #include <stdio.h>
+#include <limits.h>
+
+#ifdef CBM_USE_RUST_STR_UTIL
+extern size_t cbm_rs_path_join(char *buf, size_t bufsize, const char *base, const char *name);
+extern size_t cbm_rs_path_join_n(char *buf, size_t bufsize, const char **parts, int n);
+extern const char *cbm_rs_path_ext(const char *path);
+extern const char *cbm_rs_path_base(const char *path);
+extern size_t cbm_rs_path_dir(char *buf, size_t bufsize, const char *path);
+extern int cbm_rs_str_starts_with(const char *s, const char *prefix);
+extern int cbm_rs_str_ends_with(const char *s, const char *suffix);
+extern int cbm_rs_str_contains(const char *s, const char *sub);
+extern size_t cbm_rs_str_tolower(char *buf, size_t bufsize, const char *s);
+extern size_t cbm_rs_str_replace_char(char *buf, size_t bufsize, const char *s, char from, char to);
+extern size_t cbm_rs_str_strip_ext(char *buf, size_t bufsize, const char *path);
+extern size_t cbm_rs_str_split_count(const char *s, char delim);
+extern size_t cbm_rs_str_split_part(char *buf, size_t bufsize, const char *s, char delim,
+                                    size_t index);
+extern int cbm_rs_validate_shell_arg(const char *s);
+extern int cbm_rs_validate_project_name(const char *name);
+extern int cbm_rs_json_escape(char *buf, int bufsize, const char *src);
+
+static char *cbm_rs_arena_string(CBMArena *a, size_t needed) {
+    if (needed == (size_t)-1) {
+        return NULL;
+    }
+    char *result = (char *)cbm_arena_alloc(a, needed + 1);
+    if (result) {
+        result[0] = '\0';
+    }
+    return result;
+}
+#endif
 
 enum {
     JSON_ESC_LEN = 2,       /* escaped char takes 2 bytes (backslash + char) */
@@ -15,6 +47,15 @@ enum {
 };
 
 char *cbm_path_join(CBMArena *a, const char *base, const char *name) {
+#ifdef CBM_USE_RUST_STR_UTIL
+    size_t needed = cbm_rs_path_join(NULL, 0, base, name);
+    char *result = cbm_rs_arena_string(a, needed);
+    if (!result) {
+        return NULL;
+    }
+    cbm_rs_path_join(result, needed + 1, base, name);
+    return result;
+#else
     if (!base || !name) {
         return NULL;
     }
@@ -55,9 +96,19 @@ char *cbm_path_join(CBMArena *a, const char *base, const char *name) {
     memcpy(result + blen + SKIP_ONE, name, nlen);
     result[blen + SKIP_ONE + nlen] = '\0';
     return result;
+#endif
 }
 
 char *cbm_path_join_n(CBMArena *a, const char **parts, int n) {
+#ifdef CBM_USE_RUST_STR_UTIL
+    size_t needed = cbm_rs_path_join_n(NULL, 0, parts, n);
+    char *result = cbm_rs_arena_string(a, needed);
+    if (!result) {
+        return NULL;
+    }
+    cbm_rs_path_join_n(result, needed + 1, parts, n);
+    return result;
+#else
     if (n <= 0 || !parts) {
         return cbm_arena_strdup(a, "");
     }
@@ -70,9 +121,13 @@ char *cbm_path_join_n(CBMArena *a, const char **parts, int n) {
         result = cbm_path_join(a, result, parts[i]);
     }
     return result;
+#endif
 }
 
 const char *cbm_path_ext(const char *path) {
+#ifdef CBM_USE_RUST_STR_UTIL
+    return cbm_rs_path_ext(path);
+#else
     if (!path) {
         return "";
     }
@@ -94,9 +149,13 @@ const char *cbm_path_ext(const char *path) {
         return "";
     }
     return dot + SKIP_ONE;
+#endif
 }
 
 const char *cbm_path_base(const char *path) {
+#ifdef CBM_USE_RUST_STR_UTIL
+    return cbm_rs_path_base(path);
+#else
     if (!path) {
         return "";
     }
@@ -107,9 +166,19 @@ const char *cbm_path_base(const char *path) {
         }
     }
     return last_slash ? last_slash + SKIP_ONE : path;
+#endif
 }
 
 char *cbm_path_dir(CBMArena *a, const char *path) {
+#ifdef CBM_USE_RUST_STR_UTIL
+    size_t needed = cbm_rs_path_dir(NULL, 0, path);
+    char *result = cbm_rs_arena_string(a, needed);
+    if (!result) {
+        return NULL;
+    }
+    cbm_rs_path_dir(result, needed + 1, path);
+    return result;
+#else
     if (!path) {
         return cbm_arena_strdup(a, ".");
     }
@@ -123,17 +192,25 @@ char *cbm_path_dir(CBMArena *a, const char *path) {
         return cbm_arena_strdup(a, ".");
     }
     return cbm_arena_strndup(a, path, (size_t)(last_slash - path));
+#endif
 }
 
 bool cbm_str_starts_with(const char *s, const char *prefix) {
+#ifdef CBM_USE_RUST_STR_UTIL
+    return cbm_rs_str_starts_with(s, prefix) != 0;
+#else
     if (!s || !prefix) {
         return false;
     }
     size_t plen = strlen(prefix);
     return strncmp(s, prefix, plen) == 0;
+#endif
 }
 
 bool cbm_str_ends_with(const char *s, const char *suffix) {
+#ifdef CBM_USE_RUST_STR_UTIL
+    return cbm_rs_str_ends_with(s, suffix) != 0;
+#else
     if (!s || !suffix) {
         return false;
     }
@@ -143,9 +220,13 @@ bool cbm_str_ends_with(const char *s, const char *suffix) {
         return false;
     }
     return strcmp(s + slen - xlen, suffix) == 0;
+#endif
 }
 
 bool cbm_str_contains(const char *s, const char *sub) {
+#ifdef CBM_USE_RUST_STR_UTIL
+    return cbm_rs_str_contains(s, sub) != 0;
+#else
     if (!s || !sub) {
         return false;
     }
@@ -153,9 +234,19 @@ bool cbm_str_contains(const char *s, const char *sub) {
         return true;
     }
     return strstr(s, sub) != NULL;
+#endif
 }
 
 char *cbm_str_tolower(CBMArena *a, const char *s) {
+#ifdef CBM_USE_RUST_STR_UTIL
+    size_t needed = cbm_rs_str_tolower(NULL, 0, s);
+    char *result = cbm_rs_arena_string(a, needed);
+    if (!result) {
+        return NULL;
+    }
+    cbm_rs_str_tolower(result, needed + 1, s);
+    return result;
+#else
     if (!s) {
         return NULL;
     }
@@ -169,9 +260,19 @@ char *cbm_str_tolower(CBMArena *a, const char *s) {
     }
     result[len] = '\0';
     return result;
+#endif
 }
 
 char *cbm_str_replace_char(CBMArena *a, const char *s, char from, char to) {
+#ifdef CBM_USE_RUST_STR_UTIL
+    size_t needed = cbm_rs_str_replace_char(NULL, 0, s, from, to);
+    char *result = cbm_rs_arena_string(a, needed);
+    if (!result) {
+        return NULL;
+    }
+    cbm_rs_str_replace_char(result, needed + 1, s, from, to);
+    return result;
+#else
     if (!s) {
         return NULL;
     }
@@ -185,9 +286,19 @@ char *cbm_str_replace_char(CBMArena *a, const char *s, char from, char to) {
     }
     result[len] = '\0';
     return result;
+#endif
 }
 
 char *cbm_str_strip_ext(CBMArena *a, const char *path) {
+#ifdef CBM_USE_RUST_STR_UTIL
+    size_t needed = cbm_rs_str_strip_ext(NULL, 0, path);
+    char *result = cbm_rs_arena_string(a, needed);
+    if (!result) {
+        return NULL;
+    }
+    cbm_rs_str_strip_ext(result, needed + 1, path);
+    return result;
+#else
     if (!path) {
         return NULL;
     }
@@ -205,9 +316,39 @@ char *cbm_str_strip_ext(CBMArena *a, const char *path) {
         return cbm_arena_strdup(a, path);
     }
     return cbm_arena_strndup(a, path, (size_t)(dot - path));
+#endif
 }
 
 char **cbm_str_split(CBMArena *a, const char *s, char delim, int *out_count) {
+#ifdef CBM_USE_RUST_STR_UTIL
+    if (!out_count) {
+        return NULL;
+    }
+    size_t count = cbm_rs_str_split_count(s, delim);
+    if (count == (size_t)-1 || count > (size_t)INT_MAX ||
+        count > ((size_t)-1 / sizeof(char *)) - 1) {
+        return NULL;
+    }
+
+    char **result = (char **)cbm_arena_alloc(a, (count + 1) * sizeof(char *));
+    if (!result) {
+        return NULL;
+    }
+    for (size_t i = 0; i < count; i++) {
+        size_t part_len = cbm_rs_str_split_part(NULL, 0, s, delim, i);
+        if (part_len == (size_t)-1) {
+            return NULL;
+        }
+        result[i] = cbm_rs_arena_string(a, part_len);
+        if (!result[i]) {
+            return NULL;
+        }
+        cbm_rs_str_split_part(result[i], part_len + 1, s, delim, i);
+    }
+    result[count] = NULL;
+    *out_count = (int)count;
+    return result;
+#else
     if (!s || !out_count) {
         return NULL;
     }
@@ -241,9 +382,13 @@ char **cbm_str_split(CBMArena *a, const char *s, char delim, int *out_count) {
     result[idx] = NULL;
     *out_count = count;
     return result;
+#endif
 }
 
 bool cbm_validate_shell_arg(const char *s) {
+#ifdef CBM_USE_RUST_STR_UTIL
+    return cbm_rs_validate_shell_arg(s) != 0;
+#else
     if (!s) {
         return false;
     }
@@ -269,9 +414,13 @@ bool cbm_validate_shell_arg(const char *s) {
         }
     }
     return true;
+#endif
 }
 
 bool cbm_validate_project_name(const char *name) {
+#ifdef CBM_USE_RUST_STR_UTIL
+    return cbm_rs_validate_project_name(name) != 0;
+#else
     if (!name || !*name)
         return false;
     /* Reject directory traversal */
@@ -291,9 +440,13 @@ bool cbm_validate_project_name(const char *name) {
         }
     }
     return true;
+#endif
 }
 
 int cbm_json_escape(char *buf, int bufsize, const char *src) {
+#ifdef CBM_USE_RUST_STR_UTIL
+    return cbm_rs_json_escape(buf, bufsize, src);
+#else
     if (!buf || bufsize <= 0) {
         return 0;
     }
@@ -340,4 +493,5 @@ int cbm_json_escape(char *buf, int bufsize, const char *src) {
     }
     buf[pos] = '\0';
     return pos;
+#endif
 }

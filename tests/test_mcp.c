@@ -627,6 +627,115 @@ TEST(tool_search_graph_query_honors_file_pattern_issue552) {
     PASS();
 }
 
+TEST(tool_search_graph_bm25_file_pattern_rank_order_contract) {
+    cbm_mcp_server_t *srv = cbm_mcp_server_new(NULL);
+    ASSERT_NOT_NULL(srv);
+    cbm_store_t *st = cbm_mcp_server_store(srv);
+    ASSERT_NOT_NULL(st);
+
+    const char *proj = "bm25-contract";
+    cbm_mcp_server_set_project(srv, proj);
+    cbm_store_upsert_project(st, proj, "/tmp/bm25-contract");
+
+    cbm_node_t function_checkout = {.project = proj,
+                                    .label = "Function",
+                                    .name = "checkout",
+                                    .qualified_name = "bm25.checkout.function",
+                                    .file_path = "src/api/checkout.c",
+                                    .start_line = 1,
+                                    .end_line = 3};
+    cbm_node_t route_checkout = {.project = proj,
+                                 .label = "Route",
+                                 .name = "checkout",
+                                 .qualified_name = "bm25.checkout.route",
+                                 .file_path = "src/api/checkout.c",
+                                 .start_line = 5,
+                                 .end_line = 7};
+    cbm_node_t class_checkout = {.project = proj,
+                                 .label = "Class",
+                                 .name = "checkout",
+                                 .qualified_name = "bm25.checkout.class",
+                                 .file_path = "src/api/checkout.c",
+                                 .start_line = 9,
+                                 .end_line = 11};
+    cbm_node_t component_checkout = {.project = proj,
+                                     .label = "Function",
+                                     .name = "checkout",
+                                     .qualified_name = "bm25.checkout.component",
+                                     .file_path = "src/components/checkout.c",
+                                     .start_line = 1,
+                                     .end_line = 3};
+    cbm_node_t file_checkout = {.project = proj,
+                                .label = "File",
+                                .name = "checkout",
+                                .qualified_name = "bm25.checkout.file",
+                                .file_path = "src/api/checkout.c",
+                                .start_line = 1,
+                                .end_line = 1};
+    ASSERT_GT(cbm_store_upsert_node(st, &function_checkout), 0);
+    ASSERT_GT(cbm_store_upsert_node(st, &route_checkout), 0);
+    ASSERT_GT(cbm_store_upsert_node(st, &class_checkout), 0);
+    ASSERT_GT(cbm_store_upsert_node(st, &component_checkout), 0);
+    ASSERT_GT(cbm_store_upsert_node(st, &file_checkout), 0);
+
+    ASSERT_EQ(cbm_store_exec(st, "INSERT INTO nodes_fts(nodes_fts) VALUES('delete-all');"),
+              CBM_STORE_OK);
+    ASSERT_EQ(cbm_store_exec(st,
+                             "INSERT INTO nodes_fts(rowid, name, qualified_name, label, "
+                             "file_path) "
+                             "SELECT id, cbm_camel_split(name), qualified_name, label, file_path "
+                             "FROM nodes;"),
+              CBM_STORE_OK);
+
+    char *resp =
+        cbm_mcp_server_handle(srv, "{\"jsonrpc\":\"2.0\",\"id\":553,\"method\":\"tools/call\","
+                                   "\"params\":{\"name\":\"search_graph\","
+                                   "\"arguments\":{\"project\":\"bm25-contract\","
+                                   "\"query\":\"checkout\","
+                                   "\"file_pattern\":\"src/api/*\","
+                                   "\"limit\":10}}}");
+    ASSERT_NOT_NULL(resp);
+    char *inner = extract_text_content(resp);
+    ASSERT_NOT_NULL(inner);
+    yyjson_doc *doc = yyjson_read(inner, strlen(inner), 0);
+    ASSERT_NOT_NULL(doc);
+    yyjson_val *root = yyjson_doc_get_root(doc);
+    ASSERT_STR_EQ(yyjson_get_str(yyjson_obj_get(root, "search_mode")), "bm25");
+    ASSERT_EQ(yyjson_get_int(yyjson_obj_get(root, "total")), 3);
+    ASSERT_FALSE(yyjson_get_bool(yyjson_obj_get(root, "has_more")));
+
+    yyjson_val *results = yyjson_obj_get(root, "results");
+    ASSERT_NOT_NULL(results);
+    ASSERT_TRUE(yyjson_is_arr(results));
+    ASSERT_EQ((int)yyjson_arr_size(results), 3);
+
+    yyjson_val *r0 = yyjson_arr_get(results, 0);
+    yyjson_val *r1 = yyjson_arr_get(results, 1);
+    yyjson_val *r2 = yyjson_arr_get(results, 2);
+    ASSERT_STR_EQ(yyjson_get_str(yyjson_obj_get(r0, "label")), "Function");
+    ASSERT_STR_EQ(yyjson_get_str(yyjson_obj_get(r1, "label")), "Route");
+    ASSERT_STR_EQ(yyjson_get_str(yyjson_obj_get(r2, "label")), "Class");
+    ASSERT_STR_EQ(yyjson_get_str(yyjson_obj_get(r0, "file_path")), "src/api/checkout.c");
+    ASSERT_STR_EQ(yyjson_get_str(yyjson_obj_get(r1, "file_path")), "src/api/checkout.c");
+    ASSERT_STR_EQ(yyjson_get_str(yyjson_obj_get(r2, "file_path")), "src/api/checkout.c");
+    ASSERT_TRUE(yyjson_is_num(yyjson_obj_get(r0, "rank")));
+    ASSERT_TRUE(yyjson_is_num(yyjson_obj_get(r1, "rank")));
+    ASSERT_TRUE(yyjson_is_num(yyjson_obj_get(r2, "rank")));
+    double rank0 = yyjson_get_real(yyjson_obj_get(r0, "rank"));
+    double rank1 = yyjson_get_real(yyjson_obj_get(r1, "rank"));
+    double rank2 = yyjson_get_real(yyjson_obj_get(r2, "rank"));
+    ASSERT_TRUE(rank0 < rank1);
+    ASSERT_TRUE(rank1 < rank2);
+    ASSERT_NULL(strstr(inner, "src/components/checkout.c"));
+    ASSERT_NULL(strstr(inner, "\"label\":\"File\""));
+
+    yyjson_doc_free(doc);
+    free(inner);
+    free(resp);
+    cbm_mcp_server_free(srv);
+    PASS();
+}
+
 TEST(tool_query_graph_basic) {
     cbm_mcp_server_t *srv = setup_mcp_with_data();
 
@@ -3007,6 +3116,7 @@ SUITE(mcp) {
     RUN_TEST(tool_search_graph_basic);
     RUN_TEST(tool_search_graph_includes_node_properties);
     RUN_TEST(tool_search_graph_query_honors_file_pattern_issue552);
+    RUN_TEST(tool_search_graph_bm25_file_pattern_rank_order_contract);
     RUN_TEST(tool_query_graph_basic);
     RUN_TEST(tool_index_status_no_project);
     RUN_TEST(tool_index_status_includes_git_metadata);

@@ -288,16 +288,20 @@ EXISTING_C_SRCS = $(EXTRACTION_SRCS) $(LSP_SRCS) $(TS_RUNTIME_SRC) \
 
 # ── Test sources ─────────────────────────────────────────────────
 
-TEST_FOUNDATION_SRCS = \
-    tests/test_main.c \
+TEST_FOUNDATION_SUITE_SRCS = \
     tests/test_arena.c \
     tests/test_hash_table.c \
     tests/test_dyn_array.c \
     tests/test_str_intern.c \
     tests/test_log.c \
+    tests/test_diagnostics.c \
     tests/test_str_util.c \
     tests/test_platform.c \
     tests/test_dump_verify.c
+
+TEST_FOUNDATION_SRCS = \
+    tests/test_foundation_main.c \
+    $(TEST_FOUNDATION_SUITE_SRCS)
 
 TEST_EXTRACTION_SRCS = \
     tests/test_extraction.c \
@@ -316,10 +320,12 @@ TEST_STORE_SRCS = \
     tests/test_store_bulk.c \
     tests/test_store_pragmas.c \
     tests/test_store_checkpoint.c \
+    tests/test_store_compat.c \
     tests/test_dump_verify_io.c
 
 TEST_CYPHER_SRCS = \
-    tests/test_cypher.c
+    tests/test_cypher.c \
+    tests/test_cypher_contract.c
 
 TEST_MCP_SRCS = \
     tests/test_mcp.c
@@ -447,12 +453,55 @@ TEST_REPRO_SRCS = \
     tests/repro/repro_lsp_java_cs.c \
     tests/repro/repro_lsp_kt_php_rust.c
 
-ALL_TEST_SRCS =$(TEST_FOUNDATION_SRCS) $(TEST_EXTRACTION_SRCS) $(TEST_STORE_SRCS) $(TEST_CYPHER_SRCS) $(TEST_MCP_SRCS) $(TEST_DISCOVER_SRCS) $(TEST_GRAPH_BUFFER_SRCS) $(TEST_PIPELINE_SRCS) $(TEST_WATCHER_SRCS) $(TEST_LZ4_SRCS) $(TEST_ZSTD_SRCS) $(TEST_ARTIFACT_SRCS) $(TEST_SQLITE_WRITER_SRCS) $(TEST_GO_LSP_SRCS) $(TEST_C_LSP_SRCS) $(TEST_PHP_LSP_SRCS) $(TEST_CS_LSP_SRCS) $(TEST_CS_LSP_BENCH_SRCS) $(TEST_SCOPE_SRCS) $(TEST_TYPE_REP_SRCS) $(TEST_PY_LSP_SRCS) $(TEST_PY_LSP_BENCH_SRCS) $(TEST_PY_LSP_STRESS_SRCS) $(TEST_PY_LSP_SCALE_SRCS) $(TEST_TS_LSP_SRCS) $(TEST_JAVA_LSP_SRCS) $(TEST_KOTLIN_LSP_SRCS) $(TEST_RUST_LSP_SRCS) $(TEST_TRACES_SRCS) $(TEST_CLI_SRCS) $(TEST_MEM_SRCS) $(TEST_UI_SRCS) $(TEST_HTTPD_SRCS) $(TEST_SECURITY_SRCS) $(TEST_YAML_SRCS) $(TEST_SIMHASH_SRCS) $(TEST_STACK_OVERFLOW_SRCS) $(TEST_INTEGRATION_SRCS)
+ALL_TEST_SRCS =tests/test_main.c $(TEST_FOUNDATION_SUITE_SRCS) $(TEST_EXTRACTION_SRCS) $(TEST_STORE_SRCS) $(TEST_CYPHER_SRCS) $(TEST_MCP_SRCS) $(TEST_DISCOVER_SRCS) $(TEST_GRAPH_BUFFER_SRCS) $(TEST_PIPELINE_SRCS) $(TEST_WATCHER_SRCS) $(TEST_LZ4_SRCS) $(TEST_ZSTD_SRCS) $(TEST_ARTIFACT_SRCS) $(TEST_SQLITE_WRITER_SRCS) $(TEST_GO_LSP_SRCS) $(TEST_C_LSP_SRCS) $(TEST_PHP_LSP_SRCS) $(TEST_CS_LSP_SRCS) $(TEST_CS_LSP_BENCH_SRCS) $(TEST_SCOPE_SRCS) $(TEST_TYPE_REP_SRCS) $(TEST_PY_LSP_SRCS) $(TEST_PY_LSP_BENCH_SRCS) $(TEST_PY_LSP_STRESS_SRCS) $(TEST_PY_LSP_SCALE_SRCS) $(TEST_TS_LSP_SRCS) $(TEST_JAVA_LSP_SRCS) $(TEST_KOTLIN_LSP_SRCS) $(TEST_RUST_LSP_SRCS) $(TEST_TRACES_SRCS) $(TEST_CLI_SRCS) $(TEST_MEM_SRCS) $(TEST_UI_SRCS) $(TEST_HTTPD_SRCS) $(TEST_SECURITY_SRCS) $(TEST_YAML_SRCS) $(TEST_SIMHASH_SRCS) $(TEST_STACK_OVERFLOW_SRCS) $(TEST_INTEGRATION_SRCS)
 
 
 # ── Build directories ────────────────────────────────────────────
 
 BUILD_DIR = build/c
+
+# 階段性 C/Rust migration 使用的 Rust staticlib inputs。預設關閉：
+# production C build 只有在 CBM_USE_RUST_* flag 啟用時才連 Rust。
+CARGO ?= cargo
+CARGO_TARGET_DIR ?= target
+RUST_AUDIT_REQUIRED ?= 0
+RUST_TARGET ?=
+RUST_TARGET_FLAG = $(if $(RUST_TARGET),--target $(RUST_TARGET),)
+RUST_TARGET_SUBDIR = $(if $(RUST_TARGET),$(RUST_TARGET)/,)
+RUST_STATICLIB_NAME ?= libcbm_core.a
+RUST_STATICLIB_TEST = $(CARGO_TARGET_DIR)/$(RUST_TARGET_SUBDIR)debug/$(RUST_STATICLIB_NAME)
+RUST_STATICLIB_PROD = $(CARGO_TARGET_DIR)/$(RUST_TARGET_SUBDIR)release/$(RUST_STATICLIB_NAME)
+RUST_INPUTS = Cargo.toml Cargo.lock rust/cbm-core/Cargo.toml $(shell find rust/cbm-core/src -type f -name '*.rs' 2>/dev/null)
+RUST_PARITY_DIR = target/rust-parity
+
+ifeq ($(CBM_USE_RUST_DUMP_VERIFY),1)
+CFLAGS_COMMON += -DCBM_USE_RUST_DUMP_VERIFY
+endif
+ifeq ($(CBM_USE_RUST_STR_INTERN),1)
+CFLAGS_COMMON += -DCBM_USE_RUST_STR_INTERN
+endif
+ifeq ($(CBM_USE_RUST_STR_UTIL),1)
+CFLAGS_COMMON += -DCBM_USE_RUST_STR_UTIL
+endif
+ifeq ($(CBM_USE_RUST_PLATFORM_PATH),1)
+CFLAGS_COMMON += -DCBM_USE_RUST_PLATFORM_PATH
+endif
+ifeq ($(CBM_USE_RUST_PLATFORM_CGROUP),1)
+CFLAGS_COMMON += -DCBM_USE_RUST_PLATFORM_CGROUP
+endif
+ifeq ($(CBM_USE_RUST_PLATFORM_ENV_DIRS),1)
+CFLAGS_COMMON += -DCBM_USE_RUST_PLATFORM_ENV_DIRS
+endif
+ifeq ($(CBM_USE_RUST_PIPELINE_REGISTRY),1)
+CFLAGS_COMMON += -DCBM_USE_RUST_PIPELINE_REGISTRY
+endif
+ifeq ($(CBM_USE_RUST_PIPELINE_PLAN),1)
+CFLAGS_COMMON += -DCBM_USE_RUST_PIPELINE_PLAN
+endif
+ifneq ($(filter 1,$(CBM_USE_RUST_DUMP_VERIFY) $(CBM_USE_RUST_STR_INTERN) $(CBM_USE_RUST_STR_UTIL) $(CBM_USE_RUST_PLATFORM_PATH) $(CBM_USE_RUST_PLATFORM_CGROUP) $(CBM_USE_RUST_PLATFORM_ENV_DIRS) $(CBM_USE_RUST_PIPELINE_REGISTRY) $(CBM_USE_RUST_PIPELINE_PLAN)),)
+RUST_FOUNDATION_TEST_LIB = $(RUST_STATICLIB_TEST)
+RUST_FOUNDATION_PROD_LIB = $(RUST_STATICLIB_PROD)
+endif
 
 # ── Object file compilation (grammars need relaxed warnings) ─────
 
@@ -471,15 +520,20 @@ PP_OBJ_TEST = $(BUILD_DIR)/preprocessor.o
 
 # ── Targets ──────────────────────────────────────────────────────
 
-.PHONY: test test-repro test-foundation test-tsan cbm cbm-with-ui frontend embed clean-c lint lint-tidy lint-cppcheck lint-format security
+.PHONY: test test-repro test-foundation test-tsan cbm cbm-with-ui frontend embed clean-c \
+        rust-fmt rust-clippy rust-test rust-ffi-test rust-foundation-optin-test rust-pipeline-registry-optin-test rust-pipeline-plan-optin-test rust-language-graph-parity rust-language-graph-parity-update rust-baseline-fixtures rust-self-index-baseline rust-self-index-baseline-update rust-large-performance-baseline rust-large-performance-baseline-update rust-lint rust-dangerous-api rust-audit rust-security rust-ci \
+        lint lint-tidy lint-cppcheck lint-format security
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
 # ── Foundation-only test (fast, no extraction) ───────────────────
 
-$(BUILD_DIR)/test-foundation: $(TEST_FOUNDATION_SRCS) $(FOUNDATION_SRCS) | $(BUILD_DIR)
-	$(CC) $(CFLAGS_TEST) -o $@ $(TEST_FOUNDATION_SRCS) $(FOUNDATION_SRCS) $(LDFLAGS_TEST)
+$(BUILD_DIR)/test-foundation: $(TEST_FOUNDATION_SRCS) $(FOUNDATION_SRCS) $(BUILD_DIR)/mimalloc.o $(TS_RUNTIME_OBJ_TEST) $(RUST_FOUNDATION_TEST_LIB) | $(BUILD_DIR)
+	$(CC) $(CFLAGS_TEST) -o $@ \
+		$(TEST_FOUNDATION_SRCS) $(FOUNDATION_SRCS) \
+		$(BUILD_DIR)/mimalloc.o $(TS_RUNTIME_OBJ_TEST) $(RUST_FOUNDATION_TEST_LIB) \
+		$(LDFLAGS_TEST)
 
 test-foundation: $(BUILD_DIR)/test-foundation
 	cd $(CURDIR) && $(BUILD_DIR)/test-foundation
@@ -553,11 +607,11 @@ $(UNIXCODER_OBJ): $(UNIXCODER_BLOB_SRC) vendored/nomic/code_vectors.bin | $(BUIL
 
 OBJS_VENDORED_TEST = $(MIMALLOC_OBJ_TEST) $(SQLITE3_OBJ_TEST) $(TRE_OBJ_TEST) $(GRAMMAR_OBJS_TEST) $(TS_RUNTIME_OBJ_TEST) $(LSP_OBJ_TEST) $(PP_OBJ_TEST) $(LZ4_OBJ_TEST) $(ZSTD_OBJ_TEST) $(UNIXCODER_OBJ)
 
-$(BUILD_DIR)/test-runner: $(ALL_TEST_SRCS) $(PROD_SRCS) $(EXTRACTION_SRCS) $(AC_LZ4_SRCS) $(ZSTD_SRCS) $(SQLITE_WRITER_SRC) $(OBJS_VENDORED_TEST) | $(BUILD_DIR)
+$(BUILD_DIR)/test-runner: $(ALL_TEST_SRCS) $(PROD_SRCS) $(EXTRACTION_SRCS) $(AC_LZ4_SRCS) $(ZSTD_SRCS) $(SQLITE_WRITER_SRC) $(OBJS_VENDORED_TEST) $(RUST_FOUNDATION_TEST_LIB) | $(BUILD_DIR)
 	$(CC) $(CFLAGS_TEST) -o $@ \
 		$(ALL_TEST_SRCS) $(PROD_SRCS) \
 		$(EXTRACTION_SRCS) $(AC_LZ4_SRCS) $(ZSTD_SRCS) $(SQLITE_WRITER_SRC) \
-		$(OBJS_VENDORED_TEST) \
+		$(OBJS_VENDORED_TEST) $(RUST_FOUNDATION_TEST_LIB) \
 		$(LDFLAGS_TEST)
 
 test: $(BUILD_DIR)/test-runner
@@ -567,11 +621,11 @@ test: $(BUILD_DIR)/test-runner
 # Mirrors test-runner's link line but uses repro_main.c (own main + counters)
 # and TEST_REPRO_SRCS instead of ALL_TEST_SRCS. Exits non-zero while any bug is
 # still reproduced (the expected state); bug-repro.yml surfaces it as a board.
-$(BUILD_DIR)/test-repro-runner: $(TEST_REPRO_SRCS) $(PROD_SRCS) $(EXTRACTION_SRCS) $(AC_LZ4_SRCS) $(ZSTD_SRCS) $(SQLITE_WRITER_SRC) $(OBJS_VENDORED_TEST) | $(BUILD_DIR)
+$(BUILD_DIR)/test-repro-runner: $(TEST_REPRO_SRCS) $(PROD_SRCS) $(EXTRACTION_SRCS) $(AC_LZ4_SRCS) $(ZSTD_SRCS) $(SQLITE_WRITER_SRC) $(OBJS_VENDORED_TEST) $(RUST_FOUNDATION_TEST_LIB) | $(BUILD_DIR)
 	$(CC) $(CFLAGS_TEST) -Itests -o $@ \
 		$(TEST_REPRO_SRCS) $(PROD_SRCS) \
 		$(EXTRACTION_SRCS) $(AC_LZ4_SRCS) $(ZSTD_SRCS) $(SQLITE_WRITER_SRC) \
-		$(OBJS_VENDORED_TEST) \
+		$(OBJS_VENDORED_TEST) $(RUST_FOUNDATION_TEST_LIB) \
 		$(LDFLAGS_TEST)
 
 test-repro: $(BUILD_DIR)/test-repro-runner
@@ -618,11 +672,11 @@ OBJS_VENDORED_PROD = $(MIMALLOC_OBJ_PROD) $(SQLITE3_OBJ_PROD) $(TRE_OBJ_PROD) $(
 
 MAIN_SRC = src/main.c
 
-$(BUILD_DIR)/codebase-memory-mcp: $(MAIN_SRC) $(PROD_SRCS) $(EXTRACTION_SRCS) $(AC_LZ4_SRCS) $(ZSTD_SRCS) $(SQLITE_WRITER_SRC) $(OBJS_VENDORED_PROD) | $(BUILD_DIR)
+$(BUILD_DIR)/codebase-memory-mcp: $(MAIN_SRC) $(PROD_SRCS) $(EXTRACTION_SRCS) $(AC_LZ4_SRCS) $(ZSTD_SRCS) $(SQLITE_WRITER_SRC) $(OBJS_VENDORED_PROD) $(RUST_FOUNDATION_PROD_LIB) | $(BUILD_DIR)
 	$(CC) $(CFLAGS_PROD) -o $@ \
 		$(MAIN_SRC) $(PROD_SRCS) \
 		$(EXTRACTION_SRCS) $(AC_LZ4_SRCS) $(ZSTD_SRCS) $(SQLITE_WRITER_SRC) \
-		$(OBJS_VENDORED_PROD) \
+		$(OBJS_VENDORED_PROD) $(RUST_FOUNDATION_PROD_LIB) \
 		$(LDFLAGS)
 
 cbm: $(BUILD_DIR)/codebase-memory-mcp
@@ -643,17 +697,147 @@ frontend:
 embed: frontend
 	scripts/embed-frontend.sh graph-ui/dist $(BUILD_DIR)/embedded
 
-cbm-with-ui: embed $(OBJS_VENDORED_PROD)
+cbm-with-ui: embed $(OBJS_VENDORED_PROD) $(RUST_FOUNDATION_PROD_LIB)
 	$(CC) $(CFLAGS_PROD) -o $(BUILD_DIR)/codebase-memory-mcp \
 		$(MAIN_SRC) $(PROD_SRCS_WITH_ASSETS) \
 		$(EXTRACTION_SRCS) $(AC_LZ4_SRCS) $(ZSTD_SRCS) $(SQLITE_WRITER_SRC) \
-		$(OBJS_VENDORED_PROD) \
+		$(OBJS_VENDORED_PROD) $(RUST_FOUNDATION_PROD_LIB) \
 		$(wildcard $(BUILD_DIR)/embedded/embed_*.o) \
 		$(LDFLAGS)
 	@echo "Built with UI: $(BUILD_DIR)/codebase-memory-mcp"
 
 clean-c:
 	rm -rf $(BUILD_DIR)
+
+# ── Rust 重構檢查（預設不連入 C binary）────────────────────────────
+
+rust-fmt:
+	@if [ -f Cargo.toml ]; then \
+		$(CARGO) fmt --all -- --check; \
+	else \
+		echo "No Cargo.toml; skipping Rust format check"; \
+	fi
+
+rust-clippy:
+	@if [ -f Cargo.toml ]; then \
+		CARGO_TARGET_DIR=$(CARGO_TARGET_DIR) $(CARGO) clippy --workspace --all-targets --all-features $(RUST_TARGET_FLAG) -- -D warnings; \
+	else \
+		echo "No Cargo.toml; skipping Rust clippy"; \
+	fi
+
+rust-test:
+	@if [ -f Cargo.toml ]; then \
+		CARGO_TARGET_DIR=$(CARGO_TARGET_DIR) $(CARGO) test --workspace --all-targets --all-features $(RUST_TARGET_FLAG) --locked; \
+	else \
+		echo "No Cargo.toml; skipping Rust tests"; \
+	fi
+
+$(RUST_STATICLIB_TEST): $(RUST_INPUTS)
+	CARGO_TARGET_DIR=$(CARGO_TARGET_DIR) $(CARGO) build -p cbm-core $(RUST_TARGET_FLAG) --locked
+
+$(RUST_STATICLIB_PROD): $(RUST_INPUTS)
+	CARGO_TARGET_DIR=$(CARGO_TARGET_DIR) $(CARGO) build -p cbm-core $(RUST_TARGET_FLAG) --release --locked
+
+$(BUILD_DIR)/test-rust-ffi: tests/test_rust_ffi.c $(RUST_STATICLIB_TEST) | $(BUILD_DIR)
+	$(CC) $(CFLAGS_TEST) -o $@ tests/test_rust_ffi.c $(RUST_STATICLIB_TEST) $(LDFLAGS_TEST)
+
+rust-ffi-test: $(BUILD_DIR)/test-rust-ffi
+	cd $(CURDIR) && $(BUILD_DIR)/test-rust-ffi
+
+rust-foundation-optin-test:
+	$(MAKE) -f Makefile.cbm clean-c
+	$(MAKE) -f Makefile.cbm test-foundation
+	$(MAKE) -f Makefile.cbm clean-c
+	$(MAKE) -f Makefile.cbm CBM_USE_RUST_DUMP_VERIFY=1 test-foundation
+	$(MAKE) -f Makefile.cbm clean-c
+	$(MAKE) -f Makefile.cbm CBM_USE_RUST_STR_INTERN=1 test-foundation
+	$(MAKE) -f Makefile.cbm clean-c
+	$(MAKE) -f Makefile.cbm CBM_USE_RUST_STR_UTIL=1 test-foundation
+	$(MAKE) -f Makefile.cbm clean-c
+	$(MAKE) -f Makefile.cbm CBM_USE_RUST_PLATFORM_PATH=1 test-foundation
+	$(MAKE) -f Makefile.cbm clean-c
+	$(MAKE) -f Makefile.cbm CBM_USE_RUST_PLATFORM_CGROUP=1 test-foundation
+	$(MAKE) -f Makefile.cbm clean-c
+	$(MAKE) -f Makefile.cbm CBM_USE_RUST_PLATFORM_ENV_DIRS=1 test-foundation
+	$(MAKE) -f Makefile.cbm clean-c
+	$(MAKE) -f Makefile.cbm CBM_USE_RUST_DUMP_VERIFY=1 CBM_USE_RUST_STR_INTERN=1 CBM_USE_RUST_STR_UTIL=1 CBM_USE_RUST_PLATFORM_PATH=1 CBM_USE_RUST_PLATFORM_CGROUP=1 CBM_USE_RUST_PLATFORM_ENV_DIRS=1 test-foundation
+
+rust-pipeline-registry-optin-test:
+	$(MAKE) -f Makefile.cbm clean-c
+	$(MAKE) -f Makefile.cbm CBM_USE_RUST_PIPELINE_REGISTRY=1 $(BUILD_DIR)/test-runner
+	cd $(CURDIR) && $(BUILD_DIR)/test-runner registry
+
+rust-pipeline-plan-optin-test:
+	$(MAKE) -f Makefile.cbm clean-c
+	$(MAKE) -f Makefile.cbm CBM_USE_RUST_PIPELINE_PLAN=1 $(BUILD_DIR)/test-runner
+	cd $(CURDIR) && $(BUILD_DIR)/test-runner pipeline
+
+rust-language-graph-parity:
+	rm -rf $(RUST_PARITY_DIR)
+	mkdir -p $(RUST_PARITY_DIR)
+	$(MAKE) -f Makefile.cbm clean-c
+	$(MAKE) -f Makefile.cbm cbm
+	cp $(BUILD_DIR)/codebase-memory-mcp $(RUST_PARITY_DIR)/cbm-default
+	$(MAKE) -f Makefile.cbm clean-c
+	$(MAKE) -f Makefile.cbm CBM_USE_RUST_PIPELINE_REGISTRY=1 CBM_USE_RUST_PIPELINE_PLAN=1 cbm
+	cp $(BUILD_DIR)/codebase-memory-mcp $(RUST_PARITY_DIR)/cbm-rust-pipeline
+	cd $(CURDIR) && python3 scripts/rust-language-graph-parity.py $(RUST_PARITY_DIR)/cbm-default $(RUST_PARITY_DIR)/cbm-rust-pipeline
+
+rust-language-graph-parity-update:
+	rm -rf $(RUST_PARITY_DIR)
+	mkdir -p $(RUST_PARITY_DIR)
+	$(MAKE) -f Makefile.cbm clean-c
+	$(MAKE) -f Makefile.cbm cbm
+	cp $(BUILD_DIR)/codebase-memory-mcp $(RUST_PARITY_DIR)/cbm-default
+	$(MAKE) -f Makefile.cbm clean-c
+	$(MAKE) -f Makefile.cbm CBM_USE_RUST_PIPELINE_REGISTRY=1 CBM_USE_RUST_PIPELINE_PLAN=1 cbm
+	cp $(BUILD_DIR)/codebase-memory-mcp $(RUST_PARITY_DIR)/cbm-rust-pipeline
+	cd $(CURDIR) && python3 scripts/rust-language-graph-parity.py $(RUST_PARITY_DIR)/cbm-default $(RUST_PARITY_DIR)/cbm-rust-pipeline --update
+
+rust-baseline-fixtures: cbm
+	cd $(CURDIR) && python3 scripts/rust-baseline-fixtures.py $(BUILD_DIR)/codebase-memory-mcp
+
+rust-self-index-baseline: cbm
+	cd $(CURDIR) && python3 scripts/rust-self-index-baseline.py $(BUILD_DIR)/codebase-memory-mcp
+
+rust-self-index-baseline-update: cbm
+	cd $(CURDIR) && python3 scripts/rust-self-index-baseline.py $(BUILD_DIR)/codebase-memory-mcp --update
+
+rust-large-performance-baseline: cbm
+	cd $(CURDIR) && python3 scripts/rust-large-performance-baseline.py $(BUILD_DIR)/codebase-memory-mcp
+
+rust-large-performance-baseline-update: cbm
+	cd $(CURDIR) && python3 scripts/rust-large-performance-baseline.py $(BUILD_DIR)/codebase-memory-mcp --update
+
+rust-lint: rust-fmt rust-clippy
+	@echo "=== Rust lint passed ==="
+
+rust-dangerous-api:
+	cd $(CURDIR) && python3 scripts/rust-security-audit.py
+
+rust-audit:
+	@if [ ! -f Cargo.toml ]; then \
+		echo "No Cargo.toml; skipping Rust audit"; \
+	elif ! command -v cargo-audit >/dev/null 2>&1; then \
+		if [ "$(RUST_AUDIT_REQUIRED)" = "1" ]; then \
+			echo "cargo-audit not installed; Rust audit is required"; \
+			exit 1; \
+		fi; \
+		echo "cargo-audit not installed; skipping Rust audit"; \
+	else \
+		cargo audit; \
+	fi
+
+rust-security: rust-dangerous-api rust-audit
+	@echo "=== Rust source security checks passed; cargo-audit is enforced when RUST_AUDIT_REQUIRED=1 ==="
+
+rust-ci: rust-lint rust-test rust-ffi-test rust-foundation-optin-test rust-pipeline-registry-optin-test rust-pipeline-plan-optin-test rust-language-graph-parity rust-dangerous-api rust-audit
+	@echo "=== Rust checks passed ==="
+
+# Test/parity subset of rust-ci for CI (dependency audit + dangerous-API
+# allow-list run in the separate security gate, so they are omitted here).
+rust-ci-tests: rust-lint rust-test rust-ffi-test rust-foundation-optin-test rust-pipeline-registry-optin-test rust-pipeline-plan-optin-test rust-language-graph-parity
+	@echo "=== Rust test/parity gates passed ==="
 
 # ── Linting ─────────────────────────────────────────────────────
 
@@ -732,9 +916,9 @@ lint: lint-tidy lint-cppcheck lint-format lint-no-suppress
 lint-ci: lint-cppcheck lint-format lint-no-suppress
 	@echo "=== CI linters passed ==="
 
-# ── Security audit (6 layers) ────────────────────────────────────
+# ── Security audit ───────────────────────────────────────────────
 
-# Run all security checks: static audit, binary strings, UI, install, network
+# Run all security checks: static audit, binary strings, UI, install, network, Rust
 # Requires: production binary already built (make cbm)
 security: cbm
 	@echo "=== Running security audit suite ==="
@@ -745,4 +929,5 @@ security: cbm
 	scripts/security-network.sh $(BUILD_DIR)/codebase-memory-mcp
 	scripts/security-fuzz.sh $(BUILD_DIR)/codebase-memory-mcp
 	scripts/security-vendored.sh
+	$(MAKE) -f Makefile.cbm rust-security
 	@echo "=== All security checks passed ==="

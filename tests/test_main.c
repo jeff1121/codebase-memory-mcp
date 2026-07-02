@@ -54,6 +54,7 @@ extern void suite_store_nodes(void);
 extern void suite_store_edges(void);
 extern void suite_store_search(void);
 extern void suite_cypher(void);
+extern void suite_cypher_contract(void);
 extern void suite_mcp(void);
 extern void suite_language(void);
 extern void suite_userconfig(void);
@@ -90,6 +91,7 @@ extern void suite_store_arch(void);
 extern void suite_store_bulk(void);
 extern void suite_store_pragmas(void);
 extern void suite_store_checkpoint(void);
+extern void suite_store_compat(void);
 extern void suite_traces(void);
 extern void suite_configlink(void);
 extern void suite_infrascan(void);
@@ -161,10 +163,12 @@ int main(int argc, char **argv) {
     RUN_SELECTED_SUITE(store_bulk);
     RUN_SELECTED_SUITE(store_pragmas);
     RUN_SELECTED_SUITE(store_checkpoint);
+    RUN_SELECTED_SUITE(store_compat);
     RUN_SELECTED_SUITE(dump_verify_io);
 
     /* Cypher (M6) */
     RUN_SELECTED_SUITE(cypher);
+    RUN_SELECTED_SUITE(cypher_contract);
 
     /* MCP Server (M9) */
     RUN_SELECTED_SUITE(mcp);

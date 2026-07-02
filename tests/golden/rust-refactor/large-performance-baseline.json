@@ -1,0 +1,133 @@
+{
+  "binary": {
+    "platform": "darwin-arm64",
+    "size_bytes": 269339376,
+    "size_guard_ratio": 1.2
+  },
+  "corpus": {
+    "file_count": 385,
+    "files_per_language": 96,
+    "functions_per_file": 16,
+    "kind": "generated-large-v1",
+    "languages": {
+      "c": {
+        "files": 96,
+        "loc": 8544
+      },
+      "go": {
+        "files": 96,
+        "loc": 8544
+      },
+      "python": {
+        "files": 96,
+        "loc": 7102
+      },
+      "typescript": {
+        "files": 96,
+        "loc": 8638
+      }
+    },
+    "loc": 32832
+  },
+  "edge_type_histogram": {
+    "CALLS": 6240,
+    "CONTAINS_FILE": 385,
+    "CONTAINS_FOLDER": 22,
+    "DEFINES": 8738,
+    "DEFINES_METHOD": 480,
+    "HAS_BRANCH": 1,
+    "IMPORTS": 190,
+    "USAGE": 2223
+  },
+  "index_repository": {
+    "artifact_present": false,
+    "child_peak_rss": {
+      "bucket": "lte_guard",
+      "guard_kb": 4194304,
+      "within_guard": true
+    },
+    "edges": 18279,
+    "excluded_dir_count": null,
+    "excluded_dir_truncated": null,
+    "expected_edges": 18279,
+    "expected_nodes": 7825,
+    "mode": "full",
+    "nodes": 7825,
+    "project": "rust_refactor_large_performance",
+    "status": "indexed",
+    "wall_time": {
+      "bucket": "lte_guard",
+      "guard_ms": 900000,
+      "within_guard": true
+    }
+  },
+  "latency_smoke": {
+    "get_graph_schema": {
+      "edge_type_kinds": 8,
+      "latency": {
+        "bucket": "lte_guard",
+        "guard_ms": 45000,
+        "within_guard": true
+      },
+      "node_label_kinds": 11
+    },
+    "query_calls": {
+      "columns": [
+        "type(r)"
+      ],
+      "latency": {
+        "bucket": "lte_guard",
+        "guard_ms": 45000,
+        "within_guard": true
+      },
+      "row_count": 2,
+      "total": 2
+    },
+    "query_functions": {
+      "columns": [
+        "f.qualified_name"
+      ],
+      "latency": {
+        "bucket": "lte_guard",
+        "guard_ms": 45000,
+        "within_guard": true
+      },
+      "row_count": 10,
+      "total": 10
+    },
+    "search_code": {
+      "file_count": 98,
+      "latency": {
+        "bucket": "lte_guard",
+        "guard_ms": 45000,
+        "within_guard": true
+      },
+      "raw_match_count": 88,
+      "total_results": 316
+    },
+    "search_graph": {
+      "has_more": true,
+      "latency": {
+        "bucket": "lte_guard",
+        "guard_ms": 45000,
+        "within_guard": true
+      },
+      "result_count": 10,
+      "total": 2000
+    }
+  },
+  "node_label_histogram": {
+    "Branch": 1,
+    "Class": 293,
+    "Field": 96,
+    "File": 385,
+    "Folder": 24,
+    "Function": 6242,
+    "Method": 397,
+    "Module": 289,
+    "Project": 1,
+    "Section": 1,
+    "Struct": 96
+  },
+  "schema_version": 1
+}
