@@ -13,7 +13,7 @@
 - 驗證：2026-07-02 本機驗證紀錄包含 `scripts/test.sh`、`scripts/rust-check.sh`、`scripts/build.sh`、`scripts/smoke-test.sh build/c/codebase-memory-mcp`、`scripts/smoke-invariants.sh build/c/codebase-memory-mcp`（30 passed / 0 failed）、`make -f Makefile.cbm security`、`make -f Makefile.cbm rust-ci` 與 `make -f Makefile.cbm rust-baseline-fixtures`。Rust gate 包含 `cargo fmt`、`cargo clippy --all-targets --all-features`、38 個 Rust 單元測試、FFI smoke、完整 `rust-foundation-optin-test` matrix，以及已接入 `_security.yml` 的 `rust-dangerous-api` source allowlist 與 `cargo-audit` 必要模式；matrix 已納入 `CBM_USE_RUST_PLATFORM_ENV_DIRS=1` 與全 opt-in 組合，每腳 foundation suite 為 241 passed。registry opt-in 另以 `make -f Makefile.cbm rust-pipeline-registry-optin-test` 驗證 53 個 registry tests；plan opt-in 另以 `make -f Makefile.cbm rust-pipeline-plan-optin-test` 驗證 `CBM_USE_RUST_PIPELINE_PLAN=1` runner 的 pipeline suite 209 passed；language graph parity 另以 `make -f Makefile.cbm rust-language-graph-parity` 驗證 default C path 與 `CBM_USE_RUST_PIPELINE_REGISTRY=1 CBM_USE_RUST_PIPELINE_PLAN=1` graph 完全一致。`scripts/lint.sh --ci` 已於 2026-07-02 通過：以對齊 CI 的 `cppcheck 2.20.0` + `clang-format 20.1.8` 驗證，並為本次重構觸及的 C/H 檔補上 clang-format-20 格式化；`rust-audit` 在缺工具時仍跳過，但 `RUST_AUDIT_REQUIRED=1` 會 fail-closed，本機已用 `cargo-audit v0.22.2` 驗證 `Cargo.lock`。
 - CI 接入（2026-07-02）：新增 `.github/workflows/_rust.yml` 專責 Rust gates（lint / unit / FFI / foundation 與 pipeline registry+plan opt-in / language-graph parity），並於 `pr.yml` 納入 `rust` job 與 `ci-ok` 必要脈絡；`_security.yml` 既有的 `rust-dangerous-api` 與 `cargo-audit` fail-closed 維持不變。新增 `rust-ci-tests` make 目標作為 CI 用的測試/parity 子集。
 - 剩餘範圍（刻意保留）：Phase 4 的 pipeline orchestration 全面遷移與 Phase 5 的「切換預設為 Rust-backed」尚未執行——Rust 端目前僅承接 registry/plan 決策層，實際 pass/extraction/tree-sitter/LSP 仍在 C；提前切換會破壞產品並違反本計畫「C fallback 需經至少一個 release cycle」的完成標準，詳見 `Tasks.md`。
-- 下一批 foundation 評估：`platform` env/dirs 已完成 Rust ABI、C opt-in 與 parity fixture。`hash_table` 已補 C contract/stress tests，但因 borrowed key pointer、`get_key` stored pointer、NULL value 與 foreach callback contract，目前標記為 C-only hot path；若未來試作 Rust 版，先走 test-only `cbm_rs_ht_*` parity fixture。`diagnostics` 已補 deterministic query stats、env parser、path、JSON 與 NDJSON 的 Rust parity/FFI fixture；writer thread、檔案 rotation、system metrics 與 stderr lifecycle 仍留 C。Phase 3 的 store/cypher/MCP 已整理於 `docs/rust-refactor-phase3-plan.md`；`store_compat` contract fixture 已凍結 minimal schema/index existence、`edges.url_path_gen`、user index drop/create symmetry、`open_path_query` no-create/read-only、WAL journal mode、readonly WAL read/write rejection、generated column query plan、URL path API 的 project-scoped substring 行為，以及 `nodes_fts` 手動 rebuild/camelCase tokenization；同時修正 `idx_edges_url_path` 未被 drop 的不對稱。`cypher_contract` 已凍結 parser AST shape、OPTIONAL MATCH、UNION/UNION ALL、edge property、deterministic ordered rows、WITH/post-WHERE AST、explicit `LIMIT 0` 與 exact errors。`mcp` suite 已凍結 BM25 `file_pattern` 與 label boost rank/order contract；MCP golden 已凍結 alias、tool schema 與 indexed repo `query_graph` transcript。
+- 下一批 foundation 評估：`platform` env/dirs 已完成 Rust ABI、C opt-in 與 parity fixture。`hash_table` 已補 C contract/stress tests，但因 borrowed key pointer、`get_key` stored pointer、NULL value 與 foreach callback contract，目前標記為 C-only hot path；若未來試作 Rust 版，先走 test-only `cbm_rs_ht_*` parity fixture。`diagnostics` 已補 deterministic query stats、env parser、path、JSON 與 NDJSON 的 Rust parity/FFI fixture；writer thread、檔案 rotation、system metrics 與 stderr lifecycle 仍留 C。`hash_table` 已補 test-only `cbm_rs_ht_*` parity fixture（`foundation::hash_table` 純安全 Rust module + FFI + `tests/test_rust_ffi.c` parity），固定 borrowed key pointer、`get_key` stored pointer、NULL value 與 foreach callback contract；仍維持 C-only hot path，不導入產品 opt-in。Phase 3 的 store/cypher/MCP 已整理於 `docs/rust-refactor-phase3-plan.md`；`store_compat` contract fixture 已凍結 minimal schema/index existence、`edges.url_path_gen`、user index drop/create symmetry、`open_path_query` no-create/read-only、WAL journal mode、readonly WAL read/write rejection、generated column query plan、URL path API 的 project-scoped substring 行為，以及 `nodes_fts` 手動 rebuild/camelCase tokenization；同時修正 `idx_edges_url_path` 未被 drop 的不對稱。`cypher_contract` 已凍結 parser AST shape、OPTIONAL MATCH、UNION/UNION ALL、edge property、deterministic ordered rows、WITH/post-WHERE AST、explicit `LIMIT 0` 與 exact errors。`mcp` suite 已凍結 BM25 `file_pattern` 與 label boost rank/order contract；MCP golden 已凍結 alias、tool schema 與 indexed repo `query_graph` transcript。
 
 ## 目標與非目標
 
@@ -137,3 +137,125 @@ Rust 重構必須保留以下約束：
 - `scripts/test.sh`、`scripts/lint.sh --ci`、`make -f Makefile.cbm security` 有對應 Rust-era 驗證並通過。
 - 主要效能指標符合門檻，或有明確記錄與核准的例外。
 - C fallback 已經過至少一個 release cycle 驗證後，才能移除被取代的 C 模組。
+
+## 完整移除 C 的路線圖（依子系統排序）
+
+> 目前位置：預設產品 binary 仍是 **100% 純 C、零 Rust**。Rust 約 3,110 行 / 11 檔，約佔自有程式碼 1.6%，且所有 production Rust 皆由 `CBM_USE_RUST_*` 明確 opt-in 啟用；C 原始碼與預設路徑仍完整保留。已完成的是 foundation 部分 parity，以及 pipeline registry/plan 的決策層 parity；離「可移除 C」仍差完整子系統取代、預設 build 切換、至少一個 release cycle 的 C fallback 驗證與最終 packaging/install/UI/security/perf gate。
+
+每個切片一律維持既有方法論：先凍結 contract/golden fixture（預設 C 必須通過）→ 新增 Rust pure helper 與 FFI smoke（不改預設行為）→ 新增單一 `CBM_USE_RUST_*` opt-in → 跑 default / 單一 opt-in / 全 opt-in matrix → 接 `scripts/test.sh`、`scripts/smoke-test.sh`、`scripts/smoke-invariants.sh`、`make -f Makefile.cbm security` 與對應 parity target。每個 PR 維持單一議題、建議 < 500 行。
+
+### 1. Foundation 剩餘葉模組（最低風險，但含 allocator hot path）
+
+- **範圍**：`arena`、`compat_fs`、`compat_regex`、`compat_thread`、`compat`、`hash_table`、`log`、`mem`、`profile`、`slab_alloc`、`vmem`、`yaml`。
+- **建議切片順序**：
+  1. `yaml`：純解析、狀態少，可作下一個 production opt-in 候選。
+  2. `log` / `profile`：先固定 stderr/file I/O、rotation、timestamp 與錯誤輸出 contract，再做 wrapper parity。
+  3. `compat_*`：依平台切片，先 path/fs，再 regex/thread；Windows 行為必須先補 fixture。
+  4. `hash_table`：test-only `cbm_rs_ht_*` parity fixture 起步**已完成**（`foundation::hash_table` 純安全 module + FFI + `tests/test_rust_ffi.c` parity）；仍不承諾 production opt-in，需在 hot-path pointer contract 可證明安全前維持 C-only。
+  5. `arena` / `slab_alloc` / `mem` / `vmem`：最後處理，先只做 contract/stress/fuzz，再評估是否以 Rust ownership 包 C allocator 或整體替換。
+- **主要風險**：allocator hot path 與 unsafe 邊界、借用指標生命週期、跨平台 filesystem/thread 差異、log/profile I/O 副作用、效能與 RSS 退化。
+- **前置 gate**：每個模組先有預設 C contract/stress tests；allocator 類需 sanitizer/fuzz 或 stress fixture；`hash_table` 需維持 C-only hot path 直到 pointer contract 可證明安全。
+- **驗證方式**：`make -f Makefile.cbm test-foundation`、單一 `CBM_USE_RUST_*` foundation opt-in、全 foundation opt-in、`scripts/rust-check.sh`、`make -f Makefile.cbm rust-ffi-test`、`scripts/test.sh`、`scripts/lint.sh --ci`。
+
+### 2. Pipeline orchestration 全面化
+
+- **範圍**：從目前已完成的 registry resolve 與 plan 決策層，擴大到 pass registry、full/incremental orchestration、資料流管理、錯誤傳遞與 graph-buffer mutation 的調度；實際 extraction/tree-sitter/LSP 仍在後續階段。
+- **建議切片順序**：
+  1. 補 incremental post-pass adapter，讓異質簽章序列可由 Rust plan dispatch。
+  2. 將 pass registry metadata、gating、依賴順序與 parallel/sequential dispatch 移到 Rust。
+  3. 將 graph-buffer mutation 的呼叫邊界收斂成少量 FFI command，而非一次搬移所有 pass。
+  4. 擴充 language graph parity，覆蓋更多語言、incremental、fast-mode、semantic/LSP edges。
+- **主要風險**：pass order 漂移、parallel race、incremental 與 full 結果不一致、graph-buffer ownership、效能退化。
+- **前置 gate**：現有 registry/plan parity 維持全綠；每新增 dispatch 切片前，先固定 default C graph output 與 pass trace golden。
+- **驗證方式**：`make -f Makefile.cbm rust-pipeline-registry-optin-test`、`make -f Makefile.cbm rust-pipeline-plan-optin-test`、`make -f Makefile.cbm rust-language-graph-parity`、`build/c/test-runner pipeline`、`scripts/test.sh`、`scripts/smoke-invariants.sh`。
+
+### 3. Store：SQLite 圖儲存
+
+- **範圍**：`src/store/` 的 schema、pragma、authorizer、UDF、FTS、CRUD、search、BFS、ADR、architecture、vector search、artifact import/export 與 readonly/bulk/checkpoint 行為。
+- **建議切片順序**：
+  1. 補完整 `sqlite_schema`、`table_xinfo`、index layout、FTS shadow object、checkpoint/bulk side effect、artifact import/export fixtures。
+  2. Rust schema/index manifest helper，先只做只讀比對與 FFI smoke。
+  3. Rust open/readonly/WAL/pragma helper，以 `CBM_USE_RUST_STORE_OPEN=1` 類旗標單獨 opt-in。
+  4. CRUD/search/FTS/BM25 分開切；vector tables、graph_buffer direct writer 與 sqlite_writer 最後。
+  5. artifact import/export 與 migration path 完成後，才評估 store 預設切換。
+- **主要風險**：SQLite pragma/WAL 副作用、readonly 不得建立 DB、FTS/BM25 rank 漂移、UDF/authorizer 行為差異、vector schema 與既有資料庫相容性。
+- **前置 gate**：`tests/test_store_compat.c` 擴充到完整 schema/side-effect golden；預設 C path 必須先通過。
+- **驗證方式**：`build/c/test-runner store_compat`、`tests/test_store_*.c`、artifact bootstrap/import fixture、`scripts/test.sh`、`scripts/smoke-test.sh build/c/codebase-memory-mcp`、`make -f Makefile.cbm security`。
+
+### 4. Cypher：查詢引擎
+
+- **範圍**：lexer/parser、AST、query executor、aggregation、OPTIONAL MATCH、UNION、computed properties、error reporting，以及 MCP `query_graph` 依賴的結果格式。
+- **建議切片順序**：
+  1. 補 CALL、EXISTS pattern、malformed query、aggregation edge cases 與 exact error golden。
+  2. Rust lexer/parser 或 normalized AST helper，先以 test-only FFI 比對 C AST shape。
+  3. `CBM_USE_RUST_CYPHER_PARSER=1` production opt-in，只替換 parser/normalizer，不碰 executor。
+  4. 運算式 evaluator、WHERE/filter、projection、aggregation 分段移轉。
+  5. executor 最後移轉，並持續以固定 store fixture 比對 deterministic `columns` / `rows`。
+- **主要風險**：parser precedence 漂移、錯誤訊息變動、query result ordering、store API side effect、aggregation 與 NULL/optional semantics。
+- **前置 gate**：`tests/test_cypher_contract.c` 足夠覆蓋公開語意；若未來新增 SQL backend，SQL output golden 必須是獨立 contract，不可混入現行直接 executor 假設。
+- **驗證方式**：`build/c/test-runner cypher cypher_contract`、MCP `query_graph` transcript、store fixture、`scripts/test.sh`、`scripts/smoke-invariants.sh`。
+
+### 5. MCP：JSON-RPC 14 工具
+
+- **範圍**：JSON-RPC codec/envelope、stdio framing、id preservation、tool schema、14 個 tool handler、store/pipeline/cypher 呼叫邊界、stdout/stderr 分離。
+- **建議切片順序**：
+  1. 補 `initialize` string id、完整 `tools/list` schema、invalid params、每個 tool 的成功/錯誤 transcript。
+  2. `CBM_USE_RUST_MCP_CODEC=1`：只替換 JSON-RPC parse/serialize/envelope/framing。
+  3. tool schema 產生器移到 Rust，但 handler 仍呼叫 C。
+  4. 依副作用由低到高遷移 handler：read-only/query 類 → search/index 狀態類 → install/config 類。
+  5. store/cypher/pipeline Rust-backed 穩定後，才移除 C handler fallback。
+- **主要風險**：stdout 污染 MCP、JSON id/type preservation、pagination cursor、錯誤碼漂移、tool schema breaking change、長輸入與 invalid JSON robustness。
+- **前置 gate**：golden transcript 覆蓋 14 tools、錯誤路徑與 framing；任何 tool API 變更需另開設計議題。
+- **驗證方式**：`build/c/test-runner mcp`、`scripts/smoke-test.sh build/c/codebase-memory-mcp`、`scripts/smoke-invariants.sh build/c/codebase-memory-mcp`、`make -f Makefile.cbm rust-baseline-fixtures`、`make -f Makefile.cbm security`。
+
+### 6. `internal/cbm`：tree-sitter + Hybrid LSP（最大、最高風險）
+
+- **範圍**：158 語言 tree-sitter 擷取、vendored grammar binding、`lang_specs`、各語言 extractor、semantic edges、Hybrid LSP、route/import/definition/call extraction 與 language-specific regression。
+- **建議切片順序**：
+  1. 擴充 language graph parity：先覆蓋高流量語言（TypeScript/JavaScript、Python、Go、Rust、Java、C/C++、YAML/K8s），再分批加入其餘語言。
+  2. 保留現有 C grammar shim，先將 language spec table 與 extraction rule metadata 正規化到 Rust。
+  3. 逐語言遷移低副作用 extractor helper；每批只含少數語言與 fixtures。
+  4. route/import/definition/call/semantic edges 分軸驗證，不混在同一 PR。
+  5. Hybrid LSP 最後處理，需獨立 fixture 固定 timeout、fallback、semantic edge 與跨平台 process/IO 行為。
+- **主要風險**：tree-sitter grammar binding 與 ABI 差異、語言覆蓋面巨大、LSP process/timeout 跨平台差異、semantic edge 漂移、效能與記憶體退化、Windows toolchain。
+- **前置 gate**：每批語言都有 default C graph golden；vendored grammar 完整性與安全 allowlist 維持；LSP 需先凍結 fallback/timeout contract。
+- **驗證方式**：`make -f Makefile.cbm rust-language-graph-parity`、`tests/test_extraction.c`、`tests/test_pipeline.c`、代表性 repository self-index baseline、large performance baseline、`scripts/test.sh`、跨平台 CI。
+
+### 7. Phase 5：預設 build 切換為 Rust-backed
+
+- **範圍**：當 foundation、pipeline、store、cypher、mcp、internal/cbm 的 Rust-backed opt-in matrix 都達等價門檻後，才把預設 `scripts/build.sh` / production binary 切到 Rust-backed；C fallback 仍保留。
+- **建議切片順序**：
+  1. 建立「全 Rust-backed opt-in」release candidate binary，與 default C binary 做完整基準比對。
+  2. 將 CI/release workflow 加入 Rust-backed candidate，但不先改預設。
+  3. 連續通過 default C、單一 opt-in、全 opt-in、Rust-backed candidate matrix。
+  4. 宣告一個 release 的相容期，文件標明 C fallback 與回滾方式。
+  5. 下一個 release 才把預設切到 Rust-backed。
+- **主要風險**：靜態連結與 binary size、package wrapper、installer、Windows/macOS/Linux 差異、UI variant、效能退化、release artifact 命名或簽章漂移。
+- **前置 gate**：所有子系統 opt-in 已可獨立與組合通過；效能退化 ≤10%、binary size 退化 ≤20%，或有維護者核准例外。
+- **驗證方式**：`scripts/build.sh`、`scripts/build.sh --with-ui`、`scripts/test.sh`、`scripts/lint.sh --ci`、`scripts/smoke-test.sh`、`scripts/smoke-invariants.sh`、`make -f Makefile.cbm security`、packaging/install/update/uninstall 測試、跨平台 CI。
+
+### 8. 一個 release cycle 後移除 C
+
+- **範圍**：只移除已被 Rust-backed 預設完整取代、且 C fallback 已經過至少一個 release cycle 驗證的 C 模組、build flag、tests 與文件；不移除仍作為 vendored grammar 或必要 ABI shim 的 C。
+- **建議切片順序**：
+  1. 逐子系統刪除 C fallback 與對應 `CBM_USE_RUST_*` 反向旗標，先從 foundation/pipeline 開始。
+  2. store/cypher/mcp 分別清理；每次刪除後重跑完整 artifact/DB/MCP golden。
+  3. `internal/cbm` 最後刪除，保留必要 vendored grammar C 檔時需明確標示「非產品邏輯 fallback」。
+  4. 更新 README、CONTRIBUTING、release notes、packaging 與安全 allowlist。
+- **主要風險**：誤刪仍需的 C shim、release fallback 消失、安裝/升級路徑破壞、文件宣稱與實際 build 不一致。
+- **前置 gate**：Rust-backed 預設已穩定一個 release cycle；所有使用者可見行為與 package artifacts 已驗證。
+- **驗證方式**：完整 release checklist、`git grep CBM_USE_RUST_` 確認殘留語意、全測試/安全/packaging/UI/cross-platform gate。
+
+### 移除 C 的最終檢核表
+
+- [ ] 預設 Rust-backed binary 已等價通過，且不再需要 C fallback 才能完成任何產品功能。
+- [ ] C fallback 已保留並驗證至少一個 release cycle。
+- [ ] `scripts/build.sh` 與 `scripts/build.sh --with-ui` 皆通過，artifact 命名、簽章與安裝位置相容。
+- [ ] install / update / uninstall / config / package wrappers（npm、PyPI、Homebrew、installer scripts）皆通過。
+- [ ] `graph-ui` 內嵌 variant 與 non-UI variant 皆通過 smoke 與 release packaging。
+- [ ] `scripts/test.sh`、`scripts/lint.sh --ci`、`scripts/smoke-test.sh`、`scripts/smoke-invariants.sh`、`make -f Makefile.cbm security` 全部通過。
+- [ ] macOS arm64/x86_64、Linux x86_64/arm64、Windows x86_64 皆通過核心測試與安裝測試。
+- [ ] 效能基準符合索引/查詢/RSS 退化 ≤10%，binary size 退化 ≤20%；例外需明確記錄與核准。
+- [ ] SQLite 既有 DB、artifact import/export、FTS/WAL/readonly、MCP 14 tools、CLI 子命令、language graph parity 全部相容。
+- [ ] Rust unsafe/process/network/filesystem allowlist、dependency audit、vendored integrity 與 security suite 均無未處理 finding。
+- [ ] 文件、release notes、CONTRIBUTING、README 與 migration notes 均已更新，且不再宣稱預設為純 C。

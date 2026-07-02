@@ -6,13 +6,14 @@
 #![allow(unsafe_code)]
 
 use std::ffi::CStr;
-use std::os::raw::{c_char, c_int, c_long};
+use std::os::raw::{c_char, c_int, c_long, c_void};
 use std::path::Path;
 use std::ptr;
 use std::slice;
 
 use crate::foundation::diagnostics;
 use crate::foundation::dump_verify;
+use crate::foundation::hash_table::HashTable;
 use crate::foundation::platform;
 use crate::foundation::str_intern::CInternPool;
 use crate::foundation::str_util;
@@ -858,4 +859,160 @@ pub unsafe extern "C" fn cbm_rs_json_escape(
         *buf.add(len) = 0;
     }
     len as c_int
+}
+
+// ── hash_table：test-only borrowed-pointer 契約 parity FFI ──────────
+//
+// 對齊 `src/foundation/hash_table.c`（Verstable 實作）的公開契約。此組
+// symbols 只由 `make -f Makefile.cbm rust-ffi-test` 的 parity fixture 使用，
+// 不接入任何產品 opt-in（hash_table 為 hot path，暫維持 C-only）。
+
+/// foreach callback：`(stored_key_ptr, value_ptr, userdata)`。
+pub type CbmRsHtIterFn = extern "C" fn(*const c_char, *mut c_void, *mut c_void);
+
+#[no_mangle]
+pub extern "C" fn cbm_rs_ht_create() -> *mut HashTable {
+    Box::into_raw(Box::new(HashTable::new()))
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `ht` 必須是 null，或是 `cbm_rs_ht_create` 回傳且尚未 free 的指標。
+pub unsafe extern "C" fn cbm_rs_ht_free(ht: *mut HashTable) {
+    if ht.is_null() {
+        return;
+    }
+    unsafe {
+        drop(Box::from_raw(ht));
+    }
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `ht` 必須有效或 null；`key` 必須是 null，或指向 NUL 結尾的 C string。
+/// 對齊 `cbm_ht_set`：回傳前一個 value 指標，或 null（無前值 / ht/key 為 null）。
+pub unsafe extern "C" fn cbm_rs_ht_set(
+    ht: *mut HashTable,
+    key: *const c_char,
+    value: *mut c_void,
+) -> *mut c_void {
+    if ht.is_null() || key.is_null() {
+        return ptr::null_mut();
+    }
+    let bytes = unsafe { CStr::from_ptr(key) }.to_bytes();
+    let table = unsafe { &mut *ht };
+    match table.set(bytes, key as usize, value as usize) {
+        Some(prev) => prev as *mut c_void,
+        None => ptr::null_mut(),
+    }
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `ht` 必須有效或 null；`key` 必須是 null，或指向 NUL 結尾的 C string。
+/// 對齊 `cbm_ht_get`：回傳 value 指標，或 null（不存在 / null value / ht/key 為 null）。
+pub unsafe extern "C" fn cbm_rs_ht_get(ht: *const HashTable, key: *const c_char) -> *mut c_void {
+    if ht.is_null() || key.is_null() {
+        return ptr::null_mut();
+    }
+    let bytes = unsafe { CStr::from_ptr(key) }.to_bytes();
+    match unsafe { &*ht }.get(bytes) {
+        Some(v) => v as *mut c_void,
+        None => ptr::null_mut(),
+    }
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `ht` 必須有效或 null；`key` 必須是 null，或指向 NUL 結尾的 C string。
+/// 對齊 `cbm_ht_has`。
+pub unsafe extern "C" fn cbm_rs_ht_has(ht: *const HashTable, key: *const c_char) -> bool {
+    if ht.is_null() || key.is_null() {
+        return false;
+    }
+    let bytes = unsafe { CStr::from_ptr(key) }.to_bytes();
+    unsafe { &*ht }.has(bytes)
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `ht` 必須有效或 null；`key` 必須是 null，或指向 NUL 結尾的 C string。
+/// 對齊 `cbm_ht_get_key`：回傳 stored key 指標（最近一次 set 傳入者），或 null。
+pub unsafe extern "C" fn cbm_rs_ht_get_key(
+    ht: *const HashTable,
+    key: *const c_char,
+) -> *const c_char {
+    if ht.is_null() || key.is_null() {
+        return ptr::null();
+    }
+    let bytes = unsafe { CStr::from_ptr(key) }.to_bytes();
+    match unsafe { &*ht }.get_key(bytes) {
+        Some(k) => k as *const c_char,
+        None => ptr::null(),
+    }
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `ht` 必須有效或 null；`key` 必須是 null，或指向 NUL 結尾的 C string。
+/// 對齊 `cbm_ht_delete`：回傳移除的 value 指標，或 null。
+pub unsafe extern "C" fn cbm_rs_ht_delete(ht: *mut HashTable, key: *const c_char) -> *mut c_void {
+    if ht.is_null() || key.is_null() {
+        return ptr::null_mut();
+    }
+    let bytes = unsafe { CStr::from_ptr(key) }.to_bytes();
+    let table = unsafe { &mut *ht };
+    match table.delete(bytes) {
+        Some(v) => v as *mut c_void,
+        None => ptr::null_mut(),
+    }
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `ht` 必須有效或 null。對齊 `cbm_ht_count`。
+pub unsafe extern "C" fn cbm_rs_ht_count(ht: *const HashTable) -> u32 {
+    if ht.is_null() {
+        return 0;
+    }
+    unsafe { &*ht }.count() as u32
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `ht` 必須有效或 null。對齊 `cbm_ht_clear`。
+pub unsafe extern "C" fn cbm_rs_ht_clear(ht: *mut HashTable) {
+    if ht.is_null() {
+        return;
+    }
+    unsafe { &mut *ht }.clear();
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `ht` 必須有效或 null；`func` 為 null 時為 no-op。`userdata` 原樣回傳給
+/// callback。對齊 `cbm_ht_foreach`：每項恰好呼叫一次，順序未定義。
+pub unsafe extern "C" fn cbm_rs_ht_foreach(
+    ht: *const HashTable,
+    func: Option<CbmRsHtIterFn>,
+    userdata: *mut c_void,
+) {
+    if ht.is_null() {
+        return;
+    }
+    let Some(func) = func else {
+        return;
+    };
+    for (key_ptr, value_ptr) in unsafe { &*ht }.entries() {
+        func(key_ptr as *const c_char, value_ptr as *mut c_void, userdata);
+    }
 }

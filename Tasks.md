@@ -44,6 +44,7 @@
 - [x] 補齊 `hash_table` contract tests：null args、content lookup、overwrite key pointer、NULL value、foreach userdata/exactly-once 與 high-bit C-string key；暫不加入產品 Rust opt-in。
 - [x] 為 diagnostics 建立 deterministic query stats、env parser、path、JSON 與 NDJSON fixture；writer thread、rotation 與 stderr lifecycle 暫留 C。
 - [x] 新增 diagnostics Rust parity module 與 test-only FFI fixture；hash_table 策略固定為 C-only hot path，未來 Rust 版需先走 test-only parity fixture。
+- [x] 新增 `hash_table` Rust parity module（`foundation::hash_table`，純安全 Rust）與 test-only `cbm_rs_ht_*` FFI fixture，固定 content-key 比對、`get_key` 回傳 stored 指標（覆寫更新）、NULL value 為有效存在項、foreach exactly-once 與非 UTF-8 高位元 key；仍不導入產品 opt-in（hot path，維持 C-only）。
 
 ## Phase 3：核心服務邊界
 
@@ -79,6 +80,20 @@
 - [ ] 保留 C fallback 至少一個 release cycle。
 - [ ] 清理已取代 C 模組前，驗證 packaging、install/update/uninstall、UI variant 與 security suite。
 - [ ] 更新 `README.md`、`CONTRIBUTING.md`、release workflow 與 contributor guide。
+
+
+## 完整移除 C 路線圖追蹤
+
+- [ ] Foundation 剩餘葉模組：完成 `yaml`、`log`/`profile`、`compat_*`（`hash_table` test-only parity 已完成），以及 `arena`/`slab_alloc`/`mem`/`vmem` allocator contract/stress/fuzz gate。
+- [ ] Pipeline orchestration 全面化：Rust 承接 incremental post-pass adapter、pass registry metadata、full/incremental dispatch 與 graph-buffer mutation 邊界；language graph parity 持續擴充。
+- [ ] Store：補完整 SQLite schema/index/FTS/checkpoint/bulk/artifact golden，分段遷移 open/readonly/WAL、CRUD/search、FTS/BM25、vector 與 writer path。
+- [ ] Cypher：補 CALL/EXISTS/malformed/aggregation exact golden，依序遷移 lexer/parser、AST normalizer、expression evaluator、projection/aggregation 與 executor。
+- [ ] MCP：補 14 tools transcript 與錯誤路徑，依序遷移 JSON-RPC codec、tool schema generator、read-only handlers、狀態型 handlers 與 install/config 類 handler。
+- [ ] `internal/cbm`：擴充 158 語言 graph parity，保留 C grammar shim 起步，逐語言遷移 extractor/helper，最後處理 Hybrid LSP timeout/fallback/process I/O。
+- [ ] Phase 5 預設切換：全 Rust-backed opt-in matrix 達等價門檻後，建立 release candidate、通過 default/單一/全 opt-in/Rust-backed matrix，才切預設 build。
+- [ ] C fallback release cycle：預設 Rust-backed 後保留 C fallback 至少一個 release cycle，文件標明回滾方式與相容期。
+- [ ] 移除 C：逐子系統刪除已取代 C fallback、`CBM_USE_RUST_*` 過渡旗標與文件，最後處理 `internal/cbm`，並保留必要 vendored grammar C shim。
+- [ ] 最終 gate：packaging、install/update/uninstall、UI variant、security suite、跨平台、效能 ≤10% 退化、binary size ≤20%、SQLite/artifact/MCP/CLI/language parity 全部通過。
 
 ## 驗證狀態
 
@@ -135,3 +150,10 @@
 
 - Phase 4 的 `pipeline orchestration` 全面遷移（items 72–74）屬多輪工作：目前 registry + plan 決策層、full/incremental extraction 選擇與 full pre-dump dispatch 已在 opt-in 下運作並有 parity gate；incremental post-pass 為異質簽章序列，需 adapter 才能由 plan dispatch，暫不強行導入以符合「簡單優先／外科手術式」原則。
 - Phase 5 的「切換預設 build path 為 Rust-backed」（items 78–79）**刻意尚未執行**：Rust 端目前僅承接決策層，實際 pass/extraction/tree-sitter/LSP 仍在 C；提前切換會破壞產品，且違反本計畫「C fallback 需經至少一個 release cycle 驗證」的完成標準。item 80（清理前的 packaging/install/UI/security 驗證）為 Phase 5 清理的前置 gate，於切換前不觸發。item 81 的 README/CONTRIBUTING/contributor guide 與 CI 已於本階段更新，release workflow 待預設切換時再調整。
+
+## 本次工作階段（2026-07-02 朝完整移除 C 推進）
+
+- [x] 新增「完整移除 C 的路線圖」：`Rust-Refactor.md` 依子系統排序（foundation 剩餘 → pipeline → store → cypher → mcp → internal/cbm → 預設切換 → 移除）並附最終檢核表；`Tasks.md` 新增對應追蹤 checklist。誠實反映現況（預設 100% 純 C、Rust 約 1.6%、零預設 Rust 取代）。
+- [x] 推進 foundation 下一切片：新增 `hash_table` Rust parity module（`rust/cbm-core/src/foundation/hash_table.rs`，純安全 Rust + 4 個單元測試）與 test-only `cbm_rs_ht_*` FFI（`ffi.rs`），並在 `tests/test_rust_ffi.c` 新增 parity 測試，固定 content-key、`get_key` stored 指標（覆寫更新）、NULL value 為存在項、foreach exactly-once、非 UTF-8 高位元 key、null 契約與 resize。維持 C-only hot path，不導入產品 opt-in。
+- [x] 嚴謹驗證全綠：`scripts/rust-check.sh`（fmt、clippy `-D warnings`、`cargo test --workspace`、`rust-ffi-test`、foundation opt-in matrix、pipeline registry/plan opt-in、language-graph parity）、`make rust-dangerous-api`（148 findings 全允許清單，新 FFI 由 `ffi.rs` wildcard 覆蓋）、`scripts/lint.sh --ci`（CI 對齊 `cppcheck 2.20.0` + `clang-format 20.1.8`，含 `test_rust_ffi.c`）。
+- 說明：此切片為 test-only parity（不改變預設 C 路徑），是既有方法論中 production opt-in 的前置步驟；離「可移除 C」仍需完成路線圖各階段。

@@ -57,6 +57,20 @@ extern size_t cbm_rs_resolve_cache_dir(char *buf, size_t bufsize);
 extern int cbm_rs_detect_cgroup_cpus(const char *cgroup_root);
 extern size_t cbm_rs_detect_cgroup_mem(const char *cgroup_root);
 
+/* hash_table：test-only borrowed-pointer 契約 parity（對齊 src/foundation/hash_table.c） */
+typedef struct CBMRustHashTable CBMRustHashTable;
+typedef void (*cbm_rs_ht_iter_fn)(const char *key, void *value, void *userdata);
+extern CBMRustHashTable *cbm_rs_ht_create(void);
+extern void cbm_rs_ht_free(CBMRustHashTable *ht);
+extern void *cbm_rs_ht_set(CBMRustHashTable *ht, const char *key, void *value);
+extern void *cbm_rs_ht_get(const CBMRustHashTable *ht, const char *key);
+extern bool cbm_rs_ht_has(const CBMRustHashTable *ht, const char *key);
+extern const char *cbm_rs_ht_get_key(const CBMRustHashTable *ht, const char *key);
+extern void *cbm_rs_ht_delete(CBMRustHashTable *ht, const char *key);
+extern unsigned int cbm_rs_ht_count(const CBMRustHashTable *ht);
+extern void cbm_rs_ht_clear(CBMRustHashTable *ht);
+extern void cbm_rs_ht_foreach(const CBMRustHashTable *ht, cbm_rs_ht_iter_fn func, void *userdata);
+
 typedef struct {
     int count;
     int errors;
@@ -1106,6 +1120,171 @@ static void test_registry_import_reachability_penalty(void) {
     check_double_near("registry_reachability_penalty_conf", out.confidence, 0.375);
 }
 
+/* ── hash_table borrowed-pointer 契約 parity ──────────────────────
+ * 對齊 tests/test_hash_table.c 的 C 契約：content-key 比對、get_key 回傳
+ * stored 指標（覆寫更新）、null value 為有效存在項、foreach exactly-once。 */
+typedef struct {
+    void *expected_userdata;
+    bool bad_userdata;
+    bool duplicate;
+    bool unexpected;
+    bool key_mismatch;
+    bool seen[4];
+    int count;
+    int sum;
+} RsForeachCtx;
+
+static void rs_ht_foreach_cb(const char *key, void *value, void *userdata) {
+    RsForeachCtx *ctx = (RsForeachCtx *)userdata;
+    if (!ctx) {
+        return;
+    }
+    if (userdata != ctx->expected_userdata) {
+        ctx->bad_userdata = true;
+        return;
+    }
+    if (!key || !value) {
+        ctx->unexpected = true;
+        return;
+    }
+    int idx = *(int *)value;
+    if (idx < 0 || idx >= 4) {
+        ctx->unexpected = true;
+        return;
+    }
+    const char *expected_keys[] = {"fa", "fb", "fc", "fd"};
+    if (strcmp(key, expected_keys[idx]) != 0) {
+        ctx->key_mismatch = true;
+    }
+    if (ctx->seen[idx]) {
+        ctx->duplicate = true;
+    }
+    ctx->seen[idx] = true;
+    ctx->count++;
+    ctx->sum += idx;
+}
+
+static void test_hash_table_exports(void) {
+    /* null-handle 契約：不得 crash，回傳空 */
+    int sentinel = 1;
+    check_null("ht_set_null_ht", cbm_rs_ht_set(NULL, "k", &sentinel));
+    check_null("ht_get_null_ht", cbm_rs_ht_get(NULL, "k"));
+    check_bool("ht_has_null_ht", cbm_rs_ht_has(NULL, "k"), false);
+    check_null("ht_get_key_null_ht", cbm_rs_ht_get_key(NULL, "k"));
+    check_null("ht_delete_null_ht", cbm_rs_ht_delete(NULL, "k"));
+    check_u32("ht_count_null_ht", cbm_rs_ht_count(NULL), 0);
+    cbm_rs_ht_free(NULL);
+    cbm_rs_ht_clear(NULL);
+    cbm_rs_ht_foreach(NULL, rs_ht_foreach_cb, NULL);
+
+    CBMRustHashTable *ht = cbm_rs_ht_create();
+    check_not_null("ht_create", ht);
+    check_u32("ht_count_empty", cbm_rs_ht_count(ht), 0);
+
+    /* null-key 契約 */
+    check_null("ht_set_null_key", cbm_rs_ht_set(ht, NULL, &sentinel));
+    check_null("ht_get_null_key", cbm_rs_ht_get(ht, NULL));
+    check_bool("ht_has_null_key", cbm_rs_ht_has(ht, NULL), false);
+    check_null("ht_get_key_null_key", cbm_rs_ht_get_key(ht, NULL));
+    check_null("ht_delete_null_key", cbm_rs_ht_delete(ht, NULL));
+    check_u32("ht_count_after_null_key", cbm_rs_ht_count(ht), 0);
+
+    /* set/get：首次插入回傳 null prev */
+    int val = 42;
+    check_null("ht_set_first_prev", cbm_rs_ht_set(ht, "hello", &val));
+    check_ptr_eq("ht_get_value", cbm_rs_ht_get(ht, "hello"), &val);
+    check_u32("ht_count_one", cbm_rs_ht_count(ht), 1);
+
+    /* content lookup + get_key 回傳 stored 指標（非 lookup buffer） */
+    char stored_key[] = "same-content";
+    char lookup_key[] = "same-content";
+    int cv = 123;
+    check_null("ht_set_stored", cbm_rs_ht_set(ht, stored_key, &cv));
+    check_bool("ht_has_by_content", cbm_rs_ht_has(ht, lookup_key), true);
+    check_ptr_eq("ht_get_by_content", cbm_rs_ht_get(ht, lookup_key), &cv);
+    check_ptr_eq("ht_get_key_stored_ptr", cbm_rs_ht_get_key(ht, lookup_key), stored_key);
+
+    /* 覆寫：回傳前值，且 stored key 指標更新為新指標 */
+    char second_key[] = "same-content";
+    int cv2 = 456;
+    check_ptr_eq("ht_overwrite_prev", cbm_rs_ht_set(ht, second_key, &cv2), &cv);
+    check_ptr_eq("ht_overwrite_value", cbm_rs_ht_get(ht, stored_key), &cv2);
+    check_ptr_eq("ht_overwrite_key_ptr", cbm_rs_ht_get_key(ht, stored_key), second_key);
+    check_u32("ht_overwrite_count", cbm_rs_ht_count(ht), 2);
+
+    /* null value 仍是有效存在項 */
+    check_null("ht_set_nullval_prev", cbm_rs_ht_set(ht, "nullable", NULL));
+    check_null("ht_get_nullval", cbm_rs_ht_get(ht, "nullable"));
+    check_bool("ht_has_nullval", cbm_rs_ht_has(ht, "nullable"), true);
+    check_str("ht_get_key_nullval", cbm_rs_ht_get_key(ht, "nullable"), "nullable");
+    check_u32("ht_count_with_nullval", cbm_rs_ht_count(ht), 3);
+    /* 刪除 null-value 項回傳 null（與 C 契約一致：value 即 NULL） */
+    check_null("ht_delete_nullval", cbm_rs_ht_delete(ht, "nullable"));
+    check_bool("ht_has_after_delete_nullval", cbm_rs_ht_has(ht, "nullable"), false);
+    check_u32("ht_count_after_delete_nullval", cbm_rs_ht_count(ht), 2);
+
+    /* 非 UTF-8 高位元 C-string key（content 比對含 raw bytes） */
+    char hb_stored[] = {(char)0xff, (char)0x80, 'k', (char)0xfe, '\0'};
+    char hb_lookup[] = {(char)0xff, (char)0x80, 'k', (char)0xfe, '\0'};
+    int hv = 88;
+    check_null("ht_hb_set", cbm_rs_ht_set(ht, hb_stored, &hv));
+    check_bool("ht_hb_has", cbm_rs_ht_has(ht, hb_lookup), true);
+    check_ptr_eq("ht_hb_get", cbm_rs_ht_get(ht, hb_lookup), &hv);
+    check_ptr_eq("ht_hb_get_key", cbm_rs_ht_get_key(ht, hb_lookup), hb_stored);
+
+    /* delete 回傳 value；missing 回傳 null */
+    check_ptr_eq("ht_delete_val", cbm_rs_ht_delete(ht, "hello"), &val);
+    check_null("ht_delete_missing", cbm_rs_ht_delete(ht, "hello"));
+    check_null("ht_get_after_delete", cbm_rs_ht_get(ht, "hello"));
+
+    /* clear */
+    cbm_rs_ht_clear(ht);
+    check_u32("ht_clear_count", cbm_rs_ht_count(ht), 0);
+    check_bool("ht_clear_has", cbm_rs_ht_has(ht, "same-content"), false);
+    cbm_rs_ht_free(ht);
+
+    /* 多筆 + 成長（HashMap resize parity） */
+    CBMRustHashTable *big = cbm_rs_ht_create();
+    check_not_null("ht_big_create", big);
+    static char keys[200][16];
+    static int vals[200];
+    for (int i = 0; i < 200; i++) {
+        snprintf(keys[i], sizeof(keys[i]), "key_%03d", i);
+        vals[i] = i * 10;
+        check_null("ht_big_set", cbm_rs_ht_set(big, keys[i], &vals[i]));
+    }
+    check_u32("ht_big_count", cbm_rs_ht_count(big), 200);
+    bool all_ok = true;
+    for (int i = 0; i < 200; i++) {
+        void *got = cbm_rs_ht_get(big, keys[i]);
+        if (got != &vals[i]) {
+            all_ok = false;
+        }
+    }
+    check_bool("ht_big_all_survive_resize", all_ok, true);
+    cbm_rs_ht_free(big);
+
+    /* foreach：userdata 傳遞 + exactly-once + null-fn no-op */
+    CBMRustHashTable *fe = cbm_rs_ht_create();
+    int fv[] = {0, 1, 2, 3};
+    cbm_rs_ht_set(fe, "fa", &fv[0]);
+    cbm_rs_ht_set(fe, "fb", &fv[1]);
+    cbm_rs_ht_set(fe, "fc", &fv[2]);
+    cbm_rs_ht_set(fe, "fd", &fv[3]);
+    RsForeachCtx ctx = {.expected_userdata = NULL};
+    ctx.expected_userdata = &ctx;
+    cbm_rs_ht_foreach(fe, rs_ht_foreach_cb, &ctx);
+    check_bool("ht_fe_bad_userdata", ctx.bad_userdata, false);
+    check_bool("ht_fe_duplicate", ctx.duplicate, false);
+    check_bool("ht_fe_unexpected", ctx.unexpected, false);
+    check_bool("ht_fe_key_mismatch", ctx.key_mismatch, false);
+    check_int("ht_fe_count", ctx.count, 4);
+    check_int("ht_fe_sum", ctx.sum, 6);
+    cbm_rs_ht_foreach(fe, NULL, &ctx); /* null fn 必須 no-op、不得 crash */
+    check_int("ht_fe_count_after_null_fn", ctx.count, 4);
+    cbm_rs_ht_free(fe);
+}
+
 int main(void) {
     test_dump_verify_exports();
     test_intern_null_contracts();
@@ -1120,6 +1299,7 @@ int main(void) {
     test_platform_cgroup_exports();
 #endif
     test_diagnostics_exports();
+    test_hash_table_exports();
     test_pipeline_plan_exports();
     test_registry_import_map_and_bare();
     test_registry_qualified_suffix();
