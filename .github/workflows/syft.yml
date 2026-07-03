@@ -27,6 +27,6 @@ jobs:
         with:
           path: .
           format: spdx-json
-          artifact-name: syft-sbom-${{ github.event.pull_request.number || github.sha }}
+          artifact-name: syft-sbom-${{ github.event.pull_request.number || github.run_id }}
           output-file: syft-sbom.spdx.json
           upload-release-assets: 'false'
