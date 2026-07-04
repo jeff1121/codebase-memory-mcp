@@ -97,9 +97,10 @@ disclosure. Research conducted under this policy is considered authorised.
 
 This project implements multiple layers of security verification. Every release binary must pass all checks before users can download it (draft → verify → publish flow).
 
-### Build-Time (CI — every commit)
+### Build-Time (CI and Release)
 
-- **8-layer security audit suite** runs on every build:
+- **PR / commit CI** runs static and dependency security gates, including dangerous-call allow-list checks, Rust dangerous API checks, cargo-audit in required mode, UI/domain checks, vendored integrity, license checks, and CodeQL where configured.
+- **Release and smoke verification** must pass the full 8-layer binary security suite before publishing:
   - Layer 1: Static allow-list for dangerous calls (`system`/`popen`/`fork`) + hardcoded URLs
   - Layer 2: Binary string audit (URLs, credentials, dangerous commands)
   - Layer 3: Network egress monitoring via strace (Linux)

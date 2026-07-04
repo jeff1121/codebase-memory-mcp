@@ -14,6 +14,7 @@
 
 enum { CBM_DIR_PERMS = 0755, PL_RING = 4, PL_RING_MASK = 3, PL_SEQ_PASSES = 6, PL_WAL_BUF = 1040 };
 #define PL_NSEC_PER_SEC 1000000000LL
+#define PL_INCREMENTAL_FALLBACK (-2147483647 - 1)
 #include "pipeline/pipeline.h"
 #include "pipeline/artifact.h"
 #include "pipeline/pipeline_internal.h"
@@ -245,6 +246,10 @@ int cbm_pipeline_get_mode(const cbm_pipeline_t *p) {
     return p ? (int)p->mode : 0;
 }
 
+bool cbm_pipeline_persistence_enabled(const cbm_pipeline_t *p) {
+    return p ? p->persistence : false;
+}
+
 void cbm_pipeline_get_excluded(const cbm_pipeline_t *p, char ***out, int *count) {
     if (out) {
         *out = p ? p->excluded_dirs : NULL;
@@ -307,7 +312,7 @@ static void create_folder_chain(cbm_pipeline_t *p, const char *dir, CBMHashTable
         char *folder_qn = cbm_pipeline_fqn_folder(p->project_name, walk);
         const char *dir_base = strrchr(walk, '/');
         dir_base = dir_base ? dir_base + SKIP_ONE : walk;
-        cbm_gbuf_upsert_node(p->gbuf, "Folder", dir_base, folder_qn, walk, 0, 0, "{}");
+        cbm_gbuf_apply_upsert_node(p->gbuf, "Folder", dir_base, folder_qn, walk, 0, 0, "{}");
 
         char *pdir = strdup(walk);
         char *ps = strrchr(pdir, '/');
@@ -328,7 +333,7 @@ static void create_folder_chain(cbm_pipeline_t *p, const char *dir, CBMHashTable
         const cbm_gbuf_node_t *fn = cbm_gbuf_find_by_qn(p->gbuf, folder_qn);
         const cbm_gbuf_node_t *pn = cbm_gbuf_find_by_qn(p->gbuf, pqn);
         if (fn && pn) {
-            cbm_gbuf_insert_edge(p->gbuf, pn->id, fn->id, "CONTAINS_FOLDER", "{}");
+            cbm_gbuf_apply_insert_edge(p->gbuf, pn->id, fn->id, "CONTAINS_FOLDER", "{}");
         }
         free(folder_qn);
         free(pqn_heap);
@@ -347,7 +352,8 @@ static int pass_structure(cbm_pipeline_t *p, const cbm_file_info_t *files, int f
     cbm_log_info("pass.start", "pass", "structure", "files", itoa_buf(file_count));
 
     /* Project node */
-    cbm_gbuf_upsert_node(p->gbuf, "Project", p->project_name, p->project_name, NULL, 0, 0, "{}");
+    cbm_gbuf_apply_upsert_node(p->gbuf, "Project", p->project_name, p->project_name, NULL, 0, 0,
+                               "{}");
     const char *branch_qn = p->branch_qn ? p->branch_qn : p->project_name;
     const char *branch_name = p->git_ctx.branch ? p->git_ctx.branch : "working-tree";
     char branch_props[CBM_SZ_2K];
@@ -356,12 +362,12 @@ static int pass_structure(cbm_pipeline_t *p, const cbm_file_info_t *files, int f
         branch_props_json = branch_props;
     }
     if (p->branch_qn) {
-        int64_t branch_id = cbm_gbuf_upsert_node(p->gbuf, "Branch", branch_name, branch_qn, NULL, 0,
-                                                 0, branch_props_json);
+        int64_t branch_id = cbm_gbuf_apply_upsert_node(p->gbuf, "Branch", branch_name, branch_qn,
+                                                       NULL, 0, 0, branch_props_json);
         const cbm_gbuf_node_t *project_node = cbm_gbuf_find_by_qn(p->gbuf, p->project_name);
         if (project_node && branch_id > 0) {
-            cbm_gbuf_insert_edge(p->gbuf, project_node->id, branch_id, "HAS_BRANCH",
-                                 branch_props_json);
+            cbm_gbuf_apply_insert_edge(p->gbuf, project_node->id, branch_id, "HAS_BRANCH",
+                                       branch_props_json);
         }
     }
 
@@ -386,7 +392,8 @@ static int pass_structure(cbm_pipeline_t *p, const cbm_file_info_t *files, int f
 
         const char *qualified_name = file_qn;
         const char *file_path = rel;
-        cbm_gbuf_upsert_node(p->gbuf, "File", basename, qualified_name, file_path, 0, 0, props);
+        cbm_gbuf_apply_upsert_node(p->gbuf, "File", basename, qualified_name, file_path, 0, 0,
+                                   props);
 
         /* CONTAINS_FILE edge: parent dir -> file */
         char *dir = strdup(rel);
@@ -416,7 +423,7 @@ static int pass_structure(cbm_pipeline_t *p, const cbm_file_info_t *files, int f
         const cbm_gbuf_node_t *fnode = cbm_gbuf_find_by_qn(p->gbuf, file_qn);
         const cbm_gbuf_node_t *pnode = cbm_gbuf_find_by_qn(p->gbuf, parent_qn);
         if (fnode && pnode) {
-            cbm_gbuf_insert_edge(p->gbuf, pnode->id, fnode->id, "CONTAINS_FILE", "{}");
+            cbm_gbuf_apply_insert_edge(p->gbuf, pnode->id, fnode->id, "CONTAINS_FILE", "{}");
         }
 
         free(file_qn);
@@ -460,8 +467,8 @@ static int process_one_infra_binding(cbm_gbuf_t *gbuf, const CBMInfraBinding *ib
                                      const char *rel_path) {
     char url_route_qn[CBM_ROUTE_QN_SIZE];
     snprintf(url_route_qn, sizeof(url_route_qn), "__route__infra__%s", ib->target_url);
-    int64_t url_route_id = cbm_gbuf_upsert_node(gbuf, "Route", ib->target_url, url_route_qn,
-                                                rel_path, 0, 0, "{\"source\":\"infra\"}");
+    int64_t url_route_id = cbm_gbuf_apply_upsert_node(gbuf, "Route", ib->target_url, url_route_qn,
+                                                      rel_path, 0, 0, "{\"source\":\"infra\"}");
     char topic_route_qn[CBM_ROUTE_QN_SIZE];
     snprintf(topic_route_qn, sizeof(topic_route_qn), "__route__%s__%s",
              ib->broker ? ib->broker : "async", ib->source_name);
@@ -474,8 +481,9 @@ static int process_one_infra_binding(cbm_gbuf_t *gbuf, const CBMInfraBinding *ib
          * upsert its Route node so the binding maps even when no code-side dispatch
          * call created the node first (e.g. a standalone scheduler/subscription
          * manifest). */
-        topic_route_id = cbm_gbuf_upsert_node(gbuf, "Route", ib->source_name, topic_route_qn,
-                                              rel_path, 0, 0, ib->broker ? ib->broker : "async");
+        topic_route_id =
+            cbm_gbuf_apply_upsert_node(gbuf, "Route", ib->source_name, topic_route_qn, rel_path, 0,
+                                       0, ib->broker ? ib->broker : "async");
         if (topic_route_id <= 0) {
             return 0;
         }
@@ -483,7 +491,7 @@ static int process_one_infra_binding(cbm_gbuf_t *gbuf, const CBMInfraBinding *ib
     char props[CBM_SZ_512];
     snprintf(props, sizeof(props), "{\"broker\":\"%s\",\"topic\":\"%s\",\"endpoint\":\"%s\"}",
              ib->broker ? ib->broker : "async", ib->source_name, ib->target_url);
-    cbm_gbuf_insert_edge(gbuf, topic_route_id, url_route_id, "INFRA_MAPS", props);
+    cbm_gbuf_apply_insert_edge(gbuf, topic_route_id, url_route_id, "INFRA_MAPS", props);
     return SKIP_ONE;
 }
 
@@ -553,7 +561,7 @@ static void try_upsert_infra_route(cbm_gbuf_t *gbuf, const CBMStringRef *sr, con
     } else {
         snprintf(route_props, sizeof(route_props), "{\"source\":\"infra\"}");
     }
-    cbm_gbuf_upsert_node(gbuf, "Route", sr->value, route_qn, fp, 0, 0, route_props);
+    cbm_gbuf_apply_upsert_node(gbuf, "Route", sr->value, route_qn, fp, 0, 0, route_props);
 }
 
 /* A URL string_ref that does NOT denote a route the service serves: a value
@@ -609,6 +617,9 @@ typedef struct {
     predump_pass_fn fn;
     const char *name;
     bool moderate_only; /* true = skip in fast mode */
+    int rust_kind;
+    uint32_t gate_flags;
+    uint32_t effect_flags;
 } predump_pass_def_t;
 
 static void predump_deco(cbm_pipeline_ctx_t *ctx) {
@@ -631,9 +642,18 @@ static void predump_complexity(cbm_pipeline_ctx_t *ctx) {
 }
 
 static const predump_pass_def_t predump_passes[] = {
-    {predump_deco, "decorator_tags", false}, {predump_cfg, "configlink", false},
-    {predump_route, "route_match", false},   {predump_sim, "similarity", true},
-    {predump_sem, "semantic_edges", true},   {predump_complexity, "complexity", false},
+    {predump_deco, "decorator_tags", false, CBM_RS_PLAN_STEP_PREDUMP_DECORATOR_TAGS, 0,
+     CBM_RS_PLAN_EFFECT_MUTATES_GRAPH},
+    {predump_cfg, "configlink", false, CBM_RS_PLAN_STEP_PREDUMP_CONFIGLINK, 0,
+     CBM_RS_PLAN_EFFECT_MUTATES_GRAPH},
+    {predump_route, "route_match", false, CBM_RS_PLAN_STEP_PREDUMP_ROUTE_MATCH, 0,
+     CBM_RS_PLAN_EFFECT_MUTATES_GRAPH},
+    {predump_sim, "similarity", true, CBM_RS_PLAN_STEP_PREDUMP_SIMILARITY,
+     CBM_RS_PLAN_GATE_SKIP_FAST, CBM_RS_PLAN_EFFECT_MUTATES_GRAPH},
+    {predump_sem, "semantic_edges", true, CBM_RS_PLAN_STEP_PREDUMP_SEMANTIC_EDGES,
+     CBM_RS_PLAN_GATE_SKIP_FAST, CBM_RS_PLAN_EFFECT_MUTATES_GRAPH},
+    {predump_complexity, "complexity", false, CBM_RS_PLAN_STEP_PREDUMP_COMPLEXITY, 0,
+     CBM_RS_PLAN_EFFECT_MUTATES_GRAPH},
 };
 enum { PREDUMP_PASS_COUNT = (int)(sizeof(predump_passes) / sizeof(predump_passes[0])) };
 
@@ -658,6 +678,13 @@ static void run_c_predump_passes(cbm_pipeline_t *p, cbm_pipeline_ctx_t *ctx) {
 }
 
 #ifdef CBM_USE_RUST_PIPELINE_PLAN
+static uint64_t predump_step_bit(int kind) {
+    if (kind <= 0 || kind > CBM_RS_PLAN_STEP_MAX_KIND) {
+        return 0;
+    }
+    return UINT64_C(1) << (uint32_t)(kind - 1);
+}
+
 static const predump_pass_def_t *find_predump_pass(const char *name, size_t len) {
     if (!name || len == 0) {
         return NULL;
@@ -671,38 +698,134 @@ static const predump_pass_def_t *find_predump_pass(const char *name, size_t len)
     return NULL;
 }
 
+static const predump_pass_def_t *find_predump_pass_by_kind(int kind) {
+    if (kind <= 0) {
+        return NULL;
+    }
+    for (int i = 0; i < PREDUMP_PASS_COUNT; i++) {
+        if (predump_passes[i].rust_kind == kind) {
+            return &predump_passes[i];
+        }
+    }
+    return NULL;
+}
+
+static bool render_predump_plan(const predump_pass_def_t *const *ordered, int count, char *buf,
+                                size_t bufsize) {
+    if (!ordered || count < 0 || !buf || bufsize == 0) {
+        return false;
+    }
+    size_t used = 0;
+    buf[0] = '\0';
+    for (int i = 0; i < count; i++) {
+        int n = snprintf(buf + used, bufsize - used, "%s%s", i == 0 ? "" : ",", ordered[i]->name);
+        if (n < 0 || (size_t)n >= bufsize - used) {
+            buf[bufsize - 1] = '\0';
+            return false;
+        }
+        used += (size_t)n;
+    }
+    return true;
+}
+
 static bool decode_rust_predump_plan(const char *plan, int mode, const predump_pass_def_t **ordered,
                                      int *out_count) {
     if (!plan || !ordered || !out_count) {
         return false;
     }
+    bool seen[PREDUMP_PASS_COUNT] = {false};
+    int expected_idx = 0;
     *out_count = 0;
     const char *start = plan;
     while (*start) {
         const char *end = strchr(start, ',');
         size_t len = end ? (size_t)(end - start) : strlen(start);
         const predump_pass_def_t *pass = find_predump_pass(start, len);
+        int pass_idx = pass ? (int)(pass - predump_passes) : -1;
+        while (expected_idx < PREDUMP_PASS_COUNT && predump_passes[expected_idx].moderate_only &&
+               mode == CBM_MODE_FAST) {
+            expected_idx++;
+        }
         if (!pass || (pass->moderate_only && mode == CBM_MODE_FAST) ||
-            *out_count >= PREDUMP_PASS_COUNT) {
+            *out_count >= PREDUMP_PASS_COUNT || pass_idx != expected_idx || seen[pass_idx]) {
             return false;
         }
+        seen[pass_idx] = true;
         ordered[(*out_count)++] = pass;
+        expected_idx++;
         if (!end) {
             break;
         }
         start = end + 1;
     }
-    return *out_count > 0;
+    int expected = mode == CBM_MODE_FAST ? PREDUMP_PASS_COUNT - 2 : PREDUMP_PASS_COUNT;
+    return *out_count == expected;
+}
+
+static bool decode_rust_predump_steps_v2(const cbm_rs_pipeline_plan_step_v2_t *steps,
+                                         int step_count, int mode,
+                                         const predump_pass_def_t **ordered, int *out_count) {
+    if (!steps || step_count < 0 || !ordered || !out_count) {
+        return false;
+    }
+    int expected = mode == CBM_MODE_FAST ? PREDUMP_PASS_COUNT - 2 : PREDUMP_PASS_COUNT;
+    if (step_count != expected) {
+        return false;
+    }
+
+    bool seen[PREDUMP_PASS_COUNT] = {false};
+    uint64_t seen_mask = 0;
+    int expected_idx = 0;
+    *out_count = 0;
+    for (int i = 0; i < step_count; i++) {
+        const cbm_rs_pipeline_plan_step_v2_t *step = &steps[i];
+        const predump_pass_def_t *pass = find_predump_pass_by_kind(step->kind);
+        int pass_idx = pass ? (int)(pass - predump_passes) : -1;
+        while (expected_idx < PREDUMP_PASS_COUNT && predump_passes[expected_idx].moderate_only &&
+               mode == CBM_MODE_FAST) {
+            expected_idx++;
+        }
+        if (!pass || step->phase != CBM_RS_PLAN_PHASE_PREDUMP ||
+            step->policy != CBM_RS_PLAN_POLICY_REQUIRED || step->gate_flags != pass->gate_flags ||
+            step->effect_flags != pass->effect_flags || step->requires_mask != seen_mask ||
+            predump_step_bit(step->kind) == 0 || (seen_mask & predump_step_bit(step->kind)) != 0 ||
+            (pass->moderate_only && mode == CBM_MODE_FAST) || pass_idx != expected_idx ||
+            seen[pass_idx]) {
+            return false;
+        }
+        seen[pass_idx] = true;
+        ordered[(*out_count)++] = pass;
+        seen_mask |= predump_step_bit(step->kind);
+        expected_idx++;
+    }
+    return *out_count == expected;
 }
 
 static bool run_rust_predump_passes(cbm_pipeline_t *p, cbm_pipeline_ctx_t *ctx) {
-    char plan[CBM_RS_PLAN_PREDUMP_BUF];
+    char plan[CBM_RS_PLAN_SEQUENTIAL_BUF];
     const predump_pass_def_t *ordered[PREDUMP_PASS_COUNT];
     int count = 0;
-    if (!cbm_rust_plan_predump(p->mode, plan, sizeof(plan)) ||
-        !decode_rust_predump_plan(plan, p->mode, ordered, &count)) {
+    const char *source = "typed_v2";
+    cbm_rs_pipeline_plan_step_v2_t steps[CBM_RS_PLAN_V2_MAX_STEPS];
+    int step_count = 0;
+    bool typed_ok = cbm_rust_plan_steps_v2(CBM_RS_PLAN_PREDUMP, p->mode, 0, 0, steps,
+                                           CBM_RS_PLAN_V2_MAX_STEPS, &step_count) &&
+                    decode_rust_predump_steps_v2(steps, step_count, p->mode, ordered, &count) &&
+                    render_predump_plan(ordered, count, plan, sizeof(plan));
+    if (typed_ok) {
+        /* Typed v2 metadata is the preferred opt-in path. */
+    } else if (cbm_rust_plan_predump(p->mode, plan, sizeof(plan)) &&
+               decode_rust_predump_plan(plan, p->mode, ordered, &count)) {
+        cbm_log_warn("rust_plan.fallback", "phase", "predump", "reason", "typed_v2_unavailable",
+                     "path", "string_plan");
+        source = "string";
+    } else {
+        cbm_log_warn("rust_plan.fallback", "phase", "predump", "reason",
+                     "typed_v2_and_string_unavailable", "path", "c_predump");
         return false;
     }
+    cbm_log_info("rust_plan.dispatch", "phase", "predump", "passes", itoa_buf(count), "plan", plan,
+                 "source", source);
     for (int i = 0; i < count && !check_cancel(p); i++) {
         run_predump_pass(ctx, ordered[i]);
     }
@@ -734,6 +857,151 @@ static int seq_pass_lsp_cross_dispatch(cbm_pipeline_ctx_t *ctx, const cbm_file_i
     return cbm_pipeline_pass_lsp_cross(ctx, files, file_count, ctx->result_cache);
 }
 
+typedef int (*seq_pass_fn)(cbm_pipeline_ctx_t *, const cbm_file_info_t *, int);
+typedef struct {
+    seq_pass_fn fn;
+    const char *name;
+    bool ignore_err;
+    int rust_kind;
+    int rust_policy;
+    uint32_t gate_flags;
+    uint32_t effect_flags;
+} seq_pass_def_t;
+
+static const seq_pass_def_t seq_passes[] = {
+    {cbm_pipeline_pass_definitions, "definitions", false, CBM_RS_PLAN_STEP_SEQUENTIAL_DEFINITIONS,
+     CBM_RS_PLAN_POLICY_REQUIRED, 0, CBM_RS_PLAN_EFFECT_MUTATES_GRAPH},
+    {cbm_pipeline_pass_k8s, "k8s", true, CBM_RS_PLAN_STEP_SEQUENTIAL_K8S,
+     CBM_RS_PLAN_POLICY_IGNORE_ERR, 0, CBM_RS_PLAN_EFFECT_MUTATES_GRAPH},
+    {seq_pass_lsp_cross_dispatch, "lsp_cross", true, CBM_RS_PLAN_STEP_SEQUENTIAL_LSP_CROSS,
+     CBM_RS_PLAN_POLICY_IGNORE_ERR, CBM_RS_PLAN_GATE_REQUIRES_RESULT_CACHE,
+     CBM_RS_PLAN_EFFECT_MUTATES_GRAPH},
+    {cbm_pipeline_pass_calls, "calls", false, CBM_RS_PLAN_STEP_SEQUENTIAL_CALLS,
+     CBM_RS_PLAN_POLICY_REQUIRED, 0, CBM_RS_PLAN_EFFECT_MUTATES_GRAPH},
+    {cbm_pipeline_pass_usages, "usages", false, CBM_RS_PLAN_STEP_SEQUENTIAL_USAGES,
+     CBM_RS_PLAN_POLICY_REQUIRED, 0, CBM_RS_PLAN_EFFECT_MUTATES_GRAPH},
+    {cbm_pipeline_pass_semantic, "semantic", false, CBM_RS_PLAN_STEP_SEQUENTIAL_SEMANTIC,
+     CBM_RS_PLAN_POLICY_REQUIRED, 0, CBM_RS_PLAN_EFFECT_MUTATES_GRAPH},
+};
+enum { SEQ_PASS_COUNT = (int)(sizeof(seq_passes) / sizeof(seq_passes[0])) };
+
+static int run_sequential_dispatch(cbm_pipeline_t *p, cbm_pipeline_ctx_t *ctx,
+                                   const cbm_file_info_t *files, int file_count, struct timespec *t,
+                                   const seq_pass_def_t *const *ordered, int count) {
+    int rc = 0;
+    for (int si = 0; si < count && rc == 0; si++) {
+        const seq_pass_def_t *pass = ordered[si];
+        cbm_clock_gettime(CLOCK_MONOTONIC, t);
+        int pr = pass->fn(ctx, files, file_count);
+        if (pr != 0 && !pass->ignore_err) {
+            rc = pr;
+        }
+        cbm_log_info("pass.timing", "pass", pass->name, "elapsed_ms",
+                     itoa_buf((int)elapsed_ms(*t)));
+        if (check_cancel(p)) {
+            rc = CBM_NOT_FOUND;
+        }
+    }
+    return rc;
+}
+
+static int run_c_sequential_dispatch(cbm_pipeline_t *p, cbm_pipeline_ctx_t *ctx,
+                                     const cbm_file_info_t *files, int file_count,
+                                     struct timespec *t) {
+    const seq_pass_def_t *ordered[SEQ_PASS_COUNT];
+    for (int i = 0; i < SEQ_PASS_COUNT; i++) {
+        ordered[i] = &seq_passes[i];
+    }
+    return run_sequential_dispatch(p, ctx, files, file_count, t, ordered, SEQ_PASS_COUNT);
+}
+
+#ifdef CBM_USE_RUST_PIPELINE_PLAN
+static uint64_t seq_step_bit(int kind) {
+    if (kind <= 0 || kind > CBM_RS_PLAN_STEP_MAX_KIND) {
+        return 0;
+    }
+    return UINT64_C(1) << (uint32_t)(kind - 1);
+}
+
+static const seq_pass_def_t *find_seq_pass_by_kind(int kind) {
+    if (kind <= 0) {
+        return NULL;
+    }
+    for (int i = 0; i < SEQ_PASS_COUNT; i++) {
+        if (seq_passes[i].rust_kind == kind) {
+            return &seq_passes[i];
+        }
+    }
+    return NULL;
+}
+
+static bool render_seq_plan(const seq_pass_def_t *const *ordered, int count, char *buf,
+                            size_t bufsize) {
+    if (!ordered || count < 0 || !buf || bufsize == 0) {
+        return false;
+    }
+    size_t used = 0;
+    buf[0] = '\0';
+    for (int i = 0; i < count; i++) {
+        int n = snprintf(buf + used, bufsize - used, "%s%s", i == 0 ? "" : ",", ordered[i]->name);
+        if (n < 0 || (size_t)n >= bufsize - used) {
+            buf[bufsize - 1] = '\0';
+            return false;
+        }
+        used += (size_t)n;
+    }
+    return true;
+}
+
+static bool decode_rust_sequential_steps_v2(const cbm_rs_pipeline_plan_step_v2_t *steps,
+                                            int step_count, const seq_pass_def_t **ordered,
+                                            int *out_count) {
+    if (!steps || step_count != SEQ_PASS_COUNT || !ordered || !out_count) {
+        return false;
+    }
+    bool seen[SEQ_PASS_COUNT] = {false};
+    uint64_t seen_mask = 0;
+    *out_count = 0;
+    for (int i = 0; i < step_count; i++) {
+        const cbm_rs_pipeline_plan_step_v2_t *step = &steps[i];
+        const seq_pass_def_t *pass = find_seq_pass_by_kind(step->kind);
+        int pass_idx = pass ? (int)(pass - seq_passes) : -1;
+        uint64_t bit = seq_step_bit(step->kind);
+        if (!pass || step->phase != CBM_RS_PLAN_PHASE_SEQUENTIAL_EXTRACT ||
+            step->policy != pass->rust_policy || step->gate_flags != pass->gate_flags ||
+            step->effect_flags != pass->effect_flags || step->requires_mask != seen_mask ||
+            bit == 0 || (seen_mask & bit) != 0 || pass_idx != i || seen[pass_idx]) {
+            return false;
+        }
+        seen[pass_idx] = true;
+        ordered[(*out_count)++] = pass;
+        seen_mask |= bit;
+    }
+    return *out_count == SEQ_PASS_COUNT;
+}
+
+static bool run_rust_sequential_dispatch(cbm_pipeline_t *p, cbm_pipeline_ctx_t *ctx,
+                                         const cbm_file_info_t *files, int file_count,
+                                         struct timespec *t, int *out_rc) {
+    cbm_rs_pipeline_plan_step_v2_t steps[CBM_RS_PLAN_V2_MAX_STEPS];
+    const seq_pass_def_t *ordered[SEQ_PASS_COUNT];
+    int step_count = 0;
+    int count = 0;
+    char plan[CBM_RS_PLAN_SEQUENTIAL_BUF];
+    if (!out_rc ||
+        !cbm_rust_plan_steps_v2(CBM_RS_PLAN_SEQUENTIAL, p->mode, 0, file_count, steps,
+                                CBM_RS_PLAN_V2_MAX_STEPS, &step_count) ||
+        !decode_rust_sequential_steps_v2(steps, step_count, ordered, &count) ||
+        !render_seq_plan(ordered, count, plan, sizeof(plan))) {
+        return false;
+    }
+    cbm_log_info("rust_plan.dispatch", "phase", "sequential_extract", "passes", itoa_buf(count),
+                 "plan", plan, "source", "typed_v2");
+    *out_rc = run_sequential_dispatch(p, ctx, files, file_count, t, ordered, count);
+    return true;
+}
+#endif
+
 /* Run the sequential pipeline path: definitions, k8s, lsp_cross, calls, usages, semantic. */
 static int run_sequential_pipeline(cbm_pipeline_t *p, cbm_pipeline_ctx_t *ctx,
                                    const cbm_file_info_t *files, int file_count,
@@ -751,32 +1019,16 @@ static int run_sequential_pipeline(cbm_pipeline_t *p, cbm_pipeline_ctx_t *ctx,
     if (seq_cache) {
         ctx->result_cache = seq_cache;
     }
-    typedef int (*seq_pass_fn)(cbm_pipeline_ctx_t *, const cbm_file_info_t *, int);
-    static const struct {
-        seq_pass_fn fn;
-        const char *name;
-        bool ignore_err;
-    } seq_passes[] = {
-        {cbm_pipeline_pass_definitions, "definitions", false},
-        {cbm_pipeline_pass_k8s, "k8s", true},
-        {seq_pass_lsp_cross_dispatch, "lsp_cross", true},
-        {cbm_pipeline_pass_calls, "calls", false},
-        {cbm_pipeline_pass_usages, "usages", false},
-        {cbm_pipeline_pass_semantic, "semantic", false},
-    };
     int rc = 0;
-    for (int si = 0; si < PL_SEQ_PASSES && rc == 0; si++) {
-        cbm_clock_gettime(CLOCK_MONOTONIC, t);
-        int pr = seq_passes[si].fn(ctx, files, file_count);
-        if (pr != 0 && !seq_passes[si].ignore_err) {
-            rc = pr;
-        }
-        cbm_log_info("pass.timing", "pass", seq_passes[si].name, "elapsed_ms",
-                     itoa_buf((int)elapsed_ms(*t)));
-        if (check_cancel(p)) {
-            rc = CBM_NOT_FOUND;
-        }
+#ifdef CBM_USE_RUST_PIPELINE_PLAN
+    if (!run_rust_sequential_dispatch(p, ctx, files, file_count, t, &rc)) {
+        cbm_log_warn("rust_plan.fallback", "phase", "sequential_extract", "reason",
+                     "typed_v2_unavailable", "path", "c_dispatch");
+        rc = run_c_sequential_dispatch(p, ctx, files, file_count, t);
     }
+#else
+    rc = run_c_sequential_dispatch(p, ctx, files, file_count, t);
+#endif
     /* Consume infra bindings (YAML/HCL topic/queue/scheduler → endpoint) so
      * INFRA_MAPS edges also form on the sequential path, not just the parallel
      * one. process_one_infra_binding self-creates the topic Route node when no
@@ -797,12 +1049,127 @@ static int run_sequential_pipeline(cbm_pipeline_t *p, cbm_pipeline_ctx_t *ctx,
     return rc;
 }
 
+#ifdef CBM_USE_RUST_PIPELINE_PLAN
+typedef struct {
+    const char *name;
+    int rust_kind;
+    int rust_policy;
+    uint32_t gate_flags;
+    uint32_t effect_flags;
+} parallel_pass_def_t;
+
+static const parallel_pass_def_t parallel_passes[] = {
+    {"parallel_extract", CBM_RS_PLAN_STEP_PARALLEL_EXTRACT, CBM_RS_PLAN_POLICY_REQUIRED, 0,
+     CBM_RS_PLAN_EFFECT_MUTATES_GRAPH},
+    {"registry_build", CBM_RS_PLAN_STEP_PARALLEL_REGISTRY_BUILD, CBM_RS_PLAN_POLICY_REQUIRED, 0,
+     CBM_RS_PLAN_EFFECT_MUTATES_GRAPH},
+    {"lsp_cross_prepare", CBM_RS_PLAN_STEP_PARALLEL_LSP_CROSS_PREPARE,
+     CBM_RS_PLAN_POLICY_ENV_OPTIONAL, 0, 0},
+    {"parallel_resolve", CBM_RS_PLAN_STEP_PARALLEL_RESOLVE, CBM_RS_PLAN_POLICY_REQUIRED, 0,
+     CBM_RS_PLAN_EFFECT_MUTATES_GRAPH},
+    {"infra_routes", CBM_RS_PLAN_STEP_PARALLEL_INFRA_ROUTES, CBM_RS_PLAN_POLICY_REQUIRED, 0,
+     CBM_RS_PLAN_EFFECT_MUTATES_GRAPH},
+    {"infra_bindings", CBM_RS_PLAN_STEP_PARALLEL_INFRA_BINDINGS, CBM_RS_PLAN_POLICY_REQUIRED, 0,
+     CBM_RS_PLAN_EFFECT_MUTATES_GRAPH},
+    {"k8s", CBM_RS_PLAN_STEP_PARALLEL_K8S, CBM_RS_PLAN_POLICY_IGNORE_ERR, 0,
+     CBM_RS_PLAN_EFFECT_MUTATES_GRAPH},
+};
+enum { PARALLEL_PASS_COUNT = (int)(sizeof(parallel_passes) / sizeof(parallel_passes[0])) };
+
+static uint64_t parallel_step_bit(int kind) {
+    if (kind <= 0 || kind > CBM_RS_PLAN_STEP_MAX_KIND) {
+        return 0;
+    }
+    return UINT64_C(1) << (uint32_t)(kind - 1);
+}
+
+static const parallel_pass_def_t *find_parallel_pass_by_kind(int kind) {
+    if (kind <= 0) {
+        return NULL;
+    }
+    for (int i = 0; i < PARALLEL_PASS_COUNT; i++) {
+        if (parallel_passes[i].rust_kind == kind) {
+            return &parallel_passes[i];
+        }
+    }
+    return NULL;
+}
+
+static bool render_parallel_plan(const parallel_pass_def_t *const *ordered, int count, char *buf,
+                                 size_t bufsize) {
+    if (!ordered || count < 0 || !buf || bufsize == 0) {
+        return false;
+    }
+    size_t used = 0;
+    buf[0] = '\0';
+    for (int i = 0; i < count; i++) {
+        int n = snprintf(buf + used, bufsize - used, "%s%s", i == 0 ? "" : ",", ordered[i]->name);
+        if (n < 0 || (size_t)n >= bufsize - used) {
+            buf[bufsize - 1] = '\0';
+            return false;
+        }
+        used += (size_t)n;
+    }
+    return true;
+}
+
+static bool decode_rust_parallel_steps_v2(const cbm_rs_pipeline_plan_step_v2_t *steps,
+                                          int step_count, const parallel_pass_def_t **ordered,
+                                          int *out_count) {
+    if (!steps || step_count != PARALLEL_PASS_COUNT || !ordered || !out_count) {
+        return false;
+    }
+    bool seen[PARALLEL_PASS_COUNT] = {false};
+    uint64_t seen_mask = 0;
+    *out_count = 0;
+    for (int i = 0; i < step_count; i++) {
+        const cbm_rs_pipeline_plan_step_v2_t *step = &steps[i];
+        const parallel_pass_def_t *pass = find_parallel_pass_by_kind(step->kind);
+        int pass_idx = pass ? (int)(pass - parallel_passes) : -1;
+        uint64_t bit = parallel_step_bit(step->kind);
+        if (!pass || step->phase != CBM_RS_PLAN_PHASE_PARALLEL_EXTRACT ||
+            step->policy != pass->rust_policy || step->gate_flags != pass->gate_flags ||
+            step->effect_flags != pass->effect_flags || step->requires_mask != seen_mask ||
+            bit == 0 || (seen_mask & bit) != 0 || pass_idx != i || seen[pass_idx]) {
+            return false;
+        }
+        seen[pass_idx] = true;
+        ordered[(*out_count)++] = pass;
+        seen_mask |= bit;
+    }
+    return *out_count == PARALLEL_PASS_COUNT;
+}
+
+static bool log_rust_parallel_dispatch(int mode, int worker_count, int file_count) {
+    cbm_rs_pipeline_plan_step_v2_t steps[CBM_RS_PLAN_V2_MAX_STEPS];
+    const parallel_pass_def_t *ordered[PARALLEL_PASS_COUNT];
+    int step_count = 0;
+    int count = 0;
+    char plan[CBM_RS_PLAN_PARALLEL_BUF];
+    if (!cbm_rust_plan_steps_v2(CBM_RS_PLAN_PARALLEL_EXTRACTION, mode, worker_count, file_count,
+                                steps, CBM_RS_PLAN_V2_MAX_STEPS, &step_count) ||
+        !decode_rust_parallel_steps_v2(steps, step_count, ordered, &count) ||
+        !render_parallel_plan(ordered, count, plan, sizeof(plan))) {
+        return false;
+    }
+    cbm_log_info("rust_plan.dispatch", "phase", "parallel_extract", "passes", itoa_buf(count),
+                 "plan", plan, "source", "typed_v2");
+    return true;
+}
+#endif
+
 /* Run the parallel pipeline path: extract, registry, resolve, infra, k8s. */
 static int run_parallel_pipeline(cbm_pipeline_t *p, cbm_pipeline_ctx_t *ctx,
                                  const cbm_file_info_t *files, int file_count, int worker_count,
                                  struct timespec *t) {
     cbm_log_info("pipeline.mode", "mode", "parallel", "workers", itoa_buf(worker_count), "files",
                  itoa_buf(file_count));
+#ifdef CBM_USE_RUST_PIPELINE_PLAN
+    if (!log_rust_parallel_dispatch(p->mode, worker_count, file_count)) {
+        cbm_log_warn("rust_plan.fallback", "phase", "parallel_extract", "reason",
+                     "typed_v2_unavailable", "path", "c_parallel");
+    }
+#endif
     _Atomic int64_t shared_ids;
     atomic_init(&shared_ids, cbm_gbuf_next_id(p->gbuf));
     CBMFileResult **cache = (CBMFileResult **)calloc(file_count, sizeof(CBMFileResult *));
@@ -934,7 +1301,8 @@ static int run_parallel_pipeline(cbm_pipeline_t *p, cbm_pipeline_ctx_t *ctx,
 }
 
 /* Try incremental pipeline or delete old DB for reindex.
- * Returns >= 0 if incremental was used (the return code), or -1 to proceed with full. */
+ * Returns PL_INCREMENTAL_FALLBACK to proceed with full; otherwise returns
+ * the incremental run's actual status, including negative errors. */
 static int try_incremental_or_delete_db(cbm_pipeline_t *p, cbm_file_info_t *files, int file_count) {
     char *db_path = resolve_db_path(p);
     if (!db_path) {
@@ -943,7 +1311,7 @@ static int try_incremental_or_delete_db(cbm_pipeline_t *p, cbm_file_info_t *file
     struct stat db_st;
     if (stat(db_path, &db_st) != 0) {
         free(db_path);
-        return CBM_NOT_FOUND;
+        return PL_INCREMENTAL_FALLBACK;
     }
     cbm_store_t *check_store = cbm_store_open_path(db_path);
     if (check_store && cbm_store_check_integrity(check_store)) {
@@ -991,7 +1359,7 @@ static int try_incremental_or_delete_db(cbm_pipeline_t *p, cbm_file_info_t *file
     cbm_unlink(wal);
     cbm_unlink(shm);
     free(db_path);
-    return CBM_NOT_FOUND;
+    return PL_INCREMENTAL_FALLBACK;
 }
 
 /* Get platform-specific mtime in nanoseconds. */
@@ -1262,9 +1630,8 @@ int cbm_pipeline_run(cbm_pipeline_t *p) {
 
     /* Check for existing DB → try incremental or delete for reindex */
     rc = try_incremental_or_delete_db(p, files, file_count);
-    if (rc >= 0) {
-        cbm_discover_free(files, file_count);
-        return rc;
+    if (rc != PL_INCREMENTAL_FALLBACK) {
+        goto cleanup;
     }
     cbm_log_info("pipeline.route", "path", "full");
 

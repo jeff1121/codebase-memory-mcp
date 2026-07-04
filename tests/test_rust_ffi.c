@@ -6,11 +6,15 @@
  */
 #include <stdbool.h>
 #include <stdint.h>
+#include <inttypes.h>
 #include <math.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "graph_buffer/graph_buffer.h"
 #include "pipeline/pipeline.h"
+#include "pipeline/rust_plan.h"
 #ifndef _WIN32
 #include <sys/stat.h>
 #include <unistd.h>
@@ -100,6 +104,78 @@ extern int cbm_rs_diag_format_json(char *buf, size_t bufsize, const CbmRsDiagSna
 extern int cbm_rs_diag_format_ndjson(char *buf, size_t bufsize, const CbmRsDiagSnapshot *snapshot);
 extern int cbm_rs_pipeline_plan_describe(int kind, int mode, int worker_count, int file_count,
                                          char *buf, size_t bufsize);
+typedef cbm_rs_pipeline_plan_step_t CbmRsPipelinePlanStep;
+typedef cbm_rs_pipeline_plan_step_v2_t CbmRsPipelinePlanStepV2;
+
+_Static_assert(sizeof(CbmRsPipelinePlanStepV2) == 32, "PlanStepV2 ABI size drift");
+_Static_assert(offsetof(CbmRsPipelinePlanStepV2, kind) == 0, "PlanStepV2.kind offset drift");
+_Static_assert(offsetof(CbmRsPipelinePlanStepV2, phase) == 4, "PlanStepV2.phase offset drift");
+_Static_assert(offsetof(CbmRsPipelinePlanStepV2, policy) == 8, "PlanStepV2.policy offset drift");
+_Static_assert(offsetof(CbmRsPipelinePlanStepV2, gate_flags) == 12,
+               "PlanStepV2.gate_flags offset drift");
+_Static_assert(offsetof(CbmRsPipelinePlanStepV2, requires_mask) == 16,
+               "PlanStepV2.requires_mask offset drift");
+_Static_assert(offsetof(CbmRsPipelinePlanStepV2, effect_flags) == 24,
+               "PlanStepV2.effect_flags offset drift");
+
+typedef struct {
+    int kind;
+    int result_kind;
+    uint32_t required_fields;
+    uint32_t optional_fields;
+    uint32_t effect_flags;
+    uint32_t validation_flags;
+    uint32_t reserved0;
+    uint32_t reserved1;
+} CbmRsGbufMutationMetaV1;
+
+typedef cbm_gbuf_mutation_cmd_t CbmRsGbufMutationCmdV1;
+
+typedef struct {
+    int ok;
+    int error_code;
+    uint32_t missing_fields;
+    uint32_t invalid_fields;
+    uint32_t normalized_flags;
+    uint32_t reserved0;
+} CbmRsGbufMutationValidationV1;
+
+_Static_assert(sizeof(CbmRsGbufMutationMetaV1) == 32, "GbufMutationMetaV1 ABI size drift");
+_Static_assert(offsetof(CbmRsGbufMutationMetaV1, kind) == 0,
+               "GbufMutationMetaV1.kind offset drift");
+_Static_assert(offsetof(CbmRsGbufMutationMetaV1, result_kind) == 4,
+               "GbufMutationMetaV1.result_kind offset drift");
+_Static_assert(offsetof(CbmRsGbufMutationMetaV1, required_fields) == 8,
+               "GbufMutationMetaV1.required_fields offset drift");
+_Static_assert(offsetof(CbmRsGbufMutationMetaV1, reserved1) == 28,
+               "GbufMutationMetaV1.reserved1 offset drift");
+#if UINTPTR_MAX == UINT64_MAX
+_Static_assert(sizeof(CbmRsGbufMutationCmdV1) == 80, "GbufMutationCmdV1 ABI size drift");
+_Static_assert(sizeof(CbmRsGbufMutationCmdV1) == sizeof(cbm_gbuf_mutation_cmd_t),
+               "GbufMutationCmdV1 C adapter ABI size drift");
+_Static_assert(offsetof(CbmRsGbufMutationCmdV1, label) == 8,
+               "GbufMutationCmdV1.label offset drift");
+_Static_assert(offsetof(CbmRsGbufMutationCmdV1, start_line) == 40,
+               "GbufMutationCmdV1.start_line offset drift");
+_Static_assert(offsetof(CbmRsGbufMutationCmdV1, source_id) == 48,
+               "GbufMutationCmdV1.source_id offset drift");
+_Static_assert(offsetof(CbmRsGbufMutationCmdV1, properties_json) == 72,
+               "GbufMutationCmdV1.properties_json offset drift");
+#endif
+_Static_assert(sizeof(CbmRsGbufMutationValidationV1) == 24,
+               "GbufMutationValidationV1 ABI size drift");
+_Static_assert(offsetof(CbmRsGbufMutationValidationV1, missing_fields) == 8,
+               "GbufMutationValidationV1.missing_fields offset drift");
+
+extern int cbm_rs_pipeline_incremental_post_step_count(int mode);
+extern int cbm_rs_pipeline_incremental_post_steps(int mode, CbmRsPipelinePlanStep *out, int cap);
+extern int cbm_rs_pipeline_plan_step_count_v2(int kind, int mode, int worker_count, int file_count);
+extern int cbm_rs_pipeline_plan_steps_v2(int kind, int mode, int worker_count, int file_count,
+                                         CbmRsPipelinePlanStepV2 *out, int cap);
+extern int cbm_rs_gbuf_mutation_command_count_v1(void);
+extern int cbm_rs_gbuf_mutation_commands_v1(CbmRsGbufMutationMetaV1 *out, int cap);
+extern int cbm_rs_gbuf_mutation_validate_v1(const CbmRsGbufMutationCmdV1 *cmd,
+                                            CbmRsGbufMutationValidationV1 *out);
 
 typedef struct {
     const char *name;
@@ -154,6 +230,13 @@ static void check_int(const char *name, int actual, int expected) {
 static void check_u32(const char *name, unsigned int actual, unsigned int expected) {
     if (actual != expected) {
         fprintf(stderr, "%s: expected %u, got %u\n", name, expected, actual);
+        exit(1);
+    }
+}
+
+static void check_u64(const char *name, uint64_t actual, uint64_t expected) {
+    if (actual != expected) {
+        fprintf(stderr, "%s: expected %" PRIu64 ", got %" PRIu64 "\n", name, expected, actual);
         exit(1);
     }
 }
@@ -747,19 +830,72 @@ static void test_diagnostics_exports(void) {
 
 static void test_pipeline_plan_exports(void) {
     enum {
-        PLAN_SEQUENTIAL = 0,
-        PLAN_PREDUMP = 1,
-        PLAN_EXTRACTION_CHOICE = 2,
-        PLAN_INCREMENTAL_EXTRACT_RESOLVE = 3,
-        PLAN_INCREMENTAL_POST = 4,
-        PLAN_PARALLEL_EXTRACTION = 5,
-        PLAN_FULL_PIPELINE = 6,
+        PLAN_SEQUENTIAL = CBM_RS_PLAN_SEQUENTIAL,
+        PLAN_PREDUMP = CBM_RS_PLAN_PREDUMP,
+        PLAN_EXTRACTION_CHOICE = CBM_RS_PLAN_EXTRACTION_CHOICE,
+        PLAN_INCREMENTAL_EXTRACT_RESOLVE = CBM_RS_PLAN_INCREMENTAL_EXTRACT_RESOLVE,
+        PLAN_INCREMENTAL_POST = CBM_RS_PLAN_INCREMENTAL_POST,
+        PLAN_PARALLEL_EXTRACTION = CBM_RS_PLAN_PARALLEL_EXTRACTION,
+        PLAN_FULL_PIPELINE = CBM_RS_PLAN_FULL_PIPELINE,
+        PLAN_STEP_PREDUMP_DECORATOR_TAGS = CBM_RS_PLAN_STEP_PREDUMP_DECORATOR_TAGS,
+        PLAN_STEP_PREDUMP_CONFIGLINK = CBM_RS_PLAN_STEP_PREDUMP_CONFIGLINK,
+        PLAN_STEP_PREDUMP_ROUTE_MATCH = CBM_RS_PLAN_STEP_PREDUMP_ROUTE_MATCH,
+        PLAN_STEP_PREDUMP_SIMILARITY = CBM_RS_PLAN_STEP_PREDUMP_SIMILARITY,
+        PLAN_STEP_PREDUMP_SEMANTIC_EDGES = CBM_RS_PLAN_STEP_PREDUMP_SEMANTIC_EDGES,
+        PLAN_STEP_PREDUMP_COMPLEXITY = CBM_RS_PLAN_STEP_PREDUMP_COMPLEXITY,
+        PLAN_STEP_SEQUENTIAL_DEFINITIONS = CBM_RS_PLAN_STEP_SEQUENTIAL_DEFINITIONS,
+        PLAN_STEP_SEQUENTIAL_K8S = CBM_RS_PLAN_STEP_SEQUENTIAL_K8S,
+        PLAN_STEP_SEQUENTIAL_LSP_CROSS = CBM_RS_PLAN_STEP_SEQUENTIAL_LSP_CROSS,
+        PLAN_STEP_SEQUENTIAL_CALLS = CBM_RS_PLAN_STEP_SEQUENTIAL_CALLS,
+        PLAN_STEP_SEQUENTIAL_USAGES = CBM_RS_PLAN_STEP_SEQUENTIAL_USAGES,
+        PLAN_STEP_SEQUENTIAL_SEMANTIC = CBM_RS_PLAN_STEP_SEQUENTIAL_SEMANTIC,
+        PLAN_STEP_PARALLEL_EXTRACT = CBM_RS_PLAN_STEP_PARALLEL_EXTRACT,
+        PLAN_STEP_PARALLEL_REGISTRY_BUILD = CBM_RS_PLAN_STEP_PARALLEL_REGISTRY_BUILD,
+        PLAN_STEP_PARALLEL_LSP_CROSS_PREPARE = CBM_RS_PLAN_STEP_PARALLEL_LSP_CROSS_PREPARE,
+        PLAN_STEP_PARALLEL_RESOLVE = CBM_RS_PLAN_STEP_PARALLEL_RESOLVE,
+        PLAN_STEP_PARALLEL_INFRA_ROUTES = CBM_RS_PLAN_STEP_PARALLEL_INFRA_ROUTES,
+        PLAN_STEP_PARALLEL_INFRA_BINDINGS = CBM_RS_PLAN_STEP_PARALLEL_INFRA_BINDINGS,
+        PLAN_STEP_PARALLEL_K8S = CBM_RS_PLAN_STEP_PARALLEL_K8S,
+        PLAN_STEP_INCREMENTAL_DEFINITIONS = CBM_RS_PLAN_STEP_INCREMENTAL_DEFINITIONS,
+        PLAN_STEP_INCREMENTAL_CALLS = CBM_RS_PLAN_STEP_INCREMENTAL_CALLS,
+        PLAN_STEP_INCREMENTAL_USAGES = CBM_RS_PLAN_STEP_INCREMENTAL_USAGES,
+        PLAN_STEP_INCREMENTAL_SEMANTIC = CBM_RS_PLAN_STEP_INCREMENTAL_SEMANTIC,
+        PLAN_STEP_INCREMENTAL_PARALLEL_EXTRACT = CBM_RS_PLAN_STEP_INCREMENTAL_PARALLEL_EXTRACT,
+        PLAN_STEP_INCREMENTAL_REGISTRY = CBM_RS_PLAN_STEP_INCREMENTAL_REGISTRY,
+        PLAN_STEP_INCREMENTAL_RESOLVE = CBM_RS_PLAN_STEP_INCREMENTAL_RESOLVE,
+        PLAN_PHASE_PREDUMP = CBM_RS_PLAN_PHASE_PREDUMP,
+        PLAN_PHASE_SEQUENTIAL_EXTRACT = CBM_RS_PLAN_PHASE_SEQUENTIAL_EXTRACT,
+        PLAN_PHASE_PARALLEL_EXTRACT = CBM_RS_PLAN_PHASE_PARALLEL_EXTRACT,
+        PLAN_PHASE_INCREMENTAL_EXTRACT_RESOLVE = CBM_RS_PLAN_PHASE_INCREMENTAL_EXTRACT_RESOLVE,
+        PLAN_POLICY_REQUIRED = CBM_RS_PLAN_POLICY_REQUIRED,
+        INCR_POST_K8S = CBM_RS_INCR_POST_K8S,
+        INCR_POST_TESTS = CBM_RS_INCR_POST_TESTS,
+        INCR_POST_DECORATOR_TAGS = CBM_RS_INCR_POST_DECORATOR_TAGS,
+        INCR_POST_CONFIGLINK = CBM_RS_INCR_POST_CONFIGLINK,
+        INCR_POST_SIMILARITY = CBM_RS_INCR_POST_SIMILARITY,
+        INCR_POST_SEMANTIC_EDGES = CBM_RS_INCR_POST_SEMANTIC_EDGES,
+        INCR_POST_EDGE_RELINK = CBM_RS_INCR_POST_EDGE_RELINK,
+        INCR_POST_INCREMENTAL_DUMP = CBM_RS_INCR_POST_INCREMENTAL_DUMP,
+        INCR_POST_PERSIST_HASHES = CBM_RS_INCR_POST_PERSIST_HASHES,
+        INCR_POST_ARTIFACT_EXPORT = CBM_RS_INCR_POST_ARTIFACT_EXPORT,
+        PLAN_POLICY_IGNORE_ERR = CBM_RS_PLAN_POLICY_IGNORE_ERR,
+        PLAN_POLICY_BEST_EFFORT = CBM_RS_PLAN_POLICY_BEST_EFFORT,
+        PLAN_POLICY_OPTIONAL_EXISTING_ARTIFACT = CBM_RS_PLAN_POLICY_OPTIONAL_EXISTING_ARTIFACT,
+        PLAN_POLICY_ENV_OPTIONAL = CBM_RS_PLAN_POLICY_ENV_OPTIONAL,
+        PLAN_GATE_SKIP_FAST = CBM_RS_PLAN_GATE_SKIP_FAST,
+        PLAN_GATE_REQUIRES_RESULT_CACHE = CBM_RS_PLAN_GATE_REQUIRES_RESULT_CACHE,
+        PLAN_GATE_NO_CROSS_LSP_PREBUILD = CBM_RS_PLAN_GATE_NO_CROSS_LSP_PREBUILD,
+        PLAN_EFFECT_MUTATES_GRAPH = CBM_RS_PLAN_EFFECT_MUTATES_GRAPH,
         MODE_FULL = CBM_MODE_FULL,
         MODE_MODERATE = CBM_MODE_MODERATE,
         MODE_FAST = CBM_MODE_FAST,
     };
     char out[1024];
     char small[8];
+    CbmRsPipelinePlanStep steps[10];
+    CbmRsPipelinePlanStep short_steps[9];
+    CbmRsPipelinePlanStepV2 steps_v2[7];
+    CbmRsPipelinePlanStepV2 short_steps_v2[6];
 
     const char *seq =
         "definitions:required,k8s:ignore_err,lsp_cross:ignore_err:requires_result_cache,"
@@ -877,6 +1013,219 @@ static void test_pipeline_plan_exports(void) {
               (int)strlen(incr_post_fast));
     check_str("plan_incr_post_advanced_out", out, incr_post_fast);
 
+    check_int("plan_incr_post_step_count_moderate",
+              cbm_rs_pipeline_incremental_post_step_count(MODE_MODERATE), 10);
+    check_int("plan_incr_post_steps_moderate_len",
+              cbm_rs_pipeline_incremental_post_steps(MODE_MODERATE, steps, 10), 10);
+    check_int("plan_incr_post_step_0_kind", steps[0].kind, INCR_POST_K8S);
+    check_int("plan_incr_post_step_0_policy", steps[0].policy, PLAN_POLICY_IGNORE_ERR);
+    check_int("plan_incr_post_step_5_kind", steps[5].kind, INCR_POST_SEMANTIC_EDGES);
+    check_int("plan_incr_post_step_5_policy", steps[5].policy, PLAN_POLICY_IGNORE_ERR);
+    check_int("plan_incr_post_step_6_kind", steps[6].kind, INCR_POST_EDGE_RELINK);
+    check_int("plan_incr_post_step_6_policy", steps[6].policy, PLAN_POLICY_BEST_EFFORT);
+    check_int("plan_incr_post_step_7_kind", steps[7].kind, INCR_POST_INCREMENTAL_DUMP);
+    check_int("plan_incr_post_step_8_kind", steps[8].kind, INCR_POST_PERSIST_HASHES);
+    check_int("plan_incr_post_step_9_kind", steps[9].kind, INCR_POST_ARTIFACT_EXPORT);
+    check_int("plan_incr_post_step_9_policy", steps[9].policy,
+              PLAN_POLICY_OPTIONAL_EXISTING_ARTIFACT);
+
+    check_int("plan_incr_post_step_count_fast",
+              cbm_rs_pipeline_incremental_post_step_count(MODE_FAST), 8);
+    check_int("plan_incr_post_steps_fast_len",
+              cbm_rs_pipeline_incremental_post_steps(MODE_FAST, steps, 10), 8);
+    check_int("plan_incr_post_fast_tail_0", steps[4].kind, INCR_POST_EDGE_RELINK);
+    check_int("plan_incr_post_fast_tail_1", steps[5].kind, INCR_POST_INCREMENTAL_DUMP);
+    check_int("plan_incr_post_fast_tail_2", steps[6].kind, INCR_POST_PERSIST_HASHES);
+    check_int("plan_incr_post_fast_tail_3", steps[7].kind, INCR_POST_ARTIFACT_EXPORT);
+    check_int("plan_incr_post_steps_null",
+              cbm_rs_pipeline_incremental_post_steps(MODE_MODERATE, NULL, 10), -1);
+    check_int("plan_incr_post_steps_short_cap",
+              cbm_rs_pipeline_incremental_post_steps(MODE_MODERATE, short_steps, 9), -1);
+    check_int("plan_incr_post_steps_negative_cap",
+              cbm_rs_pipeline_incremental_post_steps(MODE_MODERATE, steps, -1), -1);
+
+    check_int(
+        "plan_incr_extract_v2_count_sequential",
+        cbm_rs_pipeline_plan_step_count_v2(PLAN_INCREMENTAL_EXTRACT_RESOLVE, MODE_FULL, 2, 50), 4);
+    check_int("plan_incr_extract_v2_steps_sequential_len",
+              cbm_rs_pipeline_plan_steps_v2(PLAN_INCREMENTAL_EXTRACT_RESOLVE, MODE_FULL, 2, 50,
+                                            steps_v2, 4),
+              4);
+    check_int("plan_incr_extract_v2_seq_step0_kind", steps_v2[0].kind,
+              PLAN_STEP_INCREMENTAL_DEFINITIONS);
+    check_int("plan_incr_extract_v2_seq_step0_phase", steps_v2[0].phase,
+              PLAN_PHASE_INCREMENTAL_EXTRACT_RESOLVE);
+    check_int("plan_incr_extract_v2_seq_step0_policy", steps_v2[0].policy, PLAN_POLICY_IGNORE_ERR);
+    check_u32("plan_incr_extract_v2_seq_step0_gate", steps_v2[0].gate_flags, 0);
+    check_u64("plan_incr_extract_v2_seq_step0_requires", steps_v2[0].requires_mask, 0);
+    check_u32("plan_incr_extract_v2_seq_step0_effect", steps_v2[0].effect_flags,
+              PLAN_EFFECT_MUTATES_GRAPH);
+    check_int("plan_incr_extract_v2_seq_step3_kind", steps_v2[3].kind,
+              PLAN_STEP_INCREMENTAL_SEMANTIC);
+    check_u64("plan_incr_extract_v2_seq_step3_requires", steps_v2[3].requires_mask,
+              (UINT64_C(1) << (PLAN_STEP_INCREMENTAL_DEFINITIONS - 1)) |
+                  (UINT64_C(1) << (PLAN_STEP_INCREMENTAL_CALLS - 1)) |
+                  (UINT64_C(1) << (PLAN_STEP_INCREMENTAL_USAGES - 1)));
+
+    check_int(
+        "plan_incr_extract_v2_count_parallel",
+        cbm_rs_pipeline_plan_step_count_v2(PLAN_INCREMENTAL_EXTRACT_RESOLVE, MODE_FULL, 2, 51), 3);
+    check_int("plan_incr_extract_v2_steps_parallel_len",
+              cbm_rs_pipeline_plan_steps_v2(PLAN_INCREMENTAL_EXTRACT_RESOLVE, MODE_FULL, 2, 51,
+                                            steps_v2, 3),
+              3);
+    check_int("plan_incr_extract_v2_parallel_step0_kind", steps_v2[0].kind,
+              PLAN_STEP_INCREMENTAL_PARALLEL_EXTRACT);
+    check_int("plan_incr_extract_v2_parallel_step0_phase", steps_v2[0].phase,
+              PLAN_PHASE_INCREMENTAL_EXTRACT_RESOLVE);
+    check_int("plan_incr_extract_v2_parallel_step0_policy", steps_v2[0].policy,
+              PLAN_POLICY_IGNORE_ERR);
+    check_int("plan_incr_extract_v2_parallel_step2_kind", steps_v2[2].kind,
+              PLAN_STEP_INCREMENTAL_RESOLVE);
+    check_u32("plan_incr_extract_v2_parallel_step2_gate", steps_v2[2].gate_flags,
+              PLAN_GATE_NO_CROSS_LSP_PREBUILD);
+    check_u64("plan_incr_extract_v2_parallel_step2_requires", steps_v2[2].requires_mask,
+              (UINT64_C(1) << (PLAN_STEP_INCREMENTAL_PARALLEL_EXTRACT - 1)) |
+                  (UINT64_C(1) << (PLAN_STEP_INCREMENTAL_REGISTRY - 1)));
+    check_u32("plan_incr_extract_v2_parallel_step2_effect", steps_v2[2].effect_flags,
+              PLAN_EFFECT_MUTATES_GRAPH);
+    check_int("plan_incr_extract_v2_steps_short_cap",
+              cbm_rs_pipeline_plan_steps_v2(PLAN_INCREMENTAL_EXTRACT_RESOLVE, MODE_FULL, 2, 51,
+                                            short_steps_v2, 2),
+              -1);
+    check_int(
+        "plan_incr_extract_v2_steps_null",
+        cbm_rs_pipeline_plan_steps_v2(PLAN_INCREMENTAL_EXTRACT_RESOLVE, MODE_FULL, 2, 51, NULL, 3),
+        -1);
+
+    check_int("plan_sequential_v2_count_full",
+              cbm_rs_pipeline_plan_step_count_v2(PLAN_SEQUENTIAL, MODE_FULL, 9, 9), 6);
+    check_int("plan_sequential_v2_count_fast",
+              cbm_rs_pipeline_plan_step_count_v2(PLAN_SEQUENTIAL, MODE_FAST, 0, 0), 6);
+    check_int("plan_sequential_v2_steps_full_len",
+              cbm_rs_pipeline_plan_steps_v2(PLAN_SEQUENTIAL, MODE_FULL, 9, 9, steps_v2, 6), 6);
+    check_int("plan_sequential_v2_step0_kind", steps_v2[0].kind, PLAN_STEP_SEQUENTIAL_DEFINITIONS);
+    check_int("plan_sequential_v2_step0_phase", steps_v2[0].phase, PLAN_PHASE_SEQUENTIAL_EXTRACT);
+    check_int("plan_sequential_v2_step0_policy", steps_v2[0].policy, PLAN_POLICY_REQUIRED);
+    check_int("plan_sequential_v2_step0_gate", (int)steps_v2[0].gate_flags, 0);
+    check_u64("plan_sequential_v2_step0_requires", steps_v2[0].requires_mask, 0);
+    check_int("plan_sequential_v2_step0_effect", (int)steps_v2[0].effect_flags,
+              PLAN_EFFECT_MUTATES_GRAPH);
+    check_int("plan_sequential_v2_step1_kind", steps_v2[1].kind, PLAN_STEP_SEQUENTIAL_K8S);
+    check_int("plan_sequential_v2_step1_policy", steps_v2[1].policy, PLAN_POLICY_IGNORE_ERR);
+    check_u64("plan_sequential_v2_step1_requires", steps_v2[1].requires_mask,
+              UINT64_C(1) << (PLAN_STEP_SEQUENTIAL_DEFINITIONS - 1));
+    check_int("plan_sequential_v2_step2_kind", steps_v2[2].kind, PLAN_STEP_SEQUENTIAL_LSP_CROSS);
+    check_int("plan_sequential_v2_step2_policy", steps_v2[2].policy, PLAN_POLICY_IGNORE_ERR);
+    check_int("plan_sequential_v2_step2_gate", (int)steps_v2[2].gate_flags,
+              PLAN_GATE_REQUIRES_RESULT_CACHE);
+    check_u64("plan_sequential_v2_step2_requires", steps_v2[2].requires_mask,
+              (UINT64_C(1) << (PLAN_STEP_SEQUENTIAL_DEFINITIONS - 1)) |
+                  (UINT64_C(1) << (PLAN_STEP_SEQUENTIAL_K8S - 1)));
+    check_int("plan_sequential_v2_step5_kind", steps_v2[5].kind, PLAN_STEP_SEQUENTIAL_SEMANTIC);
+    check_u64("plan_sequential_v2_step5_requires", steps_v2[5].requires_mask,
+              (UINT64_C(1) << (PLAN_STEP_SEQUENTIAL_DEFINITIONS - 1)) |
+                  (UINT64_C(1) << (PLAN_STEP_SEQUENTIAL_K8S - 1)) |
+                  (UINT64_C(1) << (PLAN_STEP_SEQUENTIAL_LSP_CROSS - 1)) |
+                  (UINT64_C(1) << (PLAN_STEP_SEQUENTIAL_CALLS - 1)) |
+                  (UINT64_C(1) << (PLAN_STEP_SEQUENTIAL_USAGES - 1)));
+
+    check_int("plan_predump_v2_count_full",
+              cbm_rs_pipeline_plan_step_count_v2(PLAN_PREDUMP, MODE_FULL, 9, 9), 6);
+    check_int("plan_predump_v2_count_moderate",
+              cbm_rs_pipeline_plan_step_count_v2(PLAN_PREDUMP, MODE_MODERATE, 0, 0), 6);
+    check_int("plan_predump_v2_count_fast",
+              cbm_rs_pipeline_plan_step_count_v2(PLAN_PREDUMP, MODE_FAST, 0, 0), 4);
+    check_int("plan_predump_v2_count_advanced",
+              cbm_rs_pipeline_plan_step_count_v2(PLAN_PREDUMP, 3, 0, 0), 6);
+    check_int("plan_predump_v2_steps_full_len",
+              cbm_rs_pipeline_plan_steps_v2(PLAN_PREDUMP, MODE_FULL, 9, 9, steps_v2, 6), 6);
+    check_int("plan_predump_v2_step0_kind", steps_v2[0].kind, PLAN_STEP_PREDUMP_DECORATOR_TAGS);
+    check_int("plan_predump_v2_step0_phase", steps_v2[0].phase, PLAN_PHASE_PREDUMP);
+    check_int("plan_predump_v2_step0_policy", steps_v2[0].policy, PLAN_POLICY_REQUIRED);
+    check_int("plan_predump_v2_step0_gate", (int)steps_v2[0].gate_flags, 0);
+    check_u64("plan_predump_v2_step0_requires", steps_v2[0].requires_mask, 0);
+    check_int("plan_predump_v2_step0_effect", (int)steps_v2[0].effect_flags,
+              PLAN_EFFECT_MUTATES_GRAPH);
+    check_int("plan_predump_v2_step3_kind", steps_v2[3].kind, PLAN_STEP_PREDUMP_SIMILARITY);
+    check_int("plan_predump_v2_step3_gate", (int)steps_v2[3].gate_flags, PLAN_GATE_SKIP_FAST);
+    check_u64("plan_predump_v2_step3_requires", steps_v2[3].requires_mask,
+              (UINT64_C(1) << (PLAN_STEP_PREDUMP_DECORATOR_TAGS - 1)) |
+                  (UINT64_C(1) << (PLAN_STEP_PREDUMP_CONFIGLINK - 1)) |
+                  (UINT64_C(1) << (PLAN_STEP_PREDUMP_ROUTE_MATCH - 1)));
+    check_int("plan_predump_v2_step5_kind", steps_v2[5].kind, PLAN_STEP_PREDUMP_COMPLEXITY);
+    check_u64("plan_predump_v2_step5_requires", steps_v2[5].requires_mask,
+              (UINT64_C(1) << (PLAN_STEP_PREDUMP_DECORATOR_TAGS - 1)) |
+                  (UINT64_C(1) << (PLAN_STEP_PREDUMP_CONFIGLINK - 1)) |
+                  (UINT64_C(1) << (PLAN_STEP_PREDUMP_ROUTE_MATCH - 1)) |
+                  (UINT64_C(1) << (PLAN_STEP_PREDUMP_SIMILARITY - 1)) |
+                  (UINT64_C(1) << (PLAN_STEP_PREDUMP_SEMANTIC_EDGES - 1)));
+    check_int("plan_predump_v2_steps_fast_len",
+              cbm_rs_pipeline_plan_steps_v2(PLAN_PREDUMP, MODE_FAST, 0, 0, steps_v2, 6), 4);
+    check_int("plan_predump_v2_fast_step3_kind", steps_v2[3].kind, PLAN_STEP_PREDUMP_COMPLEXITY);
+    check_u64("plan_predump_v2_fast_step3_requires", steps_v2[3].requires_mask,
+              (UINT64_C(1) << (PLAN_STEP_PREDUMP_DECORATOR_TAGS - 1)) |
+                  (UINT64_C(1) << (PLAN_STEP_PREDUMP_CONFIGLINK - 1)) |
+                  (UINT64_C(1) << (PLAN_STEP_PREDUMP_ROUTE_MATCH - 1)));
+    check_int("plan_predump_v2_steps_null",
+              cbm_rs_pipeline_plan_steps_v2(PLAN_PREDUMP, MODE_FULL, 0, 0, NULL, 6), -1);
+    check_int("plan_predump_v2_steps_short_cap",
+              cbm_rs_pipeline_plan_steps_v2(PLAN_PREDUMP, MODE_FULL, 0, 0, short_steps_v2, 5), -1);
+    check_int("plan_predump_v2_steps_negative_cap",
+              cbm_rs_pipeline_plan_steps_v2(PLAN_PREDUMP, MODE_FULL, 0, 0, steps_v2, -1), -1);
+
+    check_int("plan_parallel_v2_count_full",
+              cbm_rs_pipeline_plan_step_count_v2(PLAN_PARALLEL_EXTRACTION, MODE_FULL, 2, 51), 7);
+    check_int("plan_parallel_v2_count_fast",
+              cbm_rs_pipeline_plan_step_count_v2(PLAN_PARALLEL_EXTRACTION, MODE_FAST, 0, 0), 7);
+    check_int(
+        "plan_parallel_v2_steps_full_len",
+        cbm_rs_pipeline_plan_steps_v2(PLAN_PARALLEL_EXTRACTION, MODE_FULL, 2, 51, steps_v2, 7), 7);
+    check_int("plan_parallel_v2_step0_kind", steps_v2[0].kind, PLAN_STEP_PARALLEL_EXTRACT);
+    check_int("plan_parallel_v2_step0_phase", steps_v2[0].phase, PLAN_PHASE_PARALLEL_EXTRACT);
+    check_int("plan_parallel_v2_step0_policy", steps_v2[0].policy, PLAN_POLICY_REQUIRED);
+    check_u32("plan_parallel_v2_step0_gate", steps_v2[0].gate_flags, 0);
+    check_u64("plan_parallel_v2_step0_requires", steps_v2[0].requires_mask, 0);
+    check_u32("plan_parallel_v2_step0_effect", steps_v2[0].effect_flags, PLAN_EFFECT_MUTATES_GRAPH);
+    check_int("plan_parallel_v2_step1_kind", steps_v2[1].kind, PLAN_STEP_PARALLEL_REGISTRY_BUILD);
+    check_int("plan_parallel_v2_step1_policy", steps_v2[1].policy, PLAN_POLICY_REQUIRED);
+    check_u64("plan_parallel_v2_step1_requires", steps_v2[1].requires_mask,
+              UINT64_C(1) << (PLAN_STEP_PARALLEL_EXTRACT - 1));
+    check_u32("plan_parallel_v2_step1_effect", steps_v2[1].effect_flags, PLAN_EFFECT_MUTATES_GRAPH);
+    check_int("plan_parallel_v2_step2_kind", steps_v2[2].kind,
+              PLAN_STEP_PARALLEL_LSP_CROSS_PREPARE);
+    check_int("plan_parallel_v2_step2_policy", steps_v2[2].policy, PLAN_POLICY_ENV_OPTIONAL);
+    check_u32("plan_parallel_v2_step2_gate", steps_v2[2].gate_flags, 0);
+    check_u64("plan_parallel_v2_step2_requires", steps_v2[2].requires_mask,
+              (UINT64_C(1) << (PLAN_STEP_PARALLEL_EXTRACT - 1)) |
+                  (UINT64_C(1) << (PLAN_STEP_PARALLEL_REGISTRY_BUILD - 1)));
+    check_u32("plan_parallel_v2_step2_effect", steps_v2[2].effect_flags, 0);
+    check_int("plan_parallel_v2_step3_kind", steps_v2[3].kind, PLAN_STEP_PARALLEL_RESOLVE);
+    check_int("plan_parallel_v2_step3_policy", steps_v2[3].policy, PLAN_POLICY_REQUIRED);
+    check_u64("plan_parallel_v2_step3_requires", steps_v2[3].requires_mask,
+              (UINT64_C(1) << (PLAN_STEP_PARALLEL_EXTRACT - 1)) |
+                  (UINT64_C(1) << (PLAN_STEP_PARALLEL_REGISTRY_BUILD - 1)) |
+                  (UINT64_C(1) << (PLAN_STEP_PARALLEL_LSP_CROSS_PREPARE - 1)));
+    check_u32("plan_parallel_v2_step3_effect", steps_v2[3].effect_flags, PLAN_EFFECT_MUTATES_GRAPH);
+    check_int("plan_parallel_v2_step6_kind", steps_v2[6].kind, PLAN_STEP_PARALLEL_K8S);
+    check_int("plan_parallel_v2_step6_policy", steps_v2[6].policy, PLAN_POLICY_IGNORE_ERR);
+    check_u64("plan_parallel_v2_step6_requires", steps_v2[6].requires_mask,
+              (UINT64_C(1) << (PLAN_STEP_PARALLEL_EXTRACT - 1)) |
+                  (UINT64_C(1) << (PLAN_STEP_PARALLEL_REGISTRY_BUILD - 1)) |
+                  (UINT64_C(1) << (PLAN_STEP_PARALLEL_LSP_CROSS_PREPARE - 1)) |
+                  (UINT64_C(1) << (PLAN_STEP_PARALLEL_RESOLVE - 1)) |
+                  (UINT64_C(1) << (PLAN_STEP_PARALLEL_INFRA_ROUTES - 1)) |
+                  (UINT64_C(1) << (PLAN_STEP_PARALLEL_INFRA_BINDINGS - 1)));
+    check_u32("plan_parallel_v2_step6_effect", steps_v2[6].effect_flags, PLAN_EFFECT_MUTATES_GRAPH);
+    check_int(
+        "plan_parallel_v2_steps_short_cap",
+        cbm_rs_pipeline_plan_steps_v2(PLAN_PARALLEL_EXTRACTION, MODE_FULL, 0, 0, short_steps_v2, 6),
+        -1);
+    check_int("plan_v2_count_unsupported",
+              cbm_rs_pipeline_plan_step_count_v2(PLAN_FULL_PIPELINE, MODE_FULL, 0, 0), -1);
+    check_int("plan_predump_v2_steps_invalid_kind",
+              cbm_rs_pipeline_plan_steps_v2(99, MODE_FULL, 0, 0, steps_v2, 6), -1);
+
     const char *full_fast =
         "macro_extraction:full_mode_only,userconfig_load:fail_open,discover:required,"
         "try_incremental_or_delete_db:existing_db_only,structure:required,"
@@ -912,6 +1261,161 @@ static void test_pipeline_plan_exports(void) {
               cbm_rs_pipeline_plan_describe(PLAN_PREDUMP, MODE_FULL, 0, 0, small, sizeof(small)),
               -1);
     check_bool("plan_small_buf_nul", small[sizeof(small) - 1] == '\0', true);
+}
+
+static void test_gbuf_mutation_metadata_exports(void) {
+    const uint32_t common_validation = CBM_GBUF_MUTATION_VALIDATION_REQUIRES_NON_NULL_CSTR |
+                                       CBM_GBUF_MUTATION_VALIDATION_ALLOWS_EMPTY_CSTR |
+                                       CBM_GBUF_MUTATION_VALIDATION_NO_ENDPOINT_LOOKUP |
+                                       CBM_GBUF_MUTATION_VALIDATION_NO_JSON_PARSE;
+    CbmRsGbufMutationMetaV1 metas[3];
+    CbmRsGbufMutationMetaV1 short_metas[2];
+    CbmRsGbufMutationValidationV1 validation;
+
+    check_int("gbuf_mut_command_count", cbm_rs_gbuf_mutation_command_count_v1(), 3);
+    check_int("gbuf_mut_commands_len", cbm_rs_gbuf_mutation_commands_v1(metas, 3), 3);
+    check_int("gbuf_mut_commands_null", cbm_rs_gbuf_mutation_commands_v1(NULL, 3), -1);
+    check_int("gbuf_mut_commands_short", cbm_rs_gbuf_mutation_commands_v1(short_metas, 2), -1);
+    check_int("gbuf_mut_commands_negative", cbm_rs_gbuf_mutation_commands_v1(metas, -1), -1);
+
+    check_int("gbuf_mut_meta0_kind", metas[0].kind, CBM_GBUF_MUTATION_UPSERT_NODE);
+    check_int("gbuf_mut_meta0_result", metas[0].result_kind, CBM_GBUF_MUTATION_RESULT_NODE_ID);
+    check_u32("gbuf_mut_meta0_required", metas[0].required_fields,
+              CBM_GBUF_MUTATION_FIELD_QUALIFIED_NAME);
+    check_u32("gbuf_mut_meta0_optional", metas[0].optional_fields,
+              CBM_GBUF_MUTATION_FIELD_LABEL | CBM_GBUF_MUTATION_FIELD_NAME |
+                  CBM_GBUF_MUTATION_FIELD_FILE_PATH | CBM_GBUF_MUTATION_FIELD_START_LINE |
+                  CBM_GBUF_MUTATION_FIELD_END_LINE | CBM_GBUF_MUTATION_FIELD_PROPERTIES_JSON);
+    check_u32("gbuf_mut_meta0_effect", metas[0].effect_flags,
+              CBM_GBUF_MUTATION_EFFECT_MUTATES_GRAPH | CBM_GBUF_MUTATION_EFFECT_ALLOCATES_ID |
+                  CBM_GBUF_MUTATION_EFFECT_UPDATES_EXISTING);
+    check_u32("gbuf_mut_meta0_validation", metas[0].validation_flags, common_validation);
+    check_u32("gbuf_mut_meta0_reserved0", metas[0].reserved0, 0);
+    check_u32("gbuf_mut_meta0_reserved1", metas[0].reserved1, 0);
+
+    check_int("gbuf_mut_meta1_kind", metas[1].kind, CBM_GBUF_MUTATION_INSERT_EDGE);
+    check_int("gbuf_mut_meta1_result", metas[1].result_kind, CBM_GBUF_MUTATION_RESULT_EDGE_ID);
+    check_u32("gbuf_mut_meta1_required", metas[1].required_fields,
+              CBM_GBUF_MUTATION_FIELD_SOURCE_ID | CBM_GBUF_MUTATION_FIELD_TARGET_ID |
+                  CBM_GBUF_MUTATION_FIELD_EDGE_TYPE);
+    check_u32("gbuf_mut_meta1_optional", metas[1].optional_fields,
+              CBM_GBUF_MUTATION_FIELD_PROPERTIES_JSON);
+    check_u32("gbuf_mut_meta1_effect", metas[1].effect_flags,
+              CBM_GBUF_MUTATION_EFFECT_MUTATES_GRAPH | CBM_GBUF_MUTATION_EFFECT_ALLOCATES_ID |
+                  CBM_GBUF_MUTATION_EFFECT_DEDUPS | CBM_GBUF_MUTATION_EFFECT_UPDATES_EXISTING);
+
+    check_int("gbuf_mut_meta2_kind", metas[2].kind, CBM_GBUF_MUTATION_DELETE_BY_FILE);
+    check_int("gbuf_mut_meta2_result", metas[2].result_kind, CBM_GBUF_MUTATION_RESULT_COUNT);
+    check_u32("gbuf_mut_meta2_required", metas[2].required_fields,
+              CBM_GBUF_MUTATION_FIELD_FILE_PATH);
+    check_u32("gbuf_mut_meta2_optional", metas[2].optional_fields, 0);
+    check_u32("gbuf_mut_meta2_effect", metas[2].effect_flags,
+              CBM_GBUF_MUTATION_EFFECT_MUTATES_GRAPH | CBM_GBUF_MUTATION_EFFECT_CASCADE_EDGES);
+
+    CbmRsGbufMutationCmdV1 upsert_empty_qn = {
+        .kind = CBM_GBUF_MUTATION_UPSERT_NODE,
+        .qualified_name = "",
+    };
+    check_int("gbuf_mut_validate_upsert_empty_qn_rc",
+              cbm_rs_gbuf_mutation_validate_v1(&upsert_empty_qn, &validation), 0);
+    check_int("gbuf_mut_validate_upsert_empty_qn_ok", validation.ok, 1);
+    check_int("gbuf_mut_validate_upsert_empty_qn_error", validation.error_code,
+              CBM_GBUF_MUTATION_ERROR_OK);
+    check_u32("gbuf_mut_validate_upsert_empty_qn_missing", validation.missing_fields, 0);
+    check_u32("gbuf_mut_validate_upsert_empty_qn_invalid", validation.invalid_fields, 0);
+    check_u32("gbuf_mut_validate_upsert_empty_qn_norm", validation.normalized_flags,
+              CBM_GBUF_MUTATION_NORMALIZED_OPTIONAL_NULL_CSTR);
+    check_u32("gbuf_mut_validate_upsert_empty_qn_reserved", validation.reserved0, 0);
+
+    CbmRsGbufMutationCmdV1 upsert_missing_qn = {.kind = CBM_GBUF_MUTATION_UPSERT_NODE};
+    check_int("gbuf_mut_validate_upsert_missing_qn_rc",
+              cbm_rs_gbuf_mutation_validate_v1(&upsert_missing_qn, &validation), 0);
+    check_int("gbuf_mut_validate_upsert_missing_qn_ok", validation.ok, 0);
+    check_int("gbuf_mut_validate_upsert_missing_qn_error", validation.error_code,
+              CBM_GBUF_MUTATION_ERROR_MISSING_FIELD);
+    check_u32("gbuf_mut_validate_upsert_missing_qn_missing", validation.missing_fields,
+              CBM_GBUF_MUTATION_FIELD_QUALIFIED_NAME);
+
+    CbmRsGbufMutationCmdV1 insert_orphan_edge = {
+        .kind = CBM_GBUF_MUTATION_INSERT_EDGE,
+        .source_id = 0,
+        .target_id = -99,
+        .edge_type = "CALLS",
+    };
+    check_int("gbuf_mut_validate_insert_orphan_rc",
+              cbm_rs_gbuf_mutation_validate_v1(&insert_orphan_edge, &validation), 0);
+    check_int("gbuf_mut_validate_insert_orphan_ok", validation.ok, 1);
+    check_u32("gbuf_mut_validate_insert_orphan_missing", validation.missing_fields, 0);
+    check_u32("gbuf_mut_validate_insert_orphan_norm", validation.normalized_flags,
+              CBM_GBUF_MUTATION_NORMALIZED_OPTIONAL_NULL_CSTR);
+
+    CbmRsGbufMutationCmdV1 insert_missing_type = {
+        .kind = CBM_GBUF_MUTATION_INSERT_EDGE,
+        .source_id = 1,
+        .target_id = 2,
+    };
+    check_int("gbuf_mut_validate_insert_missing_type_rc",
+              cbm_rs_gbuf_mutation_validate_v1(&insert_missing_type, &validation), 0);
+    check_int("gbuf_mut_validate_insert_missing_type_ok", validation.ok, 0);
+    check_u32("gbuf_mut_validate_insert_missing_type_missing", validation.missing_fields,
+              CBM_GBUF_MUTATION_FIELD_EDGE_TYPE);
+
+    CbmRsGbufMutationCmdV1 delete_file = {
+        .kind = CBM_GBUF_MUTATION_DELETE_BY_FILE,
+        .file_path = "src/main.c",
+    };
+    check_int("gbuf_mut_validate_delete_file_rc",
+              cbm_rs_gbuf_mutation_validate_v1(&delete_file, &validation), 0);
+    check_int("gbuf_mut_validate_delete_file_ok", validation.ok, 1);
+    check_int("gbuf_mut_validate_delete_file_error", validation.error_code,
+              CBM_GBUF_MUTATION_ERROR_OK);
+    check_u32("gbuf_mut_validate_delete_file_norm", validation.normalized_flags, 0);
+
+    CbmRsGbufMutationCmdV1 delete_missing_file = {.kind = CBM_GBUF_MUTATION_DELETE_BY_FILE};
+    check_int("gbuf_mut_validate_delete_missing_file_rc",
+              cbm_rs_gbuf_mutation_validate_v1(&delete_missing_file, &validation), 0);
+    check_int("gbuf_mut_validate_delete_missing_file_ok", validation.ok, 0);
+    check_u32("gbuf_mut_validate_delete_missing_file_missing", validation.missing_fields,
+              CBM_GBUF_MUTATION_FIELD_FILE_PATH);
+
+    CbmRsGbufMutationCmdV1 unknown = {.kind = 99};
+    check_int("gbuf_mut_validate_unknown_rc",
+              cbm_rs_gbuf_mutation_validate_v1(&unknown, &validation), 0);
+    check_int("gbuf_mut_validate_unknown_ok", validation.ok, 0);
+    check_int("gbuf_mut_validate_unknown_error", validation.error_code,
+              CBM_GBUF_MUTATION_ERROR_UNKNOWN_KIND);
+    check_u32("gbuf_mut_validate_unknown_invalid", validation.invalid_fields,
+              CBM_GBUF_MUTATION_FIELD_KIND);
+
+    CbmRsGbufMutationCmdV1 reserved = {
+        .kind = CBM_GBUF_MUTATION_DELETE_BY_FILE,
+        .reserved0 = 1,
+        .file_path = "src/main.c",
+    };
+    check_int("gbuf_mut_validate_reserved_rc",
+              cbm_rs_gbuf_mutation_validate_v1(&reserved, &validation), 0);
+    check_int("gbuf_mut_validate_reserved_ok", validation.ok, 0);
+    check_int("gbuf_mut_validate_reserved_error", validation.error_code,
+              CBM_GBUF_MUTATION_ERROR_INVALID_FIELD);
+    check_u32("gbuf_mut_validate_reserved_invalid", validation.invalid_fields,
+              CBM_GBUF_MUTATION_FIELD_RESERVED);
+
+    CbmRsGbufMutationCmdV1 unknown_reserved = {
+        .kind = 99,
+        .reserved0 = 1,
+    };
+    check_int("gbuf_mut_validate_unknown_reserved_rc",
+              cbm_rs_gbuf_mutation_validate_v1(&unknown_reserved, &validation), 0);
+    check_int("gbuf_mut_validate_unknown_reserved_ok", validation.ok, 0);
+    check_int("gbuf_mut_validate_unknown_reserved_error", validation.error_code,
+              CBM_GBUF_MUTATION_ERROR_UNKNOWN_KIND);
+    check_u32("gbuf_mut_validate_unknown_reserved_invalid", validation.invalid_fields,
+              CBM_GBUF_MUTATION_FIELD_KIND);
+
+    check_int("gbuf_mut_validate_null_cmd", cbm_rs_gbuf_mutation_validate_v1(NULL, &validation),
+              -1);
+    check_int("gbuf_mut_validate_null_out", cbm_rs_gbuf_mutation_validate_v1(&delete_file, NULL),
+              -1);
 }
 
 static CbmRsRegistryResolveOut resolve_registry_once(
@@ -1301,6 +1805,7 @@ int main(void) {
     test_diagnostics_exports();
     test_hash_table_exports();
     test_pipeline_plan_exports();
+    test_gbuf_mutation_metadata_exports();
     test_registry_import_map_and_bare();
     test_registry_qualified_suffix();
     test_registry_suffix_candidate_selection();

@@ -7,6 +7,26 @@
 #include "test_framework.h"
 #include "graph_buffer/graph_buffer.h"
 #include "store/store.h"
+#include <stdbool.h>
+#include <stdio.h>
+#include <string.h>
+
+static bool source_file_contains(const char *path, const char *needle) {
+    FILE *f = fopen(path, "r");
+    if (!f) {
+        return false;
+    }
+    char line[1024];
+    bool found = false;
+    while (fgets(line, sizeof(line), f)) {
+        if (strstr(line, needle)) {
+            found = true;
+            break;
+        }
+    }
+    fclose(f);
+    return found;
+}
 
 /* ── Node operations ───────────────────────────────────────────── */
 
@@ -151,6 +171,114 @@ TEST(gbuf_insert_edge) {
     ASSERT_EQ(cbm_gbuf_edge_count(gb), 1);
 
     cbm_gbuf_free(gb);
+    PASS();
+}
+
+TEST(gbuf_mutation_apply_upsert_edge_delete) {
+    cbm_gbuf_t *gb = cbm_gbuf_new("test", "/tmp");
+
+    const cbm_gbuf_mutation_cmd_t upsert_a = {
+        .kind = CBM_GBUF_MUTATION_UPSERT_NODE,
+        .label = "Function",
+        .name = "alpha",
+        .qualified_name = "pkg.alpha",
+        .file_path = "a.go",
+        .start_line = 1,
+        .end_line = 5,
+        .properties_json = "{\"lang\":\"c\"}",
+    };
+    int64_t a = cbm_gbuf_apply_mutation(gb, &upsert_a);
+    ASSERT_GT(a, 0);
+
+    int64_t b =
+        cbm_gbuf_apply_upsert_node(gb, "Function", "beta", "pkg.beta", "b.go", 10, 20, "{}");
+    ASSERT_GT(b, 0);
+    ASSERT_EQ(cbm_gbuf_node_count(gb), 2);
+
+    int64_t e = cbm_gbuf_apply_insert_edge(gb, a, b, "CALLS", "{\"via\":\"adapter\"}");
+    ASSERT_GT(e, 0);
+    ASSERT_EQ(cbm_gbuf_edge_count(gb), 1);
+
+    const cbm_gbuf_edge_t **edges = NULL;
+    int edge_count = 0;
+    ASSERT_EQ(cbm_gbuf_find_edges_by_source_type(gb, a, "CALLS", &edges, &edge_count), 0);
+    ASSERT_EQ(edge_count, 1);
+    ASSERT_STR_EQ(edges[0]->properties_json, "{\"via\":\"adapter\"}");
+
+    int deleted = cbm_gbuf_apply_delete_by_file(gb, "a.go");
+    ASSERT_EQ(deleted, 1);
+    ASSERT_EQ(cbm_gbuf_node_count(gb), 1);
+    ASSERT_EQ(cbm_gbuf_edge_count(gb), 0);
+    ASSERT_NULL(cbm_gbuf_find_by_qn(gb, "pkg.alpha"));
+    ASSERT_NOT_NULL(cbm_gbuf_find_by_qn(gb, "pkg.beta"));
+
+    cbm_gbuf_free(gb);
+    PASS();
+}
+
+TEST(gbuf_mutation_apply_validation_contract) {
+    cbm_gbuf_t *gb = cbm_gbuf_new("test", "/tmp");
+
+    ASSERT_EQ(cbm_gbuf_apply_mutation(gb, NULL), -1);
+
+    const cbm_gbuf_mutation_cmd_t unknown = {.kind = 99};
+    ASSERT_EQ(cbm_gbuf_apply_mutation(gb, &unknown), -1);
+
+    const cbm_gbuf_mutation_cmd_t reserved = {
+        .kind = CBM_GBUF_MUTATION_DELETE_BY_FILE,
+        .reserved0 = 1,
+        .file_path = "a.go",
+    };
+    ASSERT_EQ(cbm_gbuf_apply_mutation(gb, &reserved), -1);
+
+    ASSERT_EQ(cbm_gbuf_apply_upsert_node(gb, "Function", "bad", NULL, "bad.go", 1, 2, "{}"), 0);
+    ASSERT_GT(cbm_gbuf_apply_upsert_node(gb, "Function", "empty", "", "empty.go", 1, 2, "{}"), 0);
+    ASSERT_EQ(cbm_gbuf_apply_insert_edge(gb, 1, 2, NULL, "{}"), 0);
+    ASSERT_EQ(cbm_gbuf_apply_delete_by_file(gb, NULL), -1);
+
+    cbm_gbuf_free(gb);
+    PASS();
+}
+
+TEST(gbuf_mutation_adapter_callpoint_static_guard) {
+    const char *edge_files[] = {
+        "src/pipeline/pass_tests.c",          "src/pipeline/pass_usages.c",
+        "src/pipeline/pass_configlink.c",     "src/pipeline/pass_similarity.c",
+        "src/pipeline/pass_semantic_edges.c",
+    };
+    for (size_t i = 0; i < sizeof(edge_files) / sizeof(edge_files[0]); i++) {
+        ASSERT_TRUE(source_file_contains(edge_files[i], "cbm_gbuf_apply_insert_edge("));
+        ASSERT_FALSE(source_file_contains(edge_files[i], "cbm_gbuf_insert_edge("));
+    }
+
+    ASSERT_TRUE(source_file_contains("src/pipeline/pipeline.c", "cbm_gbuf_apply_upsert_node("));
+    ASSERT_TRUE(source_file_contains("src/pipeline/pipeline.c", "cbm_gbuf_apply_insert_edge("));
+    ASSERT_FALSE(source_file_contains("src/pipeline/pipeline.c", "cbm_gbuf_upsert_node("));
+    ASSERT_FALSE(source_file_contains("src/pipeline/pipeline.c", "cbm_gbuf_insert_edge("));
+
+    ASSERT_TRUE(
+        source_file_contains("src/pipeline/pass_enrichment.c", "cbm_gbuf_apply_upsert_node("));
+    ASSERT_FALSE(source_file_contains("src/pipeline/pass_enrichment.c", "cbm_gbuf_upsert_node("));
+
+    ASSERT_TRUE(source_file_contains("src/pipeline/pipeline_incremental.c",
+                                     "cbm_gbuf_apply_delete_by_file("));
+    ASSERT_TRUE(
+        source_file_contains("src/pipeline/pipeline_incremental.c", "cbm_gbuf_apply_upsert_node("));
+    ASSERT_TRUE(
+        source_file_contains("src/pipeline/pipeline_incremental.c", "cbm_gbuf_apply_insert_edge("));
+    ASSERT_FALSE(
+        source_file_contains("src/pipeline/pipeline_incremental.c", "cbm_gbuf_delete_by_file("));
+    ASSERT_FALSE(
+        source_file_contains("src/pipeline/pipeline_incremental.c", "cbm_gbuf_upsert_node("));
+    ASSERT_FALSE(
+        source_file_contains("src/pipeline/pipeline_incremental.c", "cbm_gbuf_insert_edge("));
+
+    ASSERT_TRUE(
+        source_file_contains("src/pipeline/pass_githistory.c", "cbm_gbuf_apply_upsert_node("));
+    ASSERT_TRUE(
+        source_file_contains("src/pipeline/pass_githistory.c", "cbm_gbuf_apply_insert_edge("));
+    ASSERT_FALSE(source_file_contains("src/pipeline/pass_githistory.c", "cbm_gbuf_upsert_node("));
+    ASSERT_FALSE(source_file_contains("src/pipeline/pass_githistory.c", "cbm_gbuf_insert_edge("));
     PASS();
 }
 
@@ -367,9 +495,9 @@ TEST(gbuf_upsert_empty_qn) {
 TEST(gbuf_upsert_same_qn_updates_all_fields) {
     cbm_gbuf_t *gb = cbm_gbuf_new("test", "/tmp");
     int64_t id1 = cbm_gbuf_upsert_node(gb, "Function", "old_name", "pkg.fn", "old.go", 1, 10,
-                                        "{\"k\":\"v1\"}");
+                                       "{\"k\":\"v1\"}");
     int64_t id2 = cbm_gbuf_upsert_node(gb, "Method", "new_name", "pkg.fn", "new.go", 20, 30,
-                                        "{\"k\":\"v2\"}");
+                                       "{\"k\":\"v2\"}");
     ASSERT_EQ(id1, id2);
     ASSERT_EQ(cbm_gbuf_node_count(gb), 1);
 
@@ -637,7 +765,8 @@ TEST(gbuf_merge_overlapping_qns) {
     cbm_gbuf_t *src = cbm_gbuf_new("test", "/tmp");
 
     /* dst has node with QN "pkg.fn" */
-    cbm_gbuf_upsert_node(dst, "Function", "fn_old", "pkg.fn", "old.go", 1, 10, "{\"from\":\"dst\"}");
+    cbm_gbuf_upsert_node(dst, "Function", "fn_old", "pkg.fn", "old.go", 1, 10,
+                         "{\"from\":\"dst\"}");
     cbm_gbuf_upsert_node(dst, "Function", "unique_dst", "pkg.unique_dst", "u.go", 1, 5, "{}");
 
     /* src has same QN with different fields — src should win */
@@ -940,6 +1069,9 @@ SUITE(graph_buffer) {
     RUN_TEST(gbuf_find_by_name);
     RUN_TEST(gbuf_delete_by_label);
     RUN_TEST(gbuf_insert_edge);
+    RUN_TEST(gbuf_mutation_apply_upsert_edge_delete);
+    RUN_TEST(gbuf_mutation_apply_validation_contract);
+    RUN_TEST(gbuf_mutation_adapter_callpoint_static_guard);
     RUN_TEST(gbuf_edge_dedup);
     RUN_TEST(gbuf_find_edges_by_source_type);
     RUN_TEST(gbuf_find_edges_by_target_type);

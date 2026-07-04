@@ -33,6 +33,9 @@ enum { INCR_RING_BUF = 4, INCR_RING_MASK = 3, INCR_TS_BUF = 24, INCR_WAL_BUF = 1
 #include <sys/stat.h>
 #include <stdatomic.h>
 #include <stdint.h>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 /* ── Constants ───────────────────────────────────────────────────── */
 
@@ -412,7 +415,7 @@ static int incr_restore_inbound_edges(cbm_gbuf_t *gbuf, cbm_edge_capture_t *cap)
         const cbm_gbuf_node_t *src = cbm_gbuf_find_by_qn(gbuf, s->source_qn);
         const cbm_gbuf_node_t *tgt = cbm_gbuf_find_by_qn(gbuf, s->target_qn);
         if (src && tgt) {
-            cbm_gbuf_insert_edge(gbuf, src->id, tgt->id, s->type, s->props);
+            cbm_gbuf_apply_insert_edge(gbuf, src->id, tgt->id, s->type, s->props);
             restored++;
         }
     }
@@ -531,23 +534,216 @@ static void registry_visitor(const cbm_gbuf_node_t *node, void *userdata) {
     cbm_registry_add(r, node->name, node->qualified_name, node->label);
 }
 
-/* Run parallel or sequential extract+resolve for changed files. */
-static void run_extract_resolve(cbm_pipeline_ctx_t *ctx, cbm_file_info_t *changed_files, int ci) {
-    struct timespec t;
-
-    /* Per-file LSP always runs (every mode). Cross-file LSP stays disabled in
-     * incremental regardless (cbm_parallel_resolve is called with NULL
-     * cross_registries below). */
-
-#define MIN_FILES_FOR_PARALLEL_INCR 50
-    int worker_count = cbm_default_worker_count(true);
-    bool use_parallel = (worker_count > SKIP_ONE && ci > MIN_FILES_FOR_PARALLEL_INCR);
 #ifdef CBM_USE_RUST_PIPELINE_PLAN
-    bool rust_use_parallel = false;
-    if (cbm_rust_plan_extracts_parallel(ctx->mode, worker_count, ci, &rust_use_parallel)) {
-        use_parallel = rust_use_parallel;
+typedef struct {
+    int kind;
+    const char *name;
+    uint32_t gate_flags;
+} incr_extract_plan_def_t;
+
+static uint64_t rust_plan_step_bit(int kind) {
+    if (kind <= 0 || kind > CBM_RS_PLAN_STEP_MAX_KIND) {
+        return 0;
     }
+    return UINT64_C(1) << ((uint32_t)kind - 1u);
+}
+
+static bool append_plan_name(char *buf, size_t bufsize, size_t *pos, const char *name) {
+    int written = snprintf(buf + *pos, bufsize - *pos, "%s%s", *pos > 0 ? "," : "", name);
+    if (written < 0 || (size_t)written >= bufsize - *pos) {
+        return false;
+    }
+    *pos += (size_t)written;
+    return true;
+}
+
+static bool decode_rust_incremental_extract_steps(bool use_parallel,
+                                                  const cbm_rs_pipeline_plan_step_v2_t *steps,
+                                                  int step_count, char *plan_buf,
+                                                  size_t plan_bufsize) {
+    static const incr_extract_plan_def_t sequential[] = {
+        {CBM_RS_PLAN_STEP_INCREMENTAL_DEFINITIONS, "definitions", 0},
+        {CBM_RS_PLAN_STEP_INCREMENTAL_CALLS, "calls", 0},
+        {CBM_RS_PLAN_STEP_INCREMENTAL_USAGES, "usages", 0},
+        {CBM_RS_PLAN_STEP_INCREMENTAL_SEMANTIC, "semantic", 0},
+    };
+    static const incr_extract_plan_def_t parallel[] = {
+        {CBM_RS_PLAN_STEP_INCREMENTAL_PARALLEL_EXTRACT, "incr_extract", 0},
+        {CBM_RS_PLAN_STEP_INCREMENTAL_REGISTRY, "incr_registry", 0},
+        {CBM_RS_PLAN_STEP_INCREMENTAL_RESOLVE, "incr_resolve",
+         CBM_RS_PLAN_GATE_NO_CROSS_LSP_PREBUILD},
+    };
+    const incr_extract_plan_def_t *expected = use_parallel ? parallel : sequential;
+    int expected_count = use_parallel ? (int)(sizeof(parallel) / sizeof(parallel[0]))
+                                      : (int)(sizeof(sequential) / sizeof(sequential[0]));
+    if (!steps || !plan_buf || plan_bufsize == 0 || step_count != expected_count) {
+        return false;
+    }
+
+    uint64_t seen = 0;
+    size_t pos = 0;
+    plan_buf[0] = '\0';
+    for (int i = 0; i < expected_count; i++) {
+        if (steps[i].kind != expected[i].kind ||
+            steps[i].phase != CBM_RS_PLAN_PHASE_INCREMENTAL_EXTRACT_RESOLVE ||
+            steps[i].policy != CBM_RS_PLAN_POLICY_IGNORE_ERR ||
+            steps[i].gate_flags != expected[i].gate_flags || steps[i].requires_mask != seen ||
+            steps[i].effect_flags != CBM_RS_PLAN_EFFECT_MUTATES_GRAPH) {
+            return false;
+        }
+        if (!append_plan_name(plan_buf, plan_bufsize, &pos, expected[i].name)) {
+            return false;
+        }
+        seen |= rust_plan_step_bit(expected[i].kind);
+    }
+    return true;
+}
+
+typedef struct {
+    cbm_pipeline_ctx_t *ctx;
+    cbm_file_info_t *changed_files;
+    int changed_count;
+    int worker_count;
+    _Atomic int64_t shared_ids;
+    CBMFileResult **cache;
+} incr_extract_dispatch_t;
+
+static bool incr_extract_prepare_cache(incr_extract_dispatch_t *dispatch) {
+    if (dispatch->cache) {
+        return true;
+    }
+    dispatch->cache =
+        (CBMFileResult **)calloc((size_t)dispatch->changed_count, sizeof(CBMFileResult *));
+    if (!dispatch->cache) {
+        return false;
+    }
+    atomic_init(&dispatch->shared_ids, cbm_gbuf_next_id(dispatch->ctx->gbuf));
+    return true;
+}
+
+static void incr_extract_free_cache(incr_extract_dispatch_t *dispatch) {
+    if (!dispatch->cache) {
+        return;
+    }
+    for (int j = 0; j < dispatch->changed_count; j++) {
+        if (dispatch->cache[j]) {
+            cbm_free_result(dispatch->cache[j]);
+        }
+    }
+    free(dispatch->cache);
+    dispatch->cache = NULL;
+}
+
+static bool run_rust_incremental_extract_step(int kind, incr_extract_dispatch_t *dispatch) {
+    struct timespec t;
+    switch (kind) {
+    case CBM_RS_PLAN_STEP_INCREMENTAL_DEFINITIONS:
+        cbm_pipeline_pass_definitions(dispatch->ctx, dispatch->changed_files,
+                                      dispatch->changed_count);
+        return true;
+    case CBM_RS_PLAN_STEP_INCREMENTAL_CALLS:
+        cbm_pipeline_pass_calls(dispatch->ctx, dispatch->changed_files, dispatch->changed_count);
+        return true;
+    case CBM_RS_PLAN_STEP_INCREMENTAL_USAGES:
+        cbm_pipeline_pass_usages(dispatch->ctx, dispatch->changed_files, dispatch->changed_count);
+        return true;
+    case CBM_RS_PLAN_STEP_INCREMENTAL_SEMANTIC:
+        cbm_pipeline_pass_semantic(dispatch->ctx, dispatch->changed_files, dispatch->changed_count);
+        return true;
+    case CBM_RS_PLAN_STEP_INCREMENTAL_PARALLEL_EXTRACT:
+        if (!incr_extract_prepare_cache(dispatch)) {
+            return false;
+        }
+        cbm_clock_gettime(CLOCK_MONOTONIC, &t);
+        cbm_parallel_extract(dispatch->ctx, dispatch->changed_files, dispatch->changed_count,
+                             dispatch->cache, &dispatch->shared_ids, dispatch->worker_count);
+        cbm_gbuf_set_next_id(dispatch->ctx->gbuf, atomic_load(&dispatch->shared_ids));
+        cbm_log_info("pass.timing", "pass", "incr_extract", "elapsed_ms",
+                     itoa_buf((int)elapsed_ms(t)));
+        return true;
+    case CBM_RS_PLAN_STEP_INCREMENTAL_REGISTRY:
+        if (!dispatch->cache) {
+            return false;
+        }
+        cbm_clock_gettime(CLOCK_MONOTONIC, &t);
+        cbm_build_registry_from_cache(dispatch->ctx, dispatch->changed_files,
+                                      dispatch->changed_count, dispatch->cache);
+        cbm_log_info("pass.timing", "pass", "incr_registry", "elapsed_ms",
+                     itoa_buf((int)elapsed_ms(t)));
+        return true;
+    case CBM_RS_PLAN_STEP_INCREMENTAL_RESOLVE:
+        if (!dispatch->cache) {
+            return false;
+        }
+        cbm_clock_gettime(CLOCK_MONOTONIC, &t);
+        cbm_log_info("incremental.lsp_cross", "mode", "skipped", "reason", "no_cross_lsp_prebuild");
+        cbm_parallel_resolve(dispatch->ctx, dispatch->changed_files, dispatch->changed_count,
+                             dispatch->cache, &dispatch->shared_ids, dispatch->worker_count, NULL,
+                             0, NULL, NULL /* module_def_index */,
+                             NULL /* incremental 會跳過 Tier 2 cross registry prebuild */);
+        cbm_gbuf_set_next_id(dispatch->ctx->gbuf, atomic_load(&dispatch->shared_ids));
+        cbm_log_info("pass.timing", "pass", "incr_resolve", "elapsed_ms",
+                     itoa_buf((int)elapsed_ms(t)));
+        return true;
+    default:
+        return false;
+    }
+}
+
+static bool run_rust_incremental_extract_dispatch(cbm_pipeline_ctx_t *ctx,
+                                                  cbm_file_info_t *changed_files, int ci,
+                                                  bool use_parallel, int worker_count) {
+    cbm_rs_pipeline_plan_step_v2_t rust_steps[CBM_RS_PLAN_V2_MAX_STEPS];
+    int rust_step_count = 0;
+    char rust_plan[CBM_RS_PLAN_INCREMENTAL_POST_BUF];
+    if (!cbm_rust_plan_steps_v2(CBM_RS_PLAN_INCREMENTAL_EXTRACT_RESOLVE, ctx->mode, worker_count,
+                                ci, rust_steps, CBM_RS_PLAN_V2_MAX_STEPS, &rust_step_count) ||
+        !decode_rust_incremental_extract_steps(use_parallel, rust_steps, rust_step_count, rust_plan,
+                                               sizeof(rust_plan))) {
+        return false;
+    }
+
+    cbm_log_info("rust_plan.dispatch", "phase", "incremental_extract_resolve", "passes",
+                 itoa_buf(rust_step_count), "plan", rust_plan, "source", "typed_v2");
+    if (use_parallel) {
+        cbm_log_info("incremental.mode", "mode", "parallel", "workers", itoa_buf(worker_count),
+                     "changed", itoa_buf(ci));
+    } else {
+        cbm_log_info("incremental.mode", "mode", "sequential", "changed", itoa_buf(ci));
+    }
+
+    incr_extract_dispatch_t dispatch = {
+        .ctx = ctx,
+        .changed_files = changed_files,
+        .changed_count = ci,
+        .worker_count = worker_count,
+        .cache = NULL,
+    };
+    bool ok = true;
+    for (int i = 0; i < rust_step_count; i++) {
+        if (!run_rust_incremental_extract_step(rust_steps[i].kind, &dispatch)) {
+            ok = false;
+            break;
+        }
+    }
+    incr_extract_free_cache(&dispatch);
+    return ok;
+}
 #endif
+
+static void run_sequential_incremental_extract_resolve(cbm_pipeline_ctx_t *ctx,
+                                                       cbm_file_info_t *changed_files, int ci) {
+    cbm_log_info("incremental.mode", "mode", "sequential", "changed", itoa_buf(ci));
+    cbm_pipeline_pass_definitions(ctx, changed_files, ci);
+    cbm_pipeline_pass_calls(ctx, changed_files, ci);
+    cbm_pipeline_pass_usages(ctx, changed_files, ci);
+    cbm_pipeline_pass_semantic(ctx, changed_files, ci);
+}
+
+static void run_c_incremental_extract_resolve(cbm_pipeline_ctx_t *ctx,
+                                              cbm_file_info_t *changed_files, int ci,
+                                              bool use_parallel, int worker_count) {
+    struct timespec t;
 
     if (use_parallel) {
         cbm_log_info("incremental.mode", "mode", "parallel", "workers", itoa_buf(worker_count),
@@ -569,16 +765,14 @@ static void run_extract_resolve(cbm_pipeline_ctx_t *ctx, cbm_file_info_t *change
             cbm_log_info("pass.timing", "pass", "incr_registry", "elapsed_ms",
                          itoa_buf((int)elapsed_ms(t)));
 
-            /* Incremental skips cross-file LSP precondition build — it
-             * would need all_defs from the full project, not just the
-             * changed slice. Per-file LSP (run inside cbm_extract_file)
-             * still fires; cross-file resolution is deferred to the
-             * next full re-index. Pass NULL/0/NULL to make the fused
-             * step in resolve_worker a no-op. */
+            /* Incremental 不建立 cross-file LSP 前置資料，因為它需要完整專案的
+             * all_defs，而不是只有 changed slice。per-file LSP 仍會在
+             * cbm_extract_file 內執行；cross-file resolution 延後到下一次 full re-index。
+             * 傳入 NULL/0/NULL 讓 resolve_worker 的 fused step 成為 no-op。 */
             cbm_clock_gettime(CLOCK_MONOTONIC, &t);
             cbm_parallel_resolve(ctx, changed_files, ci, cache, &shared_ids, worker_count, NULL, 0,
                                  NULL, NULL /* module_def_index */,
-                                 NULL /* cross_registries — incremental skips Tier 2 prebuild */);
+                                 NULL /* incremental 會跳過 Tier 2 cross registry prebuild */);
             cbm_gbuf_set_next_id(ctx->gbuf, atomic_load(&shared_ids));
             cbm_log_info("pass.timing", "pass", "incr_resolve", "elapsed_ms",
                          itoa_buf((int)elapsed_ms(t)));
@@ -589,14 +783,39 @@ static void run_extract_resolve(cbm_pipeline_ctx_t *ctx, cbm_file_info_t *change
                 }
             }
             free(cache);
+        } else {
+            cbm_log_warn("incremental.parallel_fallback", "reason", "cache_alloc_failed", "path",
+                         "sequential");
+            run_sequential_incremental_extract_resolve(ctx, changed_files, ci);
         }
     } else {
-        cbm_log_info("incremental.mode", "mode", "sequential", "changed", itoa_buf(ci));
-        cbm_pipeline_pass_definitions(ctx, changed_files, ci);
-        cbm_pipeline_pass_calls(ctx, changed_files, ci);
-        cbm_pipeline_pass_usages(ctx, changed_files, ci);
-        cbm_pipeline_pass_semantic(ctx, changed_files, ci);
+        run_sequential_incremental_extract_resolve(ctx, changed_files, ci);
     }
+}
+
+/* 對 changed files 執行 parallel 或 sequential extract+resolve。 */
+static void run_extract_resolve(cbm_pipeline_ctx_t *ctx, cbm_file_info_t *changed_files, int ci) {
+    /* per-file LSP 在所有模式都會執行；incremental 一律停用 cross-file LSP，
+     * 下方會以 NULL cross_registries 呼叫 cbm_parallel_resolve。 */
+
+#define MIN_FILES_FOR_PARALLEL_INCR 50
+    int worker_count = cbm_default_worker_count(true);
+    bool c_use_parallel = (worker_count > SKIP_ONE && ci > MIN_FILES_FOR_PARALLEL_INCR);
+#ifdef CBM_USE_RUST_PIPELINE_PLAN
+    bool rust_use_parallel = false;
+    if (cbm_rust_plan_extracts_parallel(ctx->mode, worker_count, ci, &rust_use_parallel)) {
+        if (run_rust_incremental_extract_dispatch(ctx, changed_files, ci, rust_use_parallel,
+                                                  worker_count)) {
+            return;
+        }
+        cbm_log_warn("rust_plan.fallback", "phase", "incremental_extract_resolve", "reason",
+                     "typed_v2_unavailable", "path", "c_heuristic");
+    } else {
+        cbm_log_warn("rust_plan.fallback", "phase", "incremental_extract_resolve", "reason",
+                     "choice_unavailable", "path", "c_heuristic");
+    }
+#endif
+    run_c_incremental_extract_resolve(ctx, changed_files, ci, c_use_parallel, worker_count);
 }
 
 /* Run post-extraction passes (tests, decorator tags, configlink). */
@@ -631,55 +850,359 @@ static void run_postpasses(cbm_pipeline_ctx_t *ctx, cbm_file_info_t *changed_fil
                      itoa_buf((int)elapsed_ms(t)));
     }
 }
-/* Delete old DB and dump merged graph + hashes to disk.
- * Mode-skipped hash rows are preserved across the rebuild so subsequent
- * reindexes can correctly distinguish "never indexed" from "indexed but
- * not visited this pass". */
-static void dump_and_persist(cbm_gbuf_t *gbuf, const char *db_path, const char *project,
-                             cbm_file_info_t *files, int file_count,
-                             const cbm_file_hash_t *mode_skipped, int mode_skipped_count,
-                             const char *repo_path) {
+
+static void run_incremental_edge_relink(cbm_gbuf_t *gbuf, cbm_edge_capture_t *edge_cap) {
+    struct timespec t;
+    cbm_clock_gettime(CLOCK_MONOTONIC, &t);
+    int relinked = incr_restore_inbound_edges(gbuf, edge_cap);
+    cbm_log_info("incremental.edge_relink", "relinked", itoa_buf(relinked), "captured",
+                 itoa_buf(edge_cap->count), "elapsed_ms", itoa_buf((int)elapsed_ms(t)));
+}
+
+typedef struct {
+    cbm_pipeline_ctx_t *ctx;
+    cbm_file_info_t *changed_files;
+    int changed_count;
+    const char *project;
+    cbm_pipeline_t *pipeline;
+    cbm_gbuf_t *gbuf;
+    cbm_edge_capture_t *edge_cap;
+    const char *db_path;
+    cbm_file_info_t *all_files;
+    int all_file_count;
+    const cbm_file_hash_t *mode_skipped;
+    int mode_skipped_count;
+    const char *repo_path;
+    int status;
+} incr_post_dispatch_t;
+
+static int g_test_next_incremental_dump_rc = 0;
+
+void cbm_pipeline_test_fail_next_incremental_dump(int rc) {
+    g_test_next_incremental_dump_rc = rc;
+}
+
+static int incremental_dump_to_sqlite(cbm_gbuf_t *gbuf, const char *db_path) {
+    if (g_test_next_incremental_dump_rc != 0) {
+        int rc = g_test_next_incremental_dump_rc;
+        g_test_next_incremental_dump_rc = 0;
+        return rc;
+    }
+    return cbm_gbuf_dump_to_sqlite(gbuf, db_path);
+}
+
+static bool incr_format_sidecar_path(char *out, size_t out_size, const char *path,
+                                     const char *suffix) {
+    int n = snprintf(out, out_size, "%s%s", path, suffix);
+    return n >= 0 && (size_t)n < out_size;
+}
+
+static void incr_unlink_sqlite_sidecars(const char *db_path) {
+    char wal[INCR_WAL_BUF];
+    char shm[INCR_WAL_BUF];
+    if (incr_format_sidecar_path(wal, sizeof(wal), db_path, "-wal")) {
+        cbm_unlink(wal);
+    }
+    if (incr_format_sidecar_path(shm, sizeof(shm), db_path, "-shm")) {
+        cbm_unlink(shm);
+    }
+}
+
+static void incr_unlink_dump_target(const char *path) {
+    cbm_unlink(path);
+    incr_unlink_sqlite_sidecars(path);
+}
+
+static int incr_replace_db_with_temp(const char *tmp_path, const char *db_path) {
+#ifdef _WIN32
+    if (!MoveFileExA(tmp_path, db_path, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        return CBM_STORE_ERR;
+    }
+    return 0;
+#else
+    return rename(tmp_path, db_path);
+#endif
+}
+
+#ifdef CBM_USE_RUST_PIPELINE_PLAN
+typedef void (*incr_post_pass_fn)(incr_post_dispatch_t *);
+
+typedef struct {
+    incr_post_pass_fn fn;
+    const char *name;
+    int kind;
+    int policy;
+    bool moderate_only;
+} incr_post_pass_def_t;
+
+static void incr_post_k8s(incr_post_dispatch_t *dispatch) {
+    cbm_pipeline_pass_k8s(dispatch->ctx, dispatch->changed_files, dispatch->changed_count);
+}
+
+static void incr_post_tests(incr_post_dispatch_t *dispatch) {
+    cbm_pipeline_pass_tests(dispatch->ctx, dispatch->changed_files, dispatch->changed_count);
+}
+
+static void incr_post_decorator_tags(incr_post_dispatch_t *dispatch) {
+    cbm_pipeline_pass_decorator_tags(dispatch->ctx->gbuf, dispatch->project);
+}
+
+static void incr_post_configlink(incr_post_dispatch_t *dispatch) {
+    cbm_pipeline_pass_configlink(dispatch->ctx);
+}
+
+static void incr_post_similarity(incr_post_dispatch_t *dispatch) {
+    cbm_pipeline_pass_similarity(dispatch->ctx);
+}
+
+static void incr_post_semantic_edges(incr_post_dispatch_t *dispatch) {
+    cbm_pipeline_pass_semantic_edges(dispatch->ctx);
+}
+#endif
+
+static void incr_post_edge_relink(incr_post_dispatch_t *dispatch) {
+    run_incremental_edge_relink(dispatch->gbuf, dispatch->edge_cap);
+}
+
+static void incr_post_incremental_dump(incr_post_dispatch_t *dispatch) {
     struct timespec t;
     cbm_clock_gettime(CLOCK_MONOTONIC, &t);
 
-    cbm_unlink(db_path);
-    char wal[INCR_WAL_BUF];
-    char shm[INCR_WAL_BUF];
-    snprintf(wal, sizeof(wal), "%s-wal", db_path);
-    snprintf(shm, sizeof(shm), "%s-shm", db_path);
-    cbm_unlink(wal);
-    cbm_unlink(shm);
+    cbm_pipeline_set_committed_counts(dispatch->pipeline, cbm_gbuf_node_count(dispatch->gbuf),
+                                      cbm_gbuf_edge_count(dispatch->gbuf));
 
-    int dump_rc = cbm_gbuf_dump_to_sqlite(gbuf, db_path);
+    char tmp_path[INCR_WAL_BUF];
+    int dump_rc = CBM_STORE_ERR;
+    if (incr_format_sidecar_path(tmp_path, sizeof(tmp_path), dispatch->db_path, ".tmp")) {
+        incr_unlink_dump_target(tmp_path);
+        dump_rc = incremental_dump_to_sqlite(dispatch->gbuf, tmp_path);
+        if (dump_rc == 0) {
+            if (incr_replace_db_with_temp(tmp_path, dispatch->db_path) == 0) {
+                incr_unlink_sqlite_sidecars(dispatch->db_path);
+            } else {
+                dump_rc = CBM_STORE_ERR;
+                cbm_log_error("pipeline.err", "phase", "incremental_replace", "rc",
+                              itoa_buf(dump_rc));
+                incr_unlink_dump_target(tmp_path);
+            }
+        } else {
+            incr_unlink_dump_target(tmp_path);
+        }
+    } else {
+        cbm_log_error("pipeline.err", "phase", "incremental_dump", "err", "tmp_path_too_long");
+    }
     cbm_log_info("incremental.dump", "rc", itoa_buf(dump_rc), "elapsed_ms",
                  itoa_buf((int)elapsed_ms(t)));
-
-    cbm_store_t *hash_store = cbm_store_open_path(db_path);
-    if (hash_store) {
-        persist_hashes(hash_store, project, files, file_count, mode_skipped, mode_skipped_count);
-
-        /* FTS5 rebuild after incremental dump.  The btree dump path bypasses
-         * any triggers that could have kept nodes_fts synchronized, so we
-         * rebuild from the nodes table here.  See the full-dump path in
-         * pipeline.c for the matching logic. */
-        cbm_store_exec(hash_store, "INSERT INTO nodes_fts(nodes_fts) VALUES('delete-all');");
-        if (cbm_store_exec(hash_store,
-                           "INSERT INTO nodes_fts(rowid, name, qualified_name, label, file_path) "
-                           "SELECT id, cbm_camel_split(name), qualified_name, label, file_path "
-                           "FROM nodes;") != CBM_STORE_OK) {
-            cbm_store_exec(hash_store,
-                           "INSERT INTO nodes_fts(rowid, name, qualified_name, label, file_path) "
-                           "SELECT id, name, qualified_name, label, file_path FROM nodes;");
-        }
-
-        cbm_store_close(hash_store);
-    }
-
-    /* Auto-update artifact if one already exists (persistence was enabled previously) */
-    if (repo_path && cbm_artifact_exists(repo_path)) {
-        cbm_artifact_export(db_path, repo_path, project, CBM_ARTIFACT_FAST);
+    if (dump_rc != 0 && dispatch->status == 0) {
+        cbm_log_error("pipeline.err", "phase", "incremental_dump", "rc", itoa_buf(dump_rc));
+        dispatch->status = dump_rc;
     }
 }
+
+static void incr_post_persist_hashes(incr_post_dispatch_t *dispatch) {
+    cbm_store_t *hash_store = cbm_store_open_path(dispatch->db_path);
+    if (!hash_store) {
+        cbm_log_warn("incremental.persist_hash_open_failed", "db", dispatch->db_path);
+        if (dispatch->status == 0) {
+            dispatch->status = CBM_STORE_ERR;
+        }
+        return;
+    }
+    persist_hashes(hash_store, dispatch->project, dispatch->all_files, dispatch->all_file_count,
+                   dispatch->mode_skipped, dispatch->mode_skipped_count);
+
+    /* FTS5 rebuild after incremental dump.  The btree dump path bypasses
+     * any triggers that could have kept nodes_fts synchronized, so we
+     * rebuild from the nodes table here.  See the full-dump path in
+     * pipeline.c for the matching logic. */
+    int fts_delete_rc =
+        cbm_store_exec(hash_store, "INSERT INTO nodes_fts(nodes_fts) VALUES('delete-all');");
+    int fts_insert_rc = cbm_store_exec(
+        hash_store, "INSERT INTO nodes_fts(rowid, name, qualified_name, label, file_path) "
+                    "SELECT id, cbm_camel_split(name), qualified_name, label, file_path "
+                    "FROM nodes;");
+    if (fts_insert_rc != CBM_STORE_OK) {
+        fts_insert_rc = cbm_store_exec(
+            hash_store, "INSERT INTO nodes_fts(rowid, name, qualified_name, label, file_path) "
+                        "SELECT id, name, qualified_name, label, file_path FROM nodes;");
+    }
+    if ((fts_delete_rc != CBM_STORE_OK || fts_insert_rc != CBM_STORE_OK) && dispatch->status == 0) {
+        cbm_log_error("pipeline.err", "phase", "incremental_persist_hashes", "rc",
+                      itoa_buf(fts_delete_rc != CBM_STORE_OK ? fts_delete_rc : fts_insert_rc));
+        dispatch->status = fts_delete_rc != CBM_STORE_OK ? fts_delete_rc : fts_insert_rc;
+    }
+
+    cbm_store_close(hash_store);
+}
+
+static void incr_post_artifact_export(incr_post_dispatch_t *dispatch) {
+    if (!dispatch->repo_path) {
+        return;
+    }
+    bool persistence = cbm_pipeline_persistence_enabled(dispatch->pipeline);
+    bool existing_artifact = cbm_artifact_exists(dispatch->repo_path);
+    if (persistence || existing_artifact) {
+        int quality = persistence ? CBM_ARTIFACT_BEST : CBM_ARTIFACT_FAST;
+        int rc =
+            cbm_artifact_export(dispatch->db_path, dispatch->repo_path, dispatch->project, quality);
+        if (persistence && rc != 0 && dispatch->status == 0) {
+            const char *err = cbm_artifact_export_last_error();
+            cbm_log_error("pipeline.err", "phase", "artifact_export", "err", err ? err : "unknown");
+            dispatch->status = rc;
+        }
+    }
+}
+
+static bool run_incremental_tail_step(int kind, incr_post_dispatch_t *dispatch) {
+    if (dispatch->status != 0 &&
+        (kind == CBM_RS_INCR_POST_PERSIST_HASHES || kind == CBM_RS_INCR_POST_ARTIFACT_EXPORT)) {
+        cbm_log_warn("incremental.tail_skip", "kind", itoa_buf(kind), "reason", "prior_error");
+        return true;
+    }
+    switch (kind) {
+    case CBM_RS_INCR_POST_EDGE_RELINK:
+        incr_post_edge_relink(dispatch);
+        return true;
+    case CBM_RS_INCR_POST_INCREMENTAL_DUMP:
+        incr_post_incremental_dump(dispatch);
+        return true;
+    case CBM_RS_INCR_POST_PERSIST_HASHES:
+        incr_post_persist_hashes(dispatch);
+        return true;
+    case CBM_RS_INCR_POST_ARTIFACT_EXPORT:
+        incr_post_artifact_export(dispatch);
+        return true;
+    default:
+        return false;
+    }
+}
+
+static void run_incremental_tail_fixed(incr_post_dispatch_t *dispatch) {
+    run_incremental_tail_step(CBM_RS_INCR_POST_EDGE_RELINK, dispatch);
+    run_incremental_tail_step(CBM_RS_INCR_POST_INCREMENTAL_DUMP, dispatch);
+    run_incremental_tail_step(CBM_RS_INCR_POST_PERSIST_HASHES, dispatch);
+    run_incremental_tail_step(CBM_RS_INCR_POST_ARTIFACT_EXPORT, dispatch);
+}
+
+#ifdef CBM_USE_RUST_PIPELINE_PLAN
+static const incr_post_pass_def_t incr_post_passes[] = {
+    {incr_post_k8s, "k8s", CBM_RS_INCR_POST_K8S, CBM_RS_PLAN_POLICY_IGNORE_ERR, false},
+    {incr_post_tests, "incr_tests", CBM_RS_INCR_POST_TESTS, CBM_RS_PLAN_POLICY_IGNORE_ERR, false},
+    {incr_post_decorator_tags, "incr_decorator_tags", CBM_RS_INCR_POST_DECORATOR_TAGS,
+     CBM_RS_PLAN_POLICY_IGNORE_ERR, false},
+    {incr_post_configlink, "incr_configlink", CBM_RS_INCR_POST_CONFIGLINK,
+     CBM_RS_PLAN_POLICY_IGNORE_ERR, false},
+    {incr_post_similarity, "incr_similarity", CBM_RS_INCR_POST_SIMILARITY,
+     CBM_RS_PLAN_POLICY_IGNORE_ERR, true},
+    {incr_post_semantic_edges, "incr_semantic_edges", CBM_RS_INCR_POST_SEMANTIC_EDGES,
+     CBM_RS_PLAN_POLICY_IGNORE_ERR, true},
+    {incr_post_edge_relink, "edge_relink", CBM_RS_INCR_POST_EDGE_RELINK,
+     CBM_RS_PLAN_POLICY_BEST_EFFORT, false},
+    {incr_post_incremental_dump, "incremental_dump", CBM_RS_INCR_POST_INCREMENTAL_DUMP,
+     CBM_RS_PLAN_POLICY_BEST_EFFORT, false},
+    {incr_post_persist_hashes, "persist_hashes", CBM_RS_INCR_POST_PERSIST_HASHES,
+     CBM_RS_PLAN_POLICY_BEST_EFFORT, false},
+    {incr_post_artifact_export, "artifact_export", CBM_RS_INCR_POST_ARTIFACT_EXPORT,
+     CBM_RS_PLAN_POLICY_OPTIONAL_EXISTING_ARTIFACT, false},
+};
+enum { INCR_POST_PASS_COUNT = (int)(sizeof(incr_post_passes) / sizeof(incr_post_passes[0])) };
+
+static int find_incr_post_pass(int kind) {
+    for (int i = 0; i < INCR_POST_PASS_COUNT; i++) {
+        if (incr_post_passes[i].kind == kind) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static int expected_incr_post_prefix_count(int mode) {
+    int prefix_all = INCR_POST_PASS_COUNT - 4;
+    return mode <= CBM_MODE_MODERATE ? prefix_all : prefix_all - PAIR_LEN;
+}
+
+static bool incr_post_step_eq(cbm_rs_pipeline_plan_step_t step, int kind, int policy) {
+    return step.kind == kind && step.policy == policy;
+}
+
+static bool decode_rust_incremental_post_steps(const cbm_rs_pipeline_plan_step_t *steps,
+                                               int step_count, int mode,
+                                               const incr_post_pass_def_t **ordered, int *out_count,
+                                               bool *out_edge_relink) {
+    bool seen[INCR_POST_PASS_COUNT] = {false};
+    int expected_prefix = expected_incr_post_prefix_count(mode);
+    int expected_total = expected_prefix + 4;
+    if (!steps || !ordered || !out_count || !out_edge_relink || step_count != expected_total) {
+        return false;
+    }
+    *out_count = 0;
+    *out_edge_relink = false;
+
+    for (int i = 0; i < expected_prefix; i++) {
+        int pass_idx = find_incr_post_pass(steps[i].kind);
+        if (pass_idx != i || seen[pass_idx]) {
+            return false;
+        }
+        const incr_post_pass_def_t *pass = &incr_post_passes[pass_idx];
+        if (steps[i].policy != pass->policy || (pass->moderate_only && mode > CBM_MODE_MODERATE)) {
+            return false;
+        }
+        seen[pass_idx] = true;
+        ordered[(*out_count)++] = pass;
+    }
+
+    if (!incr_post_step_eq(steps[expected_prefix], CBM_RS_INCR_POST_EDGE_RELINK,
+                           CBM_RS_PLAN_POLICY_BEST_EFFORT) ||
+        !incr_post_step_eq(steps[expected_prefix + 1], CBM_RS_INCR_POST_INCREMENTAL_DUMP,
+                           CBM_RS_PLAN_POLICY_BEST_EFFORT) ||
+        !incr_post_step_eq(steps[expected_prefix + 2], CBM_RS_INCR_POST_PERSIST_HASHES,
+                           CBM_RS_PLAN_POLICY_BEST_EFFORT) ||
+        !incr_post_step_eq(steps[expected_prefix + 3], CBM_RS_INCR_POST_ARTIFACT_EXPORT,
+                           CBM_RS_PLAN_POLICY_OPTIONAL_EXISTING_ARTIFACT)) {
+        return false;
+    }
+
+    *out_edge_relink = true;
+    return *out_count == expected_prefix;
+}
+
+static void run_incremental_post_pass(const incr_post_pass_def_t *pass,
+                                      incr_post_dispatch_t *dispatch) {
+    struct timespec t;
+    cbm_clock_gettime(CLOCK_MONOTONIC, &t);
+    pass->fn(dispatch);
+    cbm_log_info("pass.timing", "pass", pass->name, "elapsed_ms", itoa_buf((int)elapsed_ms(t)));
+}
+
+static bool run_rust_incremental_postpasses(cbm_pipeline_ctx_t *ctx,
+                                            incr_post_dispatch_t *dispatch) {
+    cbm_rs_pipeline_plan_step_t steps[CBM_RS_INCR_POST_MAX_STEPS];
+    const incr_post_pass_def_t *ordered[INCR_POST_PASS_COUNT];
+    int step_count = 0;
+    int count = 0;
+    bool edge_relink = false;
+    if (!cbm_rust_plan_incremental_post_steps(ctx->mode, steps, CBM_RS_INCR_POST_MAX_STEPS,
+                                              &step_count) ||
+        !decode_rust_incremental_post_steps(steps, step_count, ctx->mode, ordered, &count,
+                                            &edge_relink)) {
+        return false;
+    }
+
+    cbm_log_info(
+        "rust_plan.dispatch", "phase", "incremental_post", "passes", itoa_buf(step_count), "tail",
+        edge_relink ? "edge_relink,incremental_dump,persist_hashes,artifact_export" : "none",
+        "source", "typed_steps");
+    for (int i = 0; i < count; i++) {
+        run_incremental_post_pass(ordered[i], dispatch);
+    }
+    for (int i = count; i < step_count; i++) {
+        if (!run_incremental_tail_step(steps[i].kind, dispatch)) {
+            return false;
+        }
+    }
+    return true;
+}
+#endif
 
 /* ── Incremental pipeline entry point ────────────────────────────── */
 
@@ -797,10 +1320,10 @@ int cbm_pipeline_run_incremental(cbm_pipeline_t *p, const char *db_path, cbm_fil
     /* Step 2: Purge stale nodes */
     cbm_clock_gettime(CLOCK_MONOTONIC, &t);
     for (int i = 0; i < ci; i++) {
-        cbm_gbuf_delete_by_file(existing, changed_files[i].rel_path);
+        cbm_gbuf_apply_delete_by_file(existing, changed_files[i].rel_path);
     }
     for (int i = 0; i < deleted_count; i++) {
-        cbm_gbuf_delete_by_file(existing, deleted[i]);
+        cbm_gbuf_apply_delete_by_file(existing, deleted[i]);
         free(deleted[i]);
     }
     free(deleted);
@@ -828,43 +1351,60 @@ int cbm_pipeline_run_incremental(cbm_pipeline_t *p, const char *db_path, cbm_fil
     for (int i = 0; i < ci; i++) {
         char *file_qn = cbm_pipeline_fqn_compute(project, changed_files[i].rel_path, "__file__");
         if (file_qn) {
-            cbm_gbuf_upsert_node(existing, "File", changed_files[i].rel_path, file_qn,
-                                 changed_files[i].rel_path, 0, 0, "{}");
+            cbm_gbuf_apply_upsert_node(existing, "File", changed_files[i].rel_path, file_qn,
+                                       changed_files[i].rel_path, 0, 0, "{}");
             free(file_qn);
         }
     }
 
     run_extract_resolve(&ctx, changed_files, ci);
+    incr_post_dispatch_t tail_dispatch = {
+        .ctx = &ctx,
+        .changed_files = changed_files,
+        .changed_count = ci,
+        .project = project,
+        .pipeline = p,
+        .gbuf = existing,
+        .edge_cap = &edge_cap,
+        .db_path = db_path,
+        .all_files = files,
+        .all_file_count = file_count,
+        .mode_skipped = mode_skipped,
+        .mode_skipped_count = mode_skipped_count,
+        .repo_path = cbm_pipeline_repo_path(p),
+        .status = 0,
+    };
+    bool tail_done = false;
+#ifdef CBM_USE_RUST_PIPELINE_PLAN
+    if (run_rust_incremental_postpasses(&ctx, &tail_dispatch)) {
+        tail_done = true;
+    } else {
+        cbm_log_warn("rust_plan.fallback", "phase", "incremental_post", "reason",
+                     "typed_steps_unavailable", "path", "c_postpasses");
+        cbm_pipeline_pass_k8s(&ctx, changed_files, ci);
+        run_postpasses(&ctx, changed_files, ci, project);
+    }
+#else
     cbm_pipeline_pass_k8s(&ctx, changed_files, ci);
     run_postpasses(&ctx, changed_files, ci, project);
+#endif
 
     free(changed_files);
     cbm_registry_free(registry);
     cbm_path_alias_collection_free(path_aliases);
 
-    /* Re-link inbound cross-file edges that the purge orphaned. Runs after
-     * re-resolution AND post-passes so the freshly re-created target nodes
-     * exist and nothing downstream clobbers the restored edges; insert_edge
-     * dedups, so any edge the resolver already recreated is a no-op. */
-    cbm_clock_gettime(CLOCK_MONOTONIC, &t);
-    int relinked = incr_restore_inbound_edges(existing, &edge_cap);
-    cbm_log_info("incremental.edge_relink", "relinked", itoa_buf(relinked), "captured",
-                 itoa_buf(edge_cap.count), "elapsed_ms", itoa_buf((int)elapsed_ms(t)));
+    if (!tail_done) {
+        run_incremental_tail_fixed(&tail_dispatch);
+    }
     incr_free_edge_capture(&edge_cap);
 
-    /* Step 7: Dump to disk (preserves mode-skipped hash rows so the next
-     * reindex can correctly classify those files instead of seeing them
-     * as never-existed; also exports a fast-mode artifact when one is
-     * already present alongside the repo). */
-    /* Record committed counts before dump_and_persist (whose dump frees the
-     * gbuf node index, zeroing the count) so the #334 plausibility gate also
-     * covers incremental reindexes, not just full ones. */
-    cbm_pipeline_set_committed_counts(p, cbm_gbuf_node_count(existing),
-                                      cbm_gbuf_edge_count(existing));
-    dump_and_persist(existing, db_path, project, files, file_count, mode_skipped,
-                     mode_skipped_count, cbm_pipeline_repo_path(p));
+    int tail_status = tail_dispatch.status;
     free_mode_skipped(mode_skipped, mode_skipped_count);
     cbm_gbuf_free(existing);
+
+    if (tail_status != 0) {
+        return tail_status;
+    }
 
     cbm_log_info("incremental.done", "elapsed_ms", itoa_buf((int)elapsed_ms(t0)));
     return 0;

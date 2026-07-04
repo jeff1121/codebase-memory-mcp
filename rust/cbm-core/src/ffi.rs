@@ -17,6 +17,7 @@ use crate::foundation::hash_table::HashTable;
 use crate::foundation::platform;
 use crate::foundation::str_intern::CInternPool;
 use crate::foundation::str_util;
+use crate::pipeline::graph_mutation;
 use crate::pipeline::plan::{self, PlanKind};
 use crate::pipeline::registry::{Entry as RegistryEntry, Registry};
 
@@ -54,6 +55,60 @@ pub struct CbmRsDiagSnapshot {
     pub fd_count: c_int,
     pub queries: CbmRsDiagQuerySnapshot,
     pub pid: c_int,
+}
+
+#[repr(C)]
+pub struct CbmRsPipelinePlanStep {
+    pub kind: c_int,
+    pub policy: c_int,
+}
+
+#[repr(C)]
+pub struct CbmRsPipelinePlanStepV2 {
+    pub kind: c_int,
+    pub phase: c_int,
+    pub policy: c_int,
+    pub gate_flags: u32,
+    pub requires_mask: u64,
+    pub effect_flags: u32,
+}
+
+#[repr(C)]
+pub struct CbmRsGbufMutationMetaV1 {
+    pub kind: c_int,
+    pub result_kind: c_int,
+    pub required_fields: u32,
+    pub optional_fields: u32,
+    pub effect_flags: u32,
+    pub validation_flags: u32,
+    pub reserved0: u32,
+    pub reserved1: u32,
+}
+
+#[repr(C)]
+pub struct CbmRsGbufMutationCmdV1 {
+    pub kind: c_int,
+    pub reserved0: c_int,
+    pub label: *const c_char,
+    pub name: *const c_char,
+    pub qualified_name: *const c_char,
+    pub file_path: *const c_char,
+    pub start_line: c_int,
+    pub end_line: c_int,
+    pub source_id: i64,
+    pub target_id: i64,
+    pub edge_type: *const c_char,
+    pub properties_json: *const c_char,
+}
+
+#[repr(C)]
+pub struct CbmRsGbufMutationValidationV1 {
+    pub ok: c_int,
+    pub error_code: c_int,
+    pub missing_fields: u32,
+    pub invalid_fields: u32,
+    pub normalized_flags: u32,
+    pub reserved0: u32,
 }
 
 pub struct CbmRsRegistryHandle {
@@ -331,6 +386,159 @@ pub unsafe extern "C" fn cbm_rs_pipeline_plan_describe(
     };
     let output = plan::describe(kind, mode, worker_count, file_count);
     unsafe { write_c_output_i32(buf, bufsize, Some(output.as_bytes())) }
+}
+
+#[no_mangle]
+pub extern "C" fn cbm_rs_pipeline_incremental_post_step_count(mode: c_int) -> c_int {
+    plan::incremental_post_steps(mode).len() as c_int
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `out` 必須非 null，且指向至少 `cap` 個 `CbmRsPipelinePlanStep` 的可寫陣列。
+/// cap 不足或 out 為 null 時回傳 `-1`；成功時回傳實際 step 數。
+pub unsafe extern "C" fn cbm_rs_pipeline_incremental_post_steps(
+    mode: c_int,
+    out: *mut CbmRsPipelinePlanStep,
+    cap: c_int,
+) -> c_int {
+    if out.is_null() || cap < 0 {
+        return -1;
+    }
+    let steps = plan::incremental_post_steps(mode);
+    if cap < steps.len() as c_int {
+        return -1;
+    }
+    let out = unsafe { slice::from_raw_parts_mut(out, steps.len()) };
+    for (dst, step) in out.iter_mut().zip(steps) {
+        dst.kind = step.kind as c_int;
+        dst.policy = step.policy as c_int;
+    }
+    out.len() as c_int
+}
+
+#[no_mangle]
+pub extern "C" fn cbm_rs_pipeline_plan_step_count_v2(
+    kind: c_int,
+    mode: c_int,
+    worker_count: c_int,
+    file_count: c_int,
+) -> c_int {
+    let Some(kind) = PlanKind::from_i32(kind) else {
+        return -1;
+    };
+    let Some(steps) = plan::steps_v2(kind, mode, worker_count, file_count) else {
+        return -1;
+    };
+    steps.len() as c_int
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `out` 必須非 null，且指向至少 `cap` 個 `CbmRsPipelinePlanStepV2` 的可寫陣列。
+/// cap 不足、out 為 null、未知或尚未支援的 plan kind 時回傳 `-1`；成功時回傳實際 step 數。
+pub unsafe extern "C" fn cbm_rs_pipeline_plan_steps_v2(
+    kind: c_int,
+    mode: c_int,
+    worker_count: c_int,
+    file_count: c_int,
+    out: *mut CbmRsPipelinePlanStepV2,
+    cap: c_int,
+) -> c_int {
+    if out.is_null() || cap < 0 {
+        return -1;
+    }
+    let Some(kind) = PlanKind::from_i32(kind) else {
+        return -1;
+    };
+    let Some(steps) = plan::steps_v2(kind, mode, worker_count, file_count) else {
+        return -1;
+    };
+    if cap < steps.len() as c_int {
+        return -1;
+    }
+    let out = unsafe { slice::from_raw_parts_mut(out, steps.len()) };
+    for (dst, step) in out.iter_mut().zip(steps) {
+        dst.kind = step.kind as c_int;
+        dst.phase = step.phase as c_int;
+        dst.policy = step.policy as c_int;
+        dst.gate_flags = step.gate_flags;
+        dst.requires_mask = step.requires_mask;
+        dst.effect_flags = step.effect_flags;
+    }
+    out.len() as c_int
+}
+
+#[no_mangle]
+pub extern "C" fn cbm_rs_gbuf_mutation_command_count_v1() -> c_int {
+    graph_mutation::command_metas().len() as c_int
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `out` 必須非 null，且指向至少 `cap` 個 `CbmRsGbufMutationMetaV1` 的可寫陣列。
+/// cap 不足或 out 為 null 時回傳 `-1`；成功時回傳實際 command 數。
+pub unsafe extern "C" fn cbm_rs_gbuf_mutation_commands_v1(
+    out: *mut CbmRsGbufMutationMetaV1,
+    cap: c_int,
+) -> c_int {
+    if out.is_null() || cap < 0 {
+        return -1;
+    }
+    let metas = graph_mutation::command_metas();
+    if cap < metas.len() as c_int {
+        return -1;
+    }
+    let out = unsafe { slice::from_raw_parts_mut(out, metas.len()) };
+    for (dst, meta) in out.iter_mut().zip(metas) {
+        dst.kind = meta.kind as c_int;
+        dst.result_kind = meta.result_kind as c_int;
+        dst.required_fields = meta.required_fields;
+        dst.optional_fields = meta.optional_fields;
+        dst.effect_flags = meta.effect_flags;
+        dst.validation_flags = meta.validation_flags;
+        dst.reserved0 = 0;
+        dst.reserved1 = 0;
+    }
+    out.len() as c_int
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `cmd` 必須非 null，且指向有效的 `CbmRsGbufMutationCmdV1`；`out` 必須非
+/// null，且指向可寫的 `CbmRsGbufMutationValidationV1`。此 API 只驗證
+/// command shape，不保存 C 指標，也不呼叫 graph-buffer mutation。
+pub unsafe extern "C" fn cbm_rs_gbuf_mutation_validate_v1(
+    cmd: *const CbmRsGbufMutationCmdV1,
+    out: *mut CbmRsGbufMutationValidationV1,
+) -> c_int {
+    if cmd.is_null() || out.is_null() {
+        return -1;
+    }
+    let cmd = unsafe { &*cmd };
+    let validation = graph_mutation::validate(graph_mutation::MutationCommandShape {
+        kind: cmd.kind,
+        reserved0: cmd.reserved0,
+        has_label: !cmd.label.is_null(),
+        has_name: !cmd.name.is_null(),
+        has_qualified_name: !cmd.qualified_name.is_null(),
+        has_file_path: !cmd.file_path.is_null(),
+        has_edge_type: !cmd.edge_type.is_null(),
+        has_properties_json: !cmd.properties_json.is_null(),
+    });
+    unsafe {
+        (*out).ok = validation.ok as c_int;
+        (*out).error_code = validation.error_code;
+        (*out).missing_fields = validation.missing_fields;
+        (*out).invalid_fields = validation.invalid_fields;
+        (*out).normalized_flags = validation.normalized_flags;
+        (*out).reserved0 = 0;
+    }
+    0
 }
 
 #[no_mangle]

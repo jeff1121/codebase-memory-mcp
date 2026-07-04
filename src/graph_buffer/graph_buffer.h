@@ -126,6 +126,95 @@ void cbm_gbuf_foreach_edge(const cbm_gbuf_t *gb, cbm_gbuf_edge_visitor_fn fn, vo
 int64_t cbm_gbuf_insert_edge(cbm_gbuf_t *gb, int64_t source_id, int64_t target_id, const char *type,
                              const char *properties_json);
 
+/* ── Mutation command adapter ───────────────────────────────────── */
+
+typedef enum {
+    CBM_GBUF_MUTATION_UPSERT_NODE = 1,
+    CBM_GBUF_MUTATION_INSERT_EDGE = 2,
+    CBM_GBUF_MUTATION_DELETE_BY_FILE = 3,
+} cbm_gbuf_mutation_kind_t;
+
+typedef enum {
+    CBM_GBUF_MUTATION_RESULT_NODE_ID = 1,
+    CBM_GBUF_MUTATION_RESULT_EDGE_ID = 2,
+    CBM_GBUF_MUTATION_RESULT_COUNT = 3,
+} cbm_gbuf_mutation_result_kind_t;
+
+enum {
+    CBM_GBUF_MUTATION_FIELD_LABEL = 1u << 0,
+    CBM_GBUF_MUTATION_FIELD_NAME = 1u << 1,
+    CBM_GBUF_MUTATION_FIELD_QUALIFIED_NAME = 1u << 2,
+    CBM_GBUF_MUTATION_FIELD_FILE_PATH = 1u << 3,
+    CBM_GBUF_MUTATION_FIELD_START_LINE = 1u << 4,
+    CBM_GBUF_MUTATION_FIELD_END_LINE = 1u << 5,
+    CBM_GBUF_MUTATION_FIELD_SOURCE_ID = 1u << 6,
+    CBM_GBUF_MUTATION_FIELD_TARGET_ID = 1u << 7,
+    CBM_GBUF_MUTATION_FIELD_EDGE_TYPE = 1u << 8,
+    CBM_GBUF_MUTATION_FIELD_PROPERTIES_JSON = 1u << 9,
+    CBM_GBUF_MUTATION_FIELD_KIND = 1u << 30,
+    CBM_GBUF_MUTATION_FIELD_RESERVED = 1u << 31
+};
+
+enum {
+    CBM_GBUF_MUTATION_EFFECT_MUTATES_GRAPH = 1u << 0,
+    /* 這些 effect flags 描述 command 可能造成的副作用；dedup 命中時 insert edge
+     * 可能只回傳既有 ID，且只有非空 properties 會更新既有 edge。 */
+    CBM_GBUF_MUTATION_EFFECT_ALLOCATES_ID = 1u << 1,
+    CBM_GBUF_MUTATION_EFFECT_DEDUPS = 1u << 2,
+    CBM_GBUF_MUTATION_EFFECT_CASCADE_EDGES = 1u << 3,
+    CBM_GBUF_MUTATION_EFFECT_UPDATES_EXISTING = 1u << 4
+};
+
+enum {
+    CBM_GBUF_MUTATION_VALIDATION_REQUIRES_NON_NULL_CSTR = 1u << 0,
+    CBM_GBUF_MUTATION_VALIDATION_ALLOWS_EMPTY_CSTR = 1u << 1,
+    CBM_GBUF_MUTATION_VALIDATION_NO_ENDPOINT_LOOKUP = 1u << 2,
+    CBM_GBUF_MUTATION_VALIDATION_NO_JSON_PARSE = 1u << 3
+};
+
+enum { CBM_GBUF_MUTATION_NORMALIZED_OPTIONAL_NULL_CSTR = 1u << 0 };
+
+enum {
+    CBM_GBUF_MUTATION_ERROR_OK = 0,
+    CBM_GBUF_MUTATION_ERROR_UNKNOWN_KIND = 1,
+    CBM_GBUF_MUTATION_ERROR_MISSING_FIELD = 2,
+    CBM_GBUF_MUTATION_ERROR_INVALID_FIELD = 3
+};
+
+typedef struct {
+    int kind;
+    int reserved0;
+    const char *label;
+    const char *name;
+    const char *qualified_name;
+    const char *file_path;
+    int start_line;
+    int end_line;
+    int64_t source_id;
+    int64_t target_id;
+    const char *edge_type;
+    const char *properties_json;
+} cbm_gbuf_mutation_cmd_t;
+
+/* 同步套用一個 graph-buffer mutation command。
+ * command 內的字串只在呼叫期間借用；底層 graph buffer API 會複製需要保存的值。
+ * scalar 欄位（例如 source_id/target_id）是 ABI 固定欄位，因此 validation 只能驗證
+ * command shape，不能判斷呼叫端是否以語意有效的 ID 填入。
+ * 回傳值沿用底層操作：
+ * - upsert/insert 回傳 temp ID，錯誤時回傳 0
+ * - delete-by-file 回傳刪除數，錯誤時回傳 -1
+ * 未知 kind 或非零 reserved 欄位回傳 -1。 */
+int64_t cbm_gbuf_apply_mutation(cbm_gbuf_t *gb, const cbm_gbuf_mutation_cmd_t *cmd);
+
+int64_t cbm_gbuf_apply_upsert_node(cbm_gbuf_t *gb, const char *label, const char *name,
+                                   const char *qualified_name, const char *file_path,
+                                   int start_line, int end_line, const char *properties_json);
+
+int64_t cbm_gbuf_apply_insert_edge(cbm_gbuf_t *gb, int64_t source_id, int64_t target_id,
+                                   const char *type, const char *properties_json);
+
+int cbm_gbuf_apply_delete_by_file(cbm_gbuf_t *gb, const char *file_path);
+
 /* Find edges from source_id with given type.
  * Sets *out and *count. Caller does NOT free. */
 int cbm_gbuf_find_edges_by_source_type(const cbm_gbuf_t *gb, int64_t source_id, const char *type,

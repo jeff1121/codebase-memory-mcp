@@ -2,7 +2,7 @@
 
 Contributions are welcome. This guide covers setup, testing, and PR guidelines.
 
-> **Important**: This project is a **pure C binary** (rewritten from Go in v0.5.0). Please submit C code, not Go. Go PRs may be ported but cannot be merged directly.
+> **Important**: The default product binary is still C (rewritten from Go in v0.5.0). Rust contributions are accepted only for the opt-in slices under `rust/` and `CBM_USE_RUST_*`; Go PRs may be ported but cannot be merged directly.
 
 ## Build from Source
 
@@ -26,7 +26,7 @@ The binary is output to `build/c/codebase-memory-mcp`.
 scripts/test.sh
 ```
 
-This builds with ASan + UBSan and runs all tests (~2040 cases). Key test files:
+This builds with ASan + UBSan and runs the full local C regression suite; when Cargo is available and `CBM_SKIP_RUST` is not set, it also runs the Rust refactor gates wired into `scripts/test.sh`. Key test files:
 - `tests/test_pipeline.c` — pipeline integration tests
 - `tests/test_httplink.c` — HTTP route extraction and linking
 - `tests/test_mcp.c` — MCP protocol and tool handler tests
@@ -38,7 +38,7 @@ This builds with ASan + UBSan and runs all tests (~2040 cases). Key test files:
 scripts/lint.sh
 ```
 
-Runs clang-tidy, cppcheck, and clang-format. All must pass before committing (also enforced by pre-commit hook).
+Runs clang-tidy, cppcheck, clang-format, no-skip checks, and local Rust lint when Cargo is available. CI's lint job sets `CBM_SKIP_RUST=1`; Rust lint is enforced in the dedicated Rust gate.
 
 ## Run Security Audit
 
@@ -46,7 +46,7 @@ Runs clang-tidy, cppcheck, and clang-format. All must pass before committing (al
 make -f Makefile.cbm security
 ```
 
-Runs 8 security layers: static allow-list audit, binary string scan, UI audit, install audit, network egress test, MCP robustness (fuzz), vendored dependency integrity, and frontend integrity.
+Runs the local security target: static allow-list audit, binary string scan, UI audit, install audit, network egress test, MCP robustness fuzzing, vendored dependency integrity, and Rust source/dependency security gates. Full release/smoke verification includes the additional binary smoke hardening layer before publishing.
 
 ## Rust Core (experimental, opt-in)
 
@@ -57,8 +57,8 @@ tracked in [`Tasks.md`](Tasks.md)). It is **never linked into the default build*
 it only participates through explicit `CBM_USE_RUST_*` opt-in flags.
 
 ```bash
-scripts/rust-check.sh                       # cargo fmt + clippy + test + FFI smoke
-make -f Makefile.cbm rust-ci-tests          # all Rust gates (lint, unit, FFI, opt-in parity)
+scripts/rust-check.sh                       # fmt + clippy + workspace tests + FFI + opt-in/parity gates
+make -f Makefile.cbm rust-ci-tests          # Rust lint/unit/FFI/opt-in/parity subset
 make -f Makefile.cbm rust-language-graph-parity   # default-C vs Rust-opt-in graph parity
 ```
 
@@ -80,7 +80,7 @@ filesystem call on the Rust side must be added to
 src/
   foundation/       Arena allocator, hash table, string utils, platform compat
   store/            SQLite graph storage (WAL mode, FTS5)
-  cypher/           Cypher query → SQL translation
+  cypher/           Cypher parser, planner, and graph query executor
   mcp/              MCP server (JSON-RPC 2.0 over stdio, 14 tools)
   pipeline/         Multi-pass indexing pipeline
     pass_*.c        Individual pipeline passes (definitions, calls, usages, etc.)
@@ -89,7 +89,7 @@ src/
   watcher/          Git-based background auto-sync
   cli/              CLI subcommands (install, update, uninstall, config)
   ui/               Graph visualization HTTP server (first-party httpd)
-internal/cbm/       Tree-sitter AST extraction (64 languages, vendored C grammars)
+internal/cbm/       Tree-sitter AST extraction (158 grammars, vendored C grammars)
 vendored/           sqlite3, yyjson, mimalloc, xxhash, tre, nomic
 graph-ui/           React/Three.js frontend for graph visualization
 scripts/            Build, test, lint, security audit scripts
@@ -107,7 +107,7 @@ Language support is split between two layers:
 
 1. Check the language spec in `internal/cbm/lang_specs.c`
 2. Use regression tests to verify extraction: `tests/test_extraction.c`
-3. Check parity tests: `internal/cbm/regression_test.go` (legacy, being migrated)
+3. For language-graph behavior changes, run `make -f Makefile.cbm rust-language-graph-parity`
 4. Add a test case in `tests/test_pipeline.c` for integration-level fixes
 5. Verify with a real open-source repo
 
@@ -170,7 +170,7 @@ If in doubt, open an issue and ask.
 
 ### Code Requirements
 
-- **C code only** — this project was rewritten from Go to pure C in v0.5.0. Go PRs will be acknowledged and potentially ported, but cannot be merged directly.
+- Default product changes should remain in C unless they are part of a documented `CBM_USE_RUST_*` opt-in Rust slice. Go PRs will be acknowledged and potentially ported, but cannot be merged directly.
 - Include tests for new functionality
 - Run `scripts/test.sh` and `scripts/lint.sh` before submitting
 - Keep PRs focused — avoid unrelated reformatting or refactoring
@@ -179,7 +179,7 @@ If in doubt, open an issue and ask.
 
 We take security seriously. All PRs go through:
 - Manual security review (dangerous calls, network access, file writes, prompt injection)
-- Automated 8-layer security audit in CI
+- PR security/static gates plus release/smoke binary security verification
 - Vendored dependency integrity checks
 
 If you add a new `system()`, `popen()`, `fork()`, or network call, it must be justified and added to `scripts/security-allowlist.txt`.

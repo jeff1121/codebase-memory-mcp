@@ -941,7 +941,8 @@ static int phase6b_merge_edges(cbm_gbuf_t *gbuf, deferred_edge_buf_t *worker_buf
             char props[PROPS_BUF];
             snprintf(props, sizeof(props), "{\"score\":%.3f,\"same_file\":%s}", de->score,
                      de->same_file ? "true" : "false");
-            cbm_gbuf_insert_edge(gbuf, de->source_id, de->target_id, "SEMANTICALLY_RELATED", props);
+            cbm_gbuf_apply_insert_edge(gbuf, de->source_id, de->target_id, "SEMANTICALLY_RELATED",
+                                       props);
             total_edges++;
         }
         deferred_buf_free(&worker_bufs[w]);

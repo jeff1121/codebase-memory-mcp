@@ -8,17 +8,20 @@
 #include "foundation/platform.h" // cbm_normalize_path_sep (drive-canonicalization regression)
 #include "test_framework.h"
 #include "test_helpers.h"
+#include "pipeline/artifact.h"
 #include "pipeline/pipeline.h"
 #include "pipeline/pipeline_internal.h"
 #include "store/store.h"
 #include "git/git_context.h"
 #include "foundation/dump_verify.h"
+#include "foundation/log.h"
 
 #include <stdlib.h>
 #include <string.h>
 #include <stdatomic.h>
 #include "foundation/compat_thread.h"
 #include <fcntl.h>
+#include <sqlite3.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #include "graph_buffer/graph_buffer.h"
@@ -813,10 +816,9 @@ TEST(pipeline_calls_resolution) {
     PASS();
 }
 
-/* True iff a CALLS edge exists from a node named src_name to a node named
- * tgt_name. Used to assert cross-file call resolution survives a reindex. */
-static bool cross_file_call_exists(cbm_store_t *s, const char *project, const char *src_name,
-                                   const char *tgt_name) {
+/* 若指定型別的 edge 從 src_name 節點連到 tgt_name 節點，回傳 true。 */
+static bool named_edge_exists(cbm_store_t *s, const char *project, const char *edge_type,
+                              const char *src_name, const char *tgt_name) {
     cbm_node_t *srcs = NULL;
     cbm_node_t *tgts = NULL;
     int sc = 0;
@@ -827,7 +829,7 @@ static bool cross_file_call_exists(cbm_store_t *s, const char *project, const ch
     for (int i = 0; i < sc && !found; i++) {
         cbm_edge_t *edges = NULL;
         int ec = 0;
-        cbm_store_find_edges_by_source_type(s, srcs[i].id, "CALLS", &edges, &ec);
+        cbm_store_find_edges_by_source_type(s, srcs[i].id, edge_type, &edges, &ec);
         for (int j = 0; j < ec && !found; j++) {
             for (int k = 0; k < tc; k++) {
                 if (edges[j].target_id == tgts[k].id) {
@@ -847,6 +849,12 @@ static bool cross_file_call_exists(cbm_store_t *s, const char *project, const ch
         cbm_store_free_nodes(tgts, tc);
     }
     return found;
+}
+
+/* 若 CALLS edge 從 src_name 節點連到 tgt_name 節點，回傳 true。 */
+static bool cross_file_call_exists(cbm_store_t *s, const char *project, const char *src_name,
+                                   const char *tgt_name) {
+    return named_edge_exists(s, project, "CALLS", src_name, tgt_name);
 }
 
 /* Regression: incremental re-index of an edited file must NOT drop inbound
@@ -5009,6 +5017,116 @@ static void cleanup_incremental_repo(void) {
     th_rmtree(g_incr_tmpdir);
 }
 
+static bool file_hashes_contain_path(const cbm_file_hash_t *hashes, int count,
+                                     const char *rel_path) {
+    for (int i = 0; i < count; i++) {
+        if (hashes[i].rel_path && strcmp(hashes[i].rel_path, rel_path) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static char *file_hash_dup_for_path(cbm_store_t *s, const char *project, const char *rel_path) {
+    cbm_file_hash_t *hashes = NULL;
+    int hash_count = 0;
+    if (cbm_store_get_file_hashes(s, project, &hashes, &hash_count) != CBM_STORE_OK) {
+        return NULL;
+    }
+    char *out = NULL;
+    for (int i = 0; i < hash_count; i++) {
+        if (hashes[i].rel_path && strcmp(hashes[i].rel_path, rel_path) == 0 && hashes[i].sha256) {
+            out = strdup(hashes[i].sha256);
+            break;
+        }
+    }
+    cbm_store_free_file_hashes(hashes, hash_count);
+    return out;
+}
+
+static bool node_list_contains_name(const cbm_node_t *nodes, int count, const char *name) {
+    for (int i = 0; i < count; i++) {
+        if (nodes[i].name && strcmp(nodes[i].name, name) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+#ifdef CBM_USE_RUST_PIPELINE_PLAN
+static int fts_match_count(cbm_store_t *s, const char *project, const char *term,
+                           const char *name) {
+    sqlite3 *db = cbm_store_get_db(s);
+    sqlite3_stmt *stmt = NULL;
+    const char *sql = "SELECT count(*) "
+                      "FROM nodes_fts JOIN nodes ON nodes.id = nodes_fts.rowid "
+                      "WHERE nodes_fts MATCH ?1 AND nodes.project = ?2 AND nodes.name = ?3;";
+    if (!db || sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+        return -1;
+    }
+    sqlite3_bind_text(stmt, 1, term, -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, project, -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 3, name, -1, SQLITE_STATIC);
+    int count = -1;
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        count = sqlite3_column_int(stmt, 0);
+    }
+    sqlite3_finalize(stmt);
+    return count;
+}
+#endif
+
+enum { RUST_PLAN_LOG_CAPTURE_BUF = 131072 };
+static char g_rust_plan_log_capture[RUST_PLAN_LOG_CAPTURE_BUF];
+static CBMLogLevel g_rust_plan_prev_log_level;
+static CBMLogFormat g_rust_plan_prev_log_format;
+
+static void rust_plan_capture_log(const char *line) {
+    size_t used = strlen(g_rust_plan_log_capture);
+    size_t avail = sizeof(g_rust_plan_log_capture) - used;
+    if (avail <= 1) {
+        return;
+    }
+    int n = snprintf(g_rust_plan_log_capture + used, avail, "%s\n", line);
+    if (n < 0 || (size_t)n >= avail) {
+        g_rust_plan_log_capture[sizeof(g_rust_plan_log_capture) - 1] = '\0';
+    }
+}
+
+static void rust_plan_capture_start(void) {
+    g_rust_plan_log_capture[0] = '\0';
+    g_rust_plan_prev_log_level = cbm_log_get_level();
+    g_rust_plan_prev_log_format = cbm_log_get_format();
+    cbm_log_set_level(CBM_LOG_INFO);
+    cbm_log_set_format(CBM_LOG_FORMAT_TEXT);
+    cbm_log_set_sink_ex(rust_plan_capture_log, CBM_LOG_SINK_REPLACE);
+}
+
+static const char *rust_plan_capture_end(void) {
+    cbm_log_set_sink(NULL);
+    cbm_log_set_level(g_rust_plan_prev_log_level);
+    cbm_log_set_format(g_rust_plan_prev_log_format);
+    return g_rust_plan_log_capture;
+}
+
+#ifdef CBM_USE_RUST_PIPELINE_PLAN
+static bool rust_plan_log_contains_ordered(const char *logs, const char *const *needles,
+                                           int needle_count) {
+    const char *cursor = logs;
+    if (!cursor || !needles || needle_count < 0) {
+        return false;
+    }
+    for (int i = 0; i < needle_count; i++) {
+        cursor = strstr(cursor, needles[i]);
+        if (!cursor) {
+            return false;
+        }
+        cursor += strlen(needles[i]);
+    }
+    return true;
+}
+#endif
+
 /* ═══════════════════════════════════════════════════════════════════
  *  FastAPI Depends() edge tracking (PR #66, fix #27)
  * ═══════════════════════════════════════════════════════════════════ */
@@ -5221,6 +5339,545 @@ TEST(incremental_new_file_added) {
     PASS();
 }
 
+TEST(pipeline_rust_plan_predump_full_trace_observed) {
+#ifndef CBM_USE_RUST_PIPELINE_PLAN
+    PASS();
+#else
+    if (setup_incremental_repo() != 0) {
+        FAIL("setup failed");
+    }
+
+    cbm_pipeline_t *p = cbm_pipeline_new(g_incr_tmpdir, g_incr_dbpath, CBM_MODE_FULL);
+    ASSERT_NOT_NULL(p);
+    rust_plan_capture_start();
+    int rc = cbm_pipeline_run(p);
+    cbm_pipeline_free(p);
+    const char *logs = rust_plan_capture_end();
+
+    const char *trace[] = {
+        ("msg=rust_plan.dispatch phase=predump passes=6 "
+         "plan=decorator_tags,configlink,route_match,similarity,semantic_edges,complexity "
+         "source=typed_v2"),
+        "pass=decorator_tags",
+        "pass=configlink",
+        "pass=route_match",
+        "pass=similarity",
+        "pass=semantic_edges",
+        "pass=complexity",
+    };
+
+    ASSERT_EQ(rc, 0);
+    ASSERT_TRUE(
+        rust_plan_log_contains_ordered(logs, trace, (int)(sizeof(trace) / sizeof(trace[0]))));
+
+    cleanup_incremental_repo();
+    PASS();
+#endif
+}
+
+TEST(pipeline_rust_plan_sequential_trace_observed) {
+#ifndef CBM_USE_RUST_PIPELINE_PLAN
+    PASS();
+#else
+    if (setup_incremental_repo() != 0) {
+        FAIL("setup failed");
+    }
+
+    cbm_pipeline_t *p = cbm_pipeline_new(g_incr_tmpdir, g_incr_dbpath, CBM_MODE_FULL);
+    ASSERT_NOT_NULL(p);
+    rust_plan_capture_start();
+    int rc = cbm_pipeline_run(p);
+    cbm_pipeline_free(p);
+    const char *logs = rust_plan_capture_end();
+
+    const char *trace[] = {
+        "msg=pipeline.mode mode=sequential",
+        ("msg=rust_plan.dispatch phase=sequential_extract passes=6 "
+         "plan=definitions,k8s,lsp_cross,calls,usages,semantic source=typed_v2"),
+        "pass=definitions elapsed_ms",
+        "pass=k8s elapsed_ms",
+        "pass=lsp_cross elapsed_ms",
+        "pass=calls elapsed_ms",
+        "pass=usages elapsed_ms",
+        "pass=semantic elapsed_ms",
+    };
+
+    ASSERT_EQ(rc, 0);
+    ASSERT_TRUE(
+        rust_plan_log_contains_ordered(logs, trace, (int)(sizeof(trace) / sizeof(trace[0]))));
+
+    cleanup_incremental_repo();
+    PASS();
+#endif
+}
+
+TEST(pipeline_rust_plan_parallel_trace_observed) {
+#ifndef CBM_USE_RUST_PIPELINE_PLAN
+    PASS();
+#else
+    if (setup_incremental_repo() != 0) {
+        FAIL("setup failed");
+    }
+
+    for (int i = 0; i < 52; i++) {
+        char path[512];
+        snprintf(path, sizeof(path), "%s/par_%02d.go", g_incr_tmpdir, i);
+        FILE *f = fopen(path, "w");
+        if (!f) {
+            cleanup_incremental_repo();
+            FAIL("write parallel fixture");
+        }
+        fprintf(f, "package main\n\nfunc Par%02d() int {\n\treturn %d\n}\n", i, i);
+        fclose(f);
+    }
+
+    const char *old_workers = getenv("CBM_WORKERS");
+    char *old_workers_copy = old_workers ? strdup(old_workers) : NULL;
+    if (old_workers && !old_workers_copy) {
+        cleanup_incremental_repo();
+        FAIL("strdup");
+    }
+    int setenv_rc = cbm_setenv("CBM_WORKERS", "2", 1);
+
+    cbm_pipeline_t *p = cbm_pipeline_new(g_incr_tmpdir, g_incr_dbpath, CBM_MODE_FULL);
+    bool created = p != NULL;
+    int rc = -1;
+    const char *logs = "";
+    if (p) {
+        rust_plan_capture_start();
+        rc = cbm_pipeline_run(p);
+        cbm_pipeline_free(p);
+        logs = rust_plan_capture_end();
+    }
+
+    const char *trace[] = {
+        "msg=pipeline.mode mode=parallel",
+        ("msg=rust_plan.dispatch phase=parallel_extract passes=7 "
+         "plan=parallel_extract,registry_build,lsp_cross_prepare,parallel_resolve,"
+         "infra_routes,infra_bindings,k8s source=typed_v2"),
+        "pass=parallel_extract elapsed_ms",
+        "pass=registry_build elapsed_ms",
+        "pass=lsp_cross_prepare elapsed_ms",
+        "pass=parallel_resolve elapsed_ms",
+        "pass=k8s elapsed_ms",
+    };
+    bool trace_ok =
+        rust_plan_log_contains_ordered(logs, trace, (int)(sizeof(trace) / sizeof(trace[0])));
+
+    if (old_workers_copy) {
+        (void)cbm_setenv("CBM_WORKERS", old_workers_copy, 1);
+        free(old_workers_copy);
+    } else {
+        (void)cbm_unsetenv("CBM_WORKERS");
+    }
+
+    ASSERT_EQ(setenv_rc, 0);
+    ASSERT_TRUE(created);
+    ASSERT_EQ(rc, 0);
+    ASSERT_TRUE(trace_ok);
+
+    cleanup_incremental_repo();
+    PASS();
+#endif
+}
+
+TEST(pipeline_rust_plan_predump_fast_trace_observed) {
+#ifndef CBM_USE_RUST_PIPELINE_PLAN
+    PASS();
+#else
+    if (setup_incremental_repo() != 0) {
+        FAIL("setup failed");
+    }
+
+    cbm_pipeline_t *p = cbm_pipeline_new(g_incr_tmpdir, g_incr_dbpath, CBM_MODE_FAST);
+    ASSERT_NOT_NULL(p);
+    rust_plan_capture_start();
+    int rc = cbm_pipeline_run(p);
+    cbm_pipeline_free(p);
+    const char *logs = rust_plan_capture_end();
+
+    const char *trace[] = {
+        ("msg=rust_plan.dispatch phase=predump passes=4 "
+         "plan=decorator_tags,configlink,route_match,complexity source=typed_v2"),
+        "pass=decorator_tags",
+        "pass=configlink",
+        "pass=route_match",
+        "pass=complexity",
+    };
+
+    ASSERT_EQ(rc, 0);
+    ASSERT_TRUE(
+        rust_plan_log_contains_ordered(logs, trace, (int)(sizeof(trace) / sizeof(trace[0]))));
+    ASSERT(strstr(logs, "pass=similarity") == NULL);
+    ASSERT(strstr(logs, "pass=semantic_edges") == NULL);
+
+    cleanup_incremental_repo();
+    PASS();
+#endif
+}
+
+TEST(incremental_rust_plan_postpasses_dispatch_observed) {
+#ifndef CBM_USE_RUST_PIPELINE_PLAN
+    PASS();
+#else
+    if (setup_incremental_repo() != 0) {
+        FAIL("setup failed");
+    }
+
+    cbm_pipeline_t *p = cbm_pipeline_new(g_incr_tmpdir, g_incr_dbpath, CBM_MODE_FULL);
+    ASSERT_NOT_NULL(p);
+    ASSERT_EQ(cbm_pipeline_run(p), 0);
+    char *project = strdup(cbm_pipeline_project_name(p));
+    cbm_pipeline_free(p);
+
+    ASSERT_EQ(cbm_artifact_export(g_incr_dbpath, g_incr_tmpdir, project, CBM_ARTIFACT_FAST), 0);
+    ASSERT_TRUE(cbm_artifact_exists(g_incr_tmpdir));
+
+    char path[512];
+    snprintf(path, sizeof(path), "%s/helper.go", g_incr_tmpdir);
+    FILE *f = fopen(path, "w");
+    ASSERT_NOT_NULL(f);
+    fprintf(f, "package main\n\n"
+               "func Helper() string {\n\treturn \"hello\"\n}\n\n"
+               "func RustPlanTailSearchTarget() int {\n\treturn 7\n}\n\n"
+               "func RustPlanSeqCallee() int {\n\treturn 11\n}\n\n"
+               "func RustPlanSeqCaller() int {\n\treturn RustPlanSeqCallee()\n}\n\n"
+               "func RustPlanSeqUsage() {\n\tfn := RustPlanSeqCallee\n\t_ = fn\n}\n");
+    fclose(f);
+
+    p = cbm_pipeline_new(g_incr_tmpdir, g_incr_dbpath, CBM_MODE_FULL);
+    ASSERT_NOT_NULL(p);
+    rust_plan_capture_start();
+    int rc = cbm_pipeline_run(p);
+    cbm_pipeline_free(p);
+    const char *logs = rust_plan_capture_end();
+
+    ASSERT_EQ(rc, 0);
+    ASSERT(strstr(logs, "msg=rust_plan.dispatch") != NULL);
+    ASSERT(strstr(logs, "phase=incremental_extract_resolve") != NULL);
+    ASSERT(strstr(logs, "plan=definitions,calls,usages,semantic") != NULL);
+    ASSERT(strstr(logs, "source=typed_v2") != NULL);
+    ASSERT(strstr(logs, "msg=incremental.mode mode=sequential changed=1") != NULL);
+    ASSERT(strstr(logs, "plan=incr_extract,incr_registry,incr_resolve") == NULL);
+    ASSERT(strstr(logs, "phase=incremental_post") != NULL);
+    ASSERT(strstr(logs, "passes=10") != NULL);
+    ASSERT(strstr(logs, "tail=edge_relink,incremental_dump,persist_hashes,artifact_export") !=
+           NULL);
+    ASSERT(strstr(logs, "source=typed_steps") != NULL);
+    const char *trace[] = {
+        ("msg=rust_plan.dispatch phase=incremental_extract_resolve passes=4 "
+         "plan=definitions,calls,usages,semantic source=typed_v2"),
+        "msg=pass.start pass=definitions",
+        "msg=pass.start pass=calls",
+        "msg=pass.start pass=usages",
+        "msg=pass.start pass=semantic",
+        ("msg=rust_plan.dispatch phase=incremental_post passes=10 "
+         "tail=edge_relink,incremental_dump,persist_hashes,artifact_export "
+         "source=typed_steps"),
+        "pass=k8s elapsed_ms",
+        "pass=incr_tests elapsed_ms",
+        "pass=incr_decorator_tags elapsed_ms",
+        "pass=incr_configlink elapsed_ms",
+        "pass=incr_similarity elapsed_ms",
+        "pass=incr_semantic_edges elapsed_ms",
+        "msg=incremental.edge_relink",
+        "msg=incremental.dump",
+    };
+    ASSERT_TRUE(
+        rust_plan_log_contains_ordered(logs, trace, (int)(sizeof(trace) / sizeof(trace[0]))));
+    ASSERT(strstr(logs, "msg=incremental.edge_relink") != NULL);
+    ASSERT(strstr(logs, "msg=incremental.dump") != NULL);
+    ASSERT(strstr(logs, "msg=artifact.export") != NULL);
+
+    cbm_store_t *s = cbm_store_open_path(g_incr_dbpath);
+    ASSERT_NOT_NULL(s);
+    cbm_node_t *nodes = NULL;
+    int count = 0;
+    ASSERT_EQ(cbm_store_find_nodes_by_file(s, project, "helper.go", &nodes, &count), CBM_STORE_OK);
+    ASSERT_TRUE(node_list_contains_name(nodes, count, "RustPlanTailSearchTarget"));
+    ASSERT_TRUE(node_list_contains_name(nodes, count, "RustPlanSeqCallee"));
+    ASSERT_TRUE(node_list_contains_name(nodes, count, "RustPlanSeqCaller"));
+    ASSERT_TRUE(node_list_contains_name(nodes, count, "RustPlanSeqUsage"));
+    cbm_store_free_nodes(nodes, count);
+    ASSERT_TRUE(named_edge_exists(s, project, "CALLS", "RustPlanSeqCaller", "RustPlanSeqCallee"));
+    ASSERT_TRUE(named_edge_exists(s, project, "USAGE", "RustPlanSeqUsage", "RustPlanSeqCallee"));
+
+    cbm_file_hash_t *hashes = NULL;
+    int hash_count = 0;
+    ASSERT_EQ(cbm_store_get_file_hashes(s, project, &hashes, &hash_count), CBM_STORE_OK);
+    ASSERT_TRUE(file_hashes_contain_path(hashes, hash_count, "main.go"));
+    ASSERT_TRUE(file_hashes_contain_path(hashes, hash_count, "helper.go"));
+    cbm_store_free_file_hashes(hashes, hash_count);
+
+    ASSERT_GT(fts_match_count(s, project, "Tail", "RustPlanTailSearchTarget"), 0);
+    cbm_store_close(s);
+
+    char import_db[512];
+    snprintf(import_db, sizeof(import_db), "%s/imported-tail.db", g_incr_tmpdir);
+    ASSERT_EQ(cbm_artifact_import(g_incr_tmpdir, import_db), 0);
+    s = cbm_store_open_path(import_db);
+    ASSERT_NOT_NULL(s);
+    nodes = NULL;
+    count = 0;
+    ASSERT_EQ(cbm_store_find_nodes_by_file(s, project, "helper.go", &nodes, &count), CBM_STORE_OK);
+    ASSERT_TRUE(node_list_contains_name(nodes, count, "RustPlanTailSearchTarget"));
+    cbm_store_free_nodes(nodes, count);
+    cbm_store_close(s);
+
+    free(project);
+    cleanup_incremental_repo();
+    PASS();
+#endif
+}
+
+TEST(incremental_rust_plan_parallel_extract_dispatch_observed) {
+#ifndef CBM_USE_RUST_PIPELINE_PLAN
+    PASS();
+#else
+    if (setup_incremental_repo() != 0) {
+        FAIL("setup failed");
+    }
+
+    for (int i = 0; i < 52; i++) {
+        char path[512];
+        snprintf(path, sizeof(path), "%s/incr_par_%02d.go", g_incr_tmpdir, i);
+        FILE *f = fopen(path, "w");
+        if (!f) {
+            cleanup_incremental_repo();
+            FAIL("write incremental parallel seed fixture");
+        }
+        fprintf(f, "package main\n\nfunc IncrParSeed%02d() int {\n\treturn %d\n}\n", i, i);
+        fclose(f);
+    }
+
+    cbm_pipeline_t *p = cbm_pipeline_new(g_incr_tmpdir, g_incr_dbpath, CBM_MODE_FULL);
+    ASSERT_NOT_NULL(p);
+    ASSERT_EQ(cbm_pipeline_run(p), 0);
+    char *project = strdup(cbm_pipeline_project_name(p));
+    ASSERT_NOT_NULL(project);
+    cbm_pipeline_free(p);
+
+    for (int i = 0; i < 52; i++) {
+        char path[512];
+        snprintf(path, sizeof(path), "%s/incr_par_%02d.go", g_incr_tmpdir, i);
+        FILE *f = fopen(path, "w");
+        if (!f) {
+            free(project);
+            cleanup_incremental_repo();
+            FAIL("rewrite incremental parallel fixture");
+        }
+        if (i == 0) {
+            fprintf(f, "package main\n\n"
+                       "func IncrParCallee() int {\n\treturn 23\n}\n\n"
+                       "func IncrParCaller() int {\n\treturn IncrParCallee()\n}\n\n"
+                       "func IncrParUsage() {\n\tfn := IncrParCallee\n\t_ = fn\n}\n");
+        } else {
+            fprintf(f, "package main\n\nfunc IncrPar%02d() int {\n\treturn %d\n}\n", i, i + 100);
+        }
+        fclose(f);
+    }
+
+    const char *old_workers = getenv("CBM_WORKERS");
+    char *old_workers_copy = old_workers ? strdup(old_workers) : NULL;
+    if (old_workers && !old_workers_copy) {
+        free(project);
+        cleanup_incremental_repo();
+        FAIL("strdup");
+    }
+    int setenv_rc = cbm_setenv("CBM_WORKERS", "2", 1);
+
+    p = cbm_pipeline_new(g_incr_tmpdir, g_incr_dbpath, CBM_MODE_FULL);
+    bool created = p != NULL;
+    int rc = -1;
+    const char *logs = "";
+    if (p) {
+        rust_plan_capture_start();
+        rc = cbm_pipeline_run(p);
+        cbm_pipeline_free(p);
+        logs = rust_plan_capture_end();
+    }
+
+    const char *trace[] = {
+        ("msg=rust_plan.dispatch phase=incremental_extract_resolve passes=3 "
+         "plan=incr_extract,incr_registry,incr_resolve source=typed_v2"),
+        "msg=incremental.mode mode=parallel workers=2 changed=52",
+        "pass=incr_extract elapsed_ms",
+        "pass=incr_registry elapsed_ms",
+        "msg=incremental.lsp_cross mode=skipped reason=no_cross_lsp_prebuild",
+        "pass=incr_resolve elapsed_ms",
+        "msg=rust_plan.dispatch phase=incremental_post",
+    };
+    bool trace_ok =
+        rust_plan_log_contains_ordered(logs, trace, (int)(sizeof(trace) / sizeof(trace[0])));
+
+    if (old_workers_copy) {
+        (void)cbm_setenv("CBM_WORKERS", old_workers_copy, 1);
+        free(old_workers_copy);
+    } else {
+        (void)cbm_unsetenv("CBM_WORKERS");
+    }
+
+    ASSERT_EQ(setenv_rc, 0);
+    ASSERT_TRUE(created);
+    ASSERT_EQ(rc, 0);
+    ASSERT_TRUE(trace_ok);
+    ASSERT(strstr(logs, "plan=definitions,calls,usages,semantic") == NULL);
+    ASSERT(strstr(logs, "lsp_cross_prepare") == NULL);
+
+    cbm_store_t *s = cbm_store_open_path(g_incr_dbpath);
+    ASSERT_NOT_NULL(s);
+    cbm_node_t *nodes = NULL;
+    int count = 0;
+    ASSERT_EQ(cbm_store_find_nodes_by_file(s, project, "incr_par_00.go", &nodes, &count),
+              CBM_STORE_OK);
+    ASSERT_TRUE(node_list_contains_name(nodes, count, "IncrParCallee"));
+    ASSERT_TRUE(node_list_contains_name(nodes, count, "IncrParCaller"));
+    ASSERT_TRUE(node_list_contains_name(nodes, count, "IncrParUsage"));
+    cbm_store_free_nodes(nodes, count);
+    ASSERT_TRUE(named_edge_exists(s, project, "CALLS", "IncrParCaller", "IncrParCallee"));
+    ASSERT_TRUE(named_edge_exists(s, project, "USAGE", "IncrParUsage", "IncrParCallee"));
+    cbm_store_close(s);
+
+    free(project);
+    cleanup_incremental_repo();
+    PASS();
+#endif
+}
+
+TEST(incremental_persistence_creates_artifact_without_existing_artifact) {
+    if (setup_incremental_repo() != 0) {
+        FAIL("setup failed");
+    }
+
+    cbm_pipeline_t *p = cbm_pipeline_new(g_incr_tmpdir, g_incr_dbpath, CBM_MODE_FULL);
+    ASSERT_NOT_NULL(p);
+    ASSERT_EQ(cbm_pipeline_run(p), 0);
+    char *project = strdup(cbm_pipeline_project_name(p));
+    cbm_pipeline_free(p);
+    ASSERT_FALSE(cbm_artifact_exists(g_incr_tmpdir));
+
+    char path[512];
+    snprintf(path, sizeof(path), "%s/helper.go", g_incr_tmpdir);
+    FILE *f = fopen(path, "w");
+    ASSERT_NOT_NULL(f);
+    fprintf(f, "package main\n\n"
+               "func Helper() string {\n\treturn \"hello\"\n}\n\n"
+               "func PersistenceArtifactProbe() int {\n\treturn 434\n}\n");
+    fclose(f);
+
+    p = cbm_pipeline_new(g_incr_tmpdir, g_incr_dbpath, CBM_MODE_FULL);
+    ASSERT_NOT_NULL(p);
+    cbm_pipeline_set_persistence(p, true);
+    ASSERT_EQ(cbm_pipeline_run(p), 0);
+    cbm_pipeline_free(p);
+
+    ASSERT_TRUE(cbm_artifact_exists(g_incr_tmpdir));
+
+    char import_db[512];
+    snprintf(import_db, sizeof(import_db), "%s/imported-persistence.db", g_incr_tmpdir);
+    ASSERT_EQ(cbm_artifact_import(g_incr_tmpdir, import_db), 0);
+    cbm_store_t *s = cbm_store_open_path(import_db);
+    ASSERT_NOT_NULL(s);
+    cbm_node_t *nodes = NULL;
+    int count = 0;
+    ASSERT_EQ(cbm_store_find_nodes_by_file(s, project, "helper.go", &nodes, &count), CBM_STORE_OK);
+    ASSERT_TRUE(node_list_contains_name(nodes, count, "PersistenceArtifactProbe"));
+    cbm_store_free_nodes(nodes, count);
+    cbm_store_close(s);
+
+    free(project);
+    cleanup_incremental_repo();
+    PASS();
+}
+
+TEST(incremental_dump_failure_fails_run_and_skips_followup_tail) {
+    if (setup_incremental_repo() != 0) {
+        FAIL("setup failed");
+    }
+
+    char path[512];
+    snprintf(path, sizeof(path), "%s/.gitignore", g_incr_tmpdir);
+    FILE *f = fopen(path, "w");
+    ASSERT_NOT_NULL(f);
+    fprintf(f, ".codebase-memory/\n");
+    fclose(f);
+
+    cbm_pipeline_t *p = cbm_pipeline_new(g_incr_tmpdir, g_incr_dbpath, CBM_MODE_FULL);
+    ASSERT_NOT_NULL(p);
+    ASSERT_EQ(cbm_pipeline_run(p), 0);
+    char *project = strdup(cbm_pipeline_project_name(p));
+    cbm_pipeline_free(p);
+
+    ASSERT_EQ(cbm_artifact_export(g_incr_dbpath, g_incr_tmpdir, project, CBM_ARTIFACT_FAST), 0);
+    ASSERT_TRUE(cbm_artifact_exists(g_incr_tmpdir));
+
+    cbm_store_t *s = cbm_store_open_path_query(g_incr_dbpath);
+    ASSERT_NOT_NULL(s);
+    char *helper_hash_before = file_hash_dup_for_path(s, project, "helper.go");
+    cbm_store_close(s);
+    ASSERT_NOT_NULL(helper_hash_before);
+
+    snprintf(path, sizeof(path), "%s/helper.go", g_incr_tmpdir);
+    f = fopen(path, "w");
+    ASSERT_NOT_NULL(f);
+    fprintf(f, "package main\n\n"
+               "func Helper() string {\n\treturn \"hello\"\n}\n\n"
+               "func DumpFailureProbe() int {\n\treturn 500\n}\n");
+    fclose(f);
+
+    p = cbm_pipeline_new(g_incr_tmpdir, g_incr_dbpath, CBM_MODE_FULL);
+    ASSERT_NOT_NULL(p);
+    cbm_pipeline_test_fail_next_incremental_dump(-37);
+    rust_plan_capture_start();
+    int rc = cbm_pipeline_run(p);
+    cbm_pipeline_free(p);
+    const char *logs = rust_plan_capture_end();
+
+    ASSERT_EQ(rc, -37);
+    ASSERT(strstr(logs, "msg=incremental.dump") != NULL);
+    ASSERT(strstr(logs, "rc=-37") != NULL);
+    ASSERT(strstr(logs, "msg=pipeline.err") != NULL);
+    ASSERT(strstr(logs, "phase=incremental_dump") != NULL);
+    ASSERT(strstr(logs, "msg=incremental.tail_skip") != NULL);
+    ASSERT(strstr(logs, "msg=incremental.tail_skip kind=9 reason=prior_error") != NULL);
+    ASSERT(strstr(logs, "msg=incremental.tail_skip kind=10 reason=prior_error") != NULL);
+    ASSERT(strstr(logs, "msg=artifact.export") == NULL);
+    ASSERT(strstr(logs, "msg=incremental.done") == NULL);
+
+    s = cbm_store_open_path_query(g_incr_dbpath);
+    ASSERT_NOT_NULL(s);
+    char *helper_hash_after = file_hash_dup_for_path(s, project, "helper.go");
+    ASSERT_NOT_NULL(helper_hash_after);
+    ASSERT_EQ(strcmp(helper_hash_before, helper_hash_after), 0);
+    free(helper_hash_after);
+    cbm_node_t *nodes = NULL;
+    int count = 0;
+    ASSERT_EQ(cbm_store_find_nodes_by_file(s, project, "helper.go", &nodes, &count), CBM_STORE_OK);
+    ASSERT_TRUE(node_list_contains_name(nodes, count, "Helper"));
+    ASSERT_FALSE(node_list_contains_name(nodes, count, "DumpFailureProbe"));
+    cbm_store_free_nodes(nodes, count);
+    cbm_store_close(s);
+
+    p = cbm_pipeline_new(g_incr_tmpdir, g_incr_dbpath, CBM_MODE_FULL);
+    ASSERT_NOT_NULL(p);
+    ASSERT_EQ(cbm_pipeline_run(p), 0);
+    cbm_pipeline_free(p);
+
+    s = cbm_store_open_path_query(g_incr_dbpath);
+    ASSERT_NOT_NULL(s);
+    nodes = NULL;
+    count = 0;
+    ASSERT_EQ(cbm_store_find_nodes_by_file(s, project, "helper.go", &nodes, &count), CBM_STORE_OK);
+    ASSERT_TRUE(node_list_contains_name(nodes, count, "DumpFailureProbe"));
+    cbm_store_free_nodes(nodes, count);
+    cbm_store_close(s);
+
+    free(helper_hash_before);
+    free(project);
+    cleanup_incremental_repo();
+    PASS();
+}
+
 TEST(incremental_fast_preserves_mode_skipped_tools_dir) {
     /* Regression: 2026-04-13. A fast-mode reindex after a full-mode index
      * was silently destroying every file under FAST_SKIP_DIRS directories
@@ -5342,6 +5999,13 @@ TEST(incremental_fast_preserves_mode_skipped_tools_dir) {
      * actually ran the full dump_and_persist cycle (not the noop fast-path). */
     ASSERT_EQ(tools_count_run3, tools_count_before);
     cbm_store_free_nodes(tools_nodes_run3, tools_count_run3);
+
+    cbm_file_hash_t *hashes = NULL;
+    int hash_count = 0;
+    ASSERT_EQ(cbm_store_get_file_hashes(s, project, &hashes, &hash_count), CBM_STORE_OK);
+    ASSERT_TRUE(file_hashes_contain_path(hashes, hash_count, "main.go"));
+    ASSERT_TRUE(file_hashes_contain_path(hashes, hash_count, "tools/util.go"));
+    cbm_store_free_file_hashes(hashes, hash_count);
     cbm_store_close(s);
 
     /* Step 4: actually delete tools/util.go from disk and full-reindex.
@@ -6341,6 +7005,14 @@ SUITE(pipeline) {
     RUN_TEST(incremental_detects_changed_file);
     RUN_TEST(incremental_detects_deleted_file);
     RUN_TEST(incremental_new_file_added);
+    RUN_TEST(pipeline_rust_plan_sequential_trace_observed);
+    RUN_TEST(pipeline_rust_plan_predump_full_trace_observed);
+    RUN_TEST(pipeline_rust_plan_parallel_trace_observed);
+    RUN_TEST(pipeline_rust_plan_predump_fast_trace_observed);
+    RUN_TEST(incremental_rust_plan_postpasses_dispatch_observed);
+    RUN_TEST(incremental_rust_plan_parallel_extract_dispatch_observed);
+    RUN_TEST(incremental_persistence_creates_artifact_without_existing_artifact);
+    RUN_TEST(incremental_dump_failure_fails_run_and_skips_followup_tail);
     RUN_TEST(incremental_fast_preserves_mode_skipped_tools_dir);
     RUN_TEST(incremental_k8s_manifest_indexed);
     RUN_TEST(incremental_kustomize_module_indexed);

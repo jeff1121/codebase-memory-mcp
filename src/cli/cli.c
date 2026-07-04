@@ -10,6 +10,8 @@
 #include "foundation/constants.h"
 #include "mcp/mcp.h" // cbm_mcp_tool_input_schema — CLI flag parser + per-tool --help
 
+#include <stdint.h>
+
 /* CLI buffer size constants. */
 enum {
     CLI_BUF_1K = 1024,
@@ -2485,37 +2487,42 @@ enum {
     ZIP_STORED = 0,
     ZIP_DEFLATE = 8
 };
-static const uint32_t ZIP_MAX_UNCOMP = 500U * 1024U * 1024U;
+static const unsigned long ZIP_MAX_UNCOMP = 500UL * 1024UL * 1024UL;
+
+static uint16_t zip_read_u16(const unsigned char *data, int off) {
+    return (uint16_t)((uint16_t)data[off] | ((uint16_t)data[off + CLI_SKIP_ONE] << BYTE_SHIFT));
+}
+
+static unsigned long zip_read_u32(const unsigned char *data, int off) {
+    return (unsigned long)data[off] | ((unsigned long)data[off + CLI_SKIP_ONE] << BYTE_SHIFT) |
+           ((unsigned long)data[off + CLI_PAIR_LEN] << (BYTE_SHIFT * CLI_PAIR_LEN)) |
+           ((unsigned long)data[off + CLI_JSON_INDENT] << (BYTE_SHIFT * CLI_JSON_INDENT));
+}
 
 /* Decompress a single zip entry (stored or deflated). Returns malloc'd buffer
  * or NULL on failure. *out_len receives the decompressed size. */
 static unsigned char *zip_extract_entry(const unsigned char *file_data, uint16_t method,
-                                        uint32_t comp_size, uint32_t uncomp_size, int *out_len) {
+                                        unsigned long comp_size, unsigned long uncomp_size,
+                                        int *out_len) {
     if (method == ZIP_STORED) {
-        if (comp_size > ZIP_MAX_UNCOMP) {
-            return NULL;
-        }
-        unsigned char *out = malloc(comp_size);
+        unsigned char *out = malloc((size_t)comp_size);
         if (!out) {
             return NULL;
         }
-        memcpy(out, file_data, comp_size);
+        memcpy(out, file_data, (size_t)comp_size);
         *out_len = (int)comp_size;
         return out;
     }
     if (method == ZIP_DEFLATE) {
-        if (uncomp_size > ZIP_MAX_UNCOMP) {
-            return NULL;
-        }
-        unsigned char *out = malloc(uncomp_size);
+        unsigned char *out = malloc((size_t)uncomp_size);
         if (!out) {
             return NULL;
         }
         z_stream strm = {0};
         strm.next_in = (unsigned char *)file_data;
-        strm.avail_in = comp_size;
+        strm.avail_in = (uInt)comp_size;
         strm.next_out = out;
-        strm.avail_out = uncomp_size;
+        strm.avail_out = (uInt)uncomp_size;
         if (inflateInit2(&strm, -MAX_WBITS) != Z_OK) {
             free(out);
             return NULL;
@@ -2545,29 +2552,19 @@ unsigned char *cbm_extract_binary_from_zip(const unsigned char *data, int data_l
             break;
         }
 
-        uint16_t method = (uint16_t)(data[pos + ZIP_OFF_METHOD] |
-                                     (data[pos + ZIP_OFF_METHOD + CLI_SKIP_ONE] << BYTE_SHIFT));
-        uint32_t comp_size =
-            (uint32_t)(data[pos + ZIP_OFF_COMP] |
-                       (data[pos + ZIP_OFF_COMP + CLI_SKIP_ONE] << BYTE_SHIFT) |
-                       (data[pos + ZIP_OFF_COMP + CLI_PAIR_LEN] << (BYTE_SHIFT * CLI_PAIR_LEN)) |
-                       (data[pos + ZIP_OFF_COMP + CLI_JSON_INDENT]
-                        << (BYTE_SHIFT * CLI_JSON_INDENT)));
-        uint32_t uncomp_size =
-            (uint32_t)(data[pos + ZIP_OFF_UNCOMP] |
-                       (data[pos + ZIP_OFF_UNCOMP + CLI_SKIP_ONE] << BYTE_SHIFT) |
-                       (data[pos + ZIP_OFF_UNCOMP + CLI_PAIR_LEN] << (BYTE_SHIFT * CLI_PAIR_LEN)) |
-                       (data[pos + ZIP_OFF_UNCOMP + CLI_JSON_INDENT]
-                        << (BYTE_SHIFT * CLI_JSON_INDENT)));
-        uint16_t name_len = (uint16_t)(data[pos + ZIP_OFF_NAMELEN] |
-                                       (data[pos + ZIP_OFF_NAMELEN + CLI_SKIP_ONE] << BYTE_SHIFT));
-        uint16_t extra_len =
-            (uint16_t)(data[pos + ZIP_OFF_EXTRALEN] |
-                       (data[pos + ZIP_OFF_EXTRALEN + CLI_SKIP_ONE] << BYTE_SHIFT));
+        uint16_t method = zip_read_u16(data + pos, ZIP_OFF_METHOD);
+        unsigned long comp_size = zip_read_u32(data + pos, ZIP_OFF_COMP);
+        unsigned long uncomp_size = zip_read_u32(data + pos, ZIP_OFF_UNCOMP);
+        uint16_t name_len = zip_read_u16(data + pos, ZIP_OFF_NAMELEN);
+        uint16_t extra_len = zip_read_u16(data + pos, ZIP_OFF_EXTRALEN);
 
         int header_end = pos + ZIP_HDR_SZ + name_len + extra_len;
-        if (header_end + (int)comp_size > data_len) {
+        if (header_end > data_len || comp_size > (unsigned long)(data_len - header_end)) {
             break;
+        }
+        if (comp_size > ZIP_MAX_UNCOMP || uncomp_size > ZIP_MAX_UNCOMP) {
+            pos = header_end + (int)comp_size;
+            continue;
         }
 
         char fname[CLI_BUF_512] = {0};

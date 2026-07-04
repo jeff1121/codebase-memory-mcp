@@ -182,8 +182,8 @@ static int strategy_key_symbols(cbm_gbuf_t *gb) {
                          "{\"strategy\":\"key_symbol\",\"confidence\":%.2f,\"config_key\":\"%s\"}",
                          confidence, config_entries[ci].name);
 
-                cbm_gbuf_insert_edge(gb, code_entries[co].node_id, config_entries[ci].node_id,
-                                     "CONFIGURES", props);
+                cbm_gbuf_apply_insert_edge(gb, code_entries[co].node_id, config_entries[ci].node_id,
+                                           "CONFIGURES", props);
                 edge_count++;
             }
         }
@@ -336,7 +336,7 @@ static int strategy_dep_imports(cbm_gbuf_t *gb) {
                     "{\"strategy\":\"dependency_import\",\"confidence\":%.2f,\"dep_name\":\"%s\"}",
                     confidence, deps[di].name);
 
-                cbm_gbuf_insert_edge(gb, source->id, deps[di].node_id, "CONFIGURES", props);
+                cbm_gbuf_apply_insert_edge(gb, source->id, deps[di].node_id, "CONFIGURES", props);
                 edge_count++;
             }
         }

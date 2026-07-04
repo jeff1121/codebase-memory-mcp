@@ -6,6 +6,7 @@
 const MODE_MODERATE: i32 = 1;
 const MODE_FAST: i32 = 2;
 const MIN_FILES_FOR_PARALLEL: i32 = 50;
+const MAX_PLAN_STEP_V2_KIND: u32 = 64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PlanKind {
@@ -16,6 +17,166 @@ pub enum PlanKind {
     IncrementalPost,
     ParallelExtraction,
     FullPipeline,
+}
+
+#[repr(i32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlanStepKind {
+    K8s = 1,
+    IncrTests = 2,
+    IncrDecoratorTags = 3,
+    IncrConfiglink = 4,
+    IncrSimilarity = 5,
+    IncrSemanticEdges = 6,
+    EdgeRelink = 7,
+    IncrementalDump = 8,
+    PersistHashes = 9,
+    ArtifactExport = 10,
+}
+
+impl PlanStepKind {
+    pub fn as_name(self) -> &'static str {
+        match self {
+            Self::K8s => "k8s",
+            Self::IncrTests => "incr_tests",
+            Self::IncrDecoratorTags => "incr_decorator_tags",
+            Self::IncrConfiglink => "incr_configlink",
+            Self::IncrSimilarity => "incr_similarity",
+            Self::IncrSemanticEdges => "incr_semantic_edges",
+            Self::EdgeRelink => "edge_relink",
+            Self::IncrementalDump => "incremental_dump",
+            Self::PersistHashes => "persist_hashes",
+            Self::ArtifactExport => "artifact_export",
+        }
+    }
+}
+
+#[repr(i32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlanStepV2Kind {
+    PredumpDecoratorTags = 1,
+    PredumpConfiglink = 2,
+    PredumpRouteMatch = 3,
+    PredumpSimilarity = 4,
+    PredumpSemanticEdges = 5,
+    PredumpComplexity = 6,
+    SequentialDefinitions = 16,
+    SequentialK8s = 17,
+    SequentialLspCross = 18,
+    SequentialCalls = 19,
+    SequentialUsages = 20,
+    SequentialSemantic = 21,
+    ParallelExtract = 32,
+    ParallelRegistryBuild = 33,
+    ParallelLspCrossPrepare = 34,
+    ParallelResolve = 35,
+    ParallelInfraRoutes = 36,
+    ParallelInfraBindings = 37,
+    ParallelK8s = 38,
+    IncrementalDefinitions = 48,
+    IncrementalCalls = 49,
+    IncrementalUsages = 50,
+    IncrementalSemantic = 51,
+    IncrementalParallelExtract = 52,
+    IncrementalRegistry = 53,
+    IncrementalResolve = 54,
+}
+
+impl PlanStepV2Kind {
+    pub fn as_name(self) -> &'static str {
+        match self {
+            Self::PredumpDecoratorTags => "decorator_tags",
+            Self::PredumpConfiglink => "configlink",
+            Self::PredumpRouteMatch => "route_match",
+            Self::PredumpSimilarity => "similarity",
+            Self::PredumpSemanticEdges => "semantic_edges",
+            Self::PredumpComplexity => "complexity",
+            Self::SequentialDefinitions => "definitions",
+            Self::SequentialK8s => "k8s",
+            Self::SequentialLspCross => "lsp_cross",
+            Self::SequentialCalls => "calls",
+            Self::SequentialUsages => "usages",
+            Self::SequentialSemantic => "semantic",
+            Self::ParallelExtract => "parallel_extract",
+            Self::ParallelRegistryBuild => "registry_build",
+            Self::ParallelLspCrossPrepare => "lsp_cross_prepare",
+            Self::ParallelResolve => "parallel_resolve",
+            Self::ParallelInfraRoutes => "infra_routes",
+            Self::ParallelInfraBindings => "infra_bindings",
+            Self::ParallelK8s => "k8s",
+            Self::IncrementalDefinitions => "definitions",
+            Self::IncrementalCalls => "calls",
+            Self::IncrementalUsages => "usages",
+            Self::IncrementalSemantic => "semantic",
+            Self::IncrementalParallelExtract => "incr_extract",
+            Self::IncrementalRegistry => "incr_registry",
+            Self::IncrementalResolve => "incr_resolve",
+        }
+    }
+
+    fn bit(self) -> u64 {
+        let kind = self as u32;
+        debug_assert!(kind > 0 && kind <= MAX_PLAN_STEP_V2_KIND);
+        1u64 << (kind - 1)
+    }
+}
+
+#[repr(i32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlanStepPhase {
+    Predump = 1,
+    SequentialExtract = 2,
+    ParallelExtract = 3,
+    IncrementalExtractResolve = 4,
+}
+
+#[repr(i32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlanStepPolicy {
+    Required = 0,
+    IgnoreErr = 1,
+    BestEffort = 2,
+    OptionalExistingArtifact = 3,
+    EnvOptional = 4,
+}
+
+impl PlanStepPolicy {
+    pub fn as_name(self) -> &'static str {
+        match self {
+            Self::Required => "required",
+            Self::IgnoreErr => "ignore_err",
+            Self::BestEffort => "best_effort",
+            Self::OptionalExistingArtifact => "optional_existing_artifact",
+            Self::EnvOptional => "env_optional",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PlanStep {
+    pub kind: PlanStepKind,
+    pub policy: PlanStepPolicy,
+}
+
+pub const PLAN_STEP_GATE_SKIP_FAST: u32 = 1 << 0;
+pub const PLAN_STEP_GATE_REQUIRES_RESULT_CACHE: u32 = 1 << 1;
+pub const PLAN_STEP_GATE_NO_CROSS_LSP_PREBUILD: u32 = 1 << 2;
+pub const PLAN_STEP_EFFECT_MUTATES_GRAPH: u32 = 1 << 0;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PlanStepV2 {
+    pub kind: PlanStepV2Kind,
+    pub phase: PlanStepPhase,
+    pub policy: PlanStepPolicy,
+    pub gate_flags: u32,
+    pub requires_mask: u64,
+    pub effect_flags: u32,
+}
+
+impl PlanStep {
+    fn render(self) -> String {
+        format!("{}:{}", self.kind.as_name(), self.policy.as_name())
+    }
 }
 
 impl PlanKind {
@@ -62,13 +223,11 @@ fn sequential_plan() -> String {
 }
 
 fn predump_plan(mode: i32) -> String {
-    let mut passes = vec!["decorator_tags", "configlink", "route_match"];
-    if mode != MODE_FAST {
-        passes.push("similarity");
-        passes.push("semantic_edges");
-    }
-    passes.push("complexity");
-    passes.join(",")
+    predump_steps_v2(mode)
+        .into_iter()
+        .map(|step| step.kind.as_name())
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 fn extraction_choice(worker_count: i32, file_count: i32) -> &'static str {
@@ -112,21 +271,218 @@ fn incremental_extract_resolve_plan(worker_count: i32, file_count: i32) -> Strin
 }
 
 fn incremental_post_plan(mode: i32) -> String {
+    incremental_post_steps(mode)
+        .into_iter()
+        .map(PlanStep::render)
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+pub fn incremental_post_steps(mode: i32) -> Vec<PlanStep> {
+    use PlanStepKind::*;
+    use PlanStepPolicy::*;
+
     let mut passes = vec![
-        "k8s:ignore_err",
-        "incr_tests:ignore_err",
-        "incr_decorator_tags:ignore_err",
-        "incr_configlink:ignore_err",
+        PlanStep {
+            kind: K8s,
+            policy: IgnoreErr,
+        },
+        PlanStep {
+            kind: IncrTests,
+            policy: IgnoreErr,
+        },
+        PlanStep {
+            kind: IncrDecoratorTags,
+            policy: IgnoreErr,
+        },
+        PlanStep {
+            kind: IncrConfiglink,
+            policy: IgnoreErr,
+        },
     ];
     if mode <= MODE_MODERATE {
-        passes.push("incr_similarity:ignore_err");
-        passes.push("incr_semantic_edges:ignore_err");
+        passes.push(PlanStep {
+            kind: IncrSimilarity,
+            policy: IgnoreErr,
+        });
+        passes.push(PlanStep {
+            kind: IncrSemanticEdges,
+            policy: IgnoreErr,
+        });
     }
-    passes.push("edge_relink:best_effort");
-    passes.push("incremental_dump:best_effort");
-    passes.push("persist_hashes:best_effort");
-    passes.push("artifact_export:optional_existing_artifact");
-    passes.join(",")
+    passes.push(PlanStep {
+        kind: EdgeRelink,
+        policy: BestEffort,
+    });
+    passes.push(PlanStep {
+        kind: IncrementalDump,
+        policy: BestEffort,
+    });
+    passes.push(PlanStep {
+        kind: PersistHashes,
+        policy: BestEffort,
+    });
+    passes.push(PlanStep {
+        kind: ArtifactExport,
+        policy: OptionalExistingArtifact,
+    });
+    passes
+}
+
+pub fn steps_v2(
+    kind: PlanKind,
+    mode: i32,
+    worker_count: i32,
+    file_count: i32,
+) -> Option<Vec<PlanStepV2>> {
+    match kind {
+        PlanKind::Sequential => Some(sequential_steps_v2()),
+        PlanKind::Predump => Some(predump_steps_v2(mode)),
+        PlanKind::IncrementalExtractResolve => Some(incremental_extract_resolve_steps_v2(
+            worker_count,
+            file_count,
+        )),
+        PlanKind::ParallelExtraction => Some(parallel_extraction_steps_v2()),
+        _ => None,
+    }
+}
+
+fn incremental_extract_resolve_steps_v2(worker_count: i32, file_count: i32) -> Vec<PlanStepV2> {
+    use PlanStepPolicy::IgnoreErr;
+    use PlanStepV2Kind::*;
+
+    let specs = if extraction_choice(worker_count, file_count) == "parallel" {
+        vec![
+            (IncrementalParallelExtract, 0),
+            (IncrementalRegistry, 0),
+            (IncrementalResolve, PLAN_STEP_GATE_NO_CROSS_LSP_PREBUILD),
+        ]
+    } else {
+        vec![
+            (IncrementalDefinitions, 0),
+            (IncrementalCalls, 0),
+            (IncrementalUsages, 0),
+            (IncrementalSemantic, 0),
+        ]
+    };
+    let mut seen = 0u64;
+    let mut steps = Vec::with_capacity(specs.len());
+    for (kind, gate_flags) in specs {
+        steps.push(PlanStepV2 {
+            kind,
+            phase: PlanStepPhase::IncrementalExtractResolve,
+            policy: IgnoreErr,
+            gate_flags,
+            requires_mask: seen,
+            effect_flags: PLAN_STEP_EFFECT_MUTATES_GRAPH,
+        });
+        seen |= kind.bit();
+    }
+    steps
+}
+
+fn parallel_extraction_steps_v2() -> Vec<PlanStepV2> {
+    use PlanStepPolicy::*;
+    use PlanStepV2Kind::*;
+
+    let specs = [
+        (ParallelExtract, Required, PLAN_STEP_EFFECT_MUTATES_GRAPH),
+        (
+            ParallelRegistryBuild,
+            Required,
+            PLAN_STEP_EFFECT_MUTATES_GRAPH,
+        ),
+        (ParallelLspCrossPrepare, EnvOptional, 0),
+        (ParallelResolve, Required, PLAN_STEP_EFFECT_MUTATES_GRAPH),
+        (
+            ParallelInfraRoutes,
+            Required,
+            PLAN_STEP_EFFECT_MUTATES_GRAPH,
+        ),
+        (
+            ParallelInfraBindings,
+            Required,
+            PLAN_STEP_EFFECT_MUTATES_GRAPH,
+        ),
+        (ParallelK8s, IgnoreErr, PLAN_STEP_EFFECT_MUTATES_GRAPH),
+    ];
+    let mut seen = 0u64;
+    let mut steps = Vec::with_capacity(specs.len());
+    for (kind, policy, effect_flags) in specs {
+        steps.push(PlanStepV2 {
+            kind,
+            phase: PlanStepPhase::ParallelExtract,
+            policy,
+            gate_flags: 0,
+            requires_mask: seen,
+            effect_flags,
+        });
+        seen |= kind.bit();
+    }
+    steps
+}
+
+fn sequential_steps_v2() -> Vec<PlanStepV2> {
+    use PlanStepPolicy::*;
+    use PlanStepV2Kind::*;
+
+    let specs = [
+        (SequentialDefinitions, Required, 0),
+        (SequentialK8s, IgnoreErr, 0),
+        (
+            SequentialLspCross,
+            IgnoreErr,
+            PLAN_STEP_GATE_REQUIRES_RESULT_CACHE,
+        ),
+        (SequentialCalls, Required, 0),
+        (SequentialUsages, Required, 0),
+        (SequentialSemantic, Required, 0),
+    ];
+    let mut seen = 0u64;
+    let mut steps = Vec::with_capacity(specs.len());
+    for (kind, policy, gate_flags) in specs {
+        steps.push(PlanStepV2 {
+            kind,
+            phase: PlanStepPhase::SequentialExtract,
+            policy,
+            gate_flags,
+            requires_mask: seen,
+            effect_flags: PLAN_STEP_EFFECT_MUTATES_GRAPH,
+        });
+        seen |= kind.bit();
+    }
+    steps
+}
+
+fn predump_steps_v2(mode: i32) -> Vec<PlanStepV2> {
+    use PlanStepPolicy::Required;
+    use PlanStepV2Kind::*;
+
+    let specs = [
+        (PredumpDecoratorTags, 0),
+        (PredumpConfiglink, 0),
+        (PredumpRouteMatch, 0),
+        (PredumpSimilarity, PLAN_STEP_GATE_SKIP_FAST),
+        (PredumpSemanticEdges, PLAN_STEP_GATE_SKIP_FAST),
+        (PredumpComplexity, 0),
+    ];
+    let mut seen = 0u64;
+    let mut steps = Vec::with_capacity(specs.len());
+    for (kind, gate_flags) in specs {
+        if gate_flags & PLAN_STEP_GATE_SKIP_FAST != 0 && mode == MODE_FAST {
+            continue;
+        }
+        steps.push(PlanStepV2 {
+            kind,
+            phase: PlanStepPhase::Predump,
+            policy: Required,
+            gate_flags,
+            requires_mask: seen,
+            effect_flags: PLAN_STEP_EFFECT_MUTATES_GRAPH,
+        });
+        seen |= kind.bit();
+    }
+    steps
 }
 
 fn full_pipeline_plan(mode: i32, worker_count: i32, file_count: i32) -> String {
@@ -160,6 +516,11 @@ mod tests {
     use super::*;
 
     #[test]
+    fn typed_v2_step_kind_fits_requires_mask_contract() {
+        assert!((PlanStepV2Kind::IncrementalResolve as u32) <= MAX_PLAN_STEP_V2_KIND);
+    }
+
+    #[test]
     fn sequential_plan_matches_c_dispatch_table() {
         assert_eq!(
             describe(PlanKind::Sequential, 0, 0, 0),
@@ -182,6 +543,226 @@ mod tests {
         assert_eq!(
             describe(PlanKind::Predump, 3, 0, 0),
             "decorator_tags,configlink,route_match,similarity,semantic_edges,complexity"
+        );
+    }
+
+    #[test]
+    fn predump_typed_v2_metadata_matches_string_plan() {
+        use PlanStepPhase::Predump;
+        use PlanStepPolicy::Required;
+        use PlanStepV2Kind::*;
+
+        let full = steps_v2(PlanKind::Predump, MODE_MODERATE, 99, 99).unwrap();
+        assert_eq!(full.len(), 6);
+        assert_eq!(
+            full.iter()
+                .map(|step| step.kind.as_name())
+                .collect::<Vec<_>>()
+                .join(","),
+            describe(PlanKind::Predump, MODE_MODERATE, 0, 0)
+        );
+        assert_eq!(full[0].kind, PredumpDecoratorTags);
+        assert_eq!(full[0].phase, Predump);
+        assert_eq!(full[0].policy, Required);
+        assert_eq!(full[0].gate_flags, 0);
+        assert_eq!(full[0].requires_mask, 0);
+        assert_eq!(full[0].effect_flags, PLAN_STEP_EFFECT_MUTATES_GRAPH);
+        assert_eq!(full[3].kind, PredumpSimilarity);
+        assert_eq!(full[3].gate_flags, PLAN_STEP_GATE_SKIP_FAST);
+        assert_eq!(
+            full[3].requires_mask,
+            PredumpDecoratorTags.bit() | PredumpConfiglink.bit() | PredumpRouteMatch.bit()
+        );
+        assert_eq!(full[5].kind, PredumpComplexity);
+        assert_eq!(
+            full[5].requires_mask,
+            PredumpDecoratorTags.bit()
+                | PredumpConfiglink.bit()
+                | PredumpRouteMatch.bit()
+                | PredumpSimilarity.bit()
+                | PredumpSemanticEdges.bit()
+        );
+
+        let fast = steps_v2(PlanKind::Predump, MODE_FAST, 0, 0).unwrap();
+        assert_eq!(fast.len(), 4);
+        assert_eq!(fast[3].kind, PredumpComplexity);
+        assert_eq!(
+            fast[3].requires_mask,
+            PredumpDecoratorTags.bit() | PredumpConfiglink.bit() | PredumpRouteMatch.bit()
+        );
+        assert_eq!(
+            fast.iter()
+                .map(|step| step.kind.as_name())
+                .collect::<Vec<_>>()
+                .join(","),
+            describe(PlanKind::Predump, MODE_FAST, 0, 0)
+        );
+        assert!(steps_v2(PlanKind::FullPipeline, 0, 0, 0).is_none());
+    }
+
+    #[test]
+    fn parallel_typed_v2_metadata_captures_outer_dispatch() {
+        use PlanStepPhase::ParallelExtract as ParallelExtractPhase;
+        use PlanStepPolicy::*;
+        use PlanStepV2Kind::*;
+
+        let steps = steps_v2(PlanKind::ParallelExtraction, MODE_MODERATE, 2, 51).unwrap();
+        assert_eq!(steps.len(), 7);
+        assert_eq!(
+            steps
+                .iter()
+                .map(|step| step.kind.as_name())
+                .collect::<Vec<_>>()
+                .join(","),
+            "parallel_extract,registry_build,lsp_cross_prepare,parallel_resolve,\
+             infra_routes,infra_bindings,k8s"
+        );
+        assert_eq!(steps[0].kind, ParallelExtract);
+        assert_eq!(steps[0].phase, ParallelExtractPhase);
+        assert_eq!(steps[0].policy, Required);
+        assert_eq!(steps[0].requires_mask, 0);
+        assert_eq!(steps[0].effect_flags, PLAN_STEP_EFFECT_MUTATES_GRAPH);
+        assert_eq!(steps[1].kind, ParallelRegistryBuild);
+        assert_eq!(steps[1].policy, Required);
+        assert_eq!(steps[1].requires_mask, ParallelExtract.bit());
+        assert_eq!(steps[1].effect_flags, PLAN_STEP_EFFECT_MUTATES_GRAPH);
+
+        assert_eq!(steps[2].kind, ParallelLspCrossPrepare);
+        assert_eq!(steps[2].policy, EnvOptional);
+        assert_eq!(
+            steps[2].requires_mask,
+            ParallelExtract.bit() | ParallelRegistryBuild.bit()
+        );
+        assert_eq!(steps[2].effect_flags, 0);
+
+        assert_eq!(steps[3].kind, ParallelResolve);
+        assert_eq!(steps[3].policy, Required);
+        assert_eq!(
+            steps[3].requires_mask,
+            ParallelExtract.bit() | ParallelRegistryBuild.bit() | ParallelLspCrossPrepare.bit()
+        );
+        assert_eq!(steps[3].effect_flags, PLAN_STEP_EFFECT_MUTATES_GRAPH);
+
+        assert_eq!(steps[6].kind, ParallelK8s);
+        assert_eq!(steps[6].policy, IgnoreErr);
+        assert_eq!(
+            steps[6].requires_mask,
+            ParallelExtract.bit()
+                | ParallelRegistryBuild.bit()
+                | ParallelLspCrossPrepare.bit()
+                | ParallelResolve.bit()
+                | ParallelInfraRoutes.bit()
+                | ParallelInfraBindings.bit()
+        );
+        assert_eq!(steps[6].effect_flags, PLAN_STEP_EFFECT_MUTATES_GRAPH);
+    }
+
+    #[test]
+    fn sequential_typed_v2_metadata_captures_dispatch_loop() {
+        use PlanStepPhase::SequentialExtract;
+        use PlanStepPolicy::*;
+        use PlanStepV2Kind::*;
+
+        let steps = steps_v2(PlanKind::Sequential, MODE_MODERATE, 99, 99).unwrap();
+        assert_eq!(steps.len(), 6);
+        assert_eq!(
+            steps
+                .iter()
+                .map(|step| step.kind.as_name())
+                .collect::<Vec<_>>()
+                .join(","),
+            "definitions,k8s,lsp_cross,calls,usages,semantic"
+        );
+        assert_eq!(steps[0].kind, SequentialDefinitions);
+        assert_eq!(steps[0].phase, SequentialExtract);
+        assert_eq!(steps[0].policy, Required);
+        assert_eq!(steps[0].gate_flags, 0);
+        assert_eq!(steps[0].requires_mask, 0);
+        assert_eq!(steps[0].effect_flags, PLAN_STEP_EFFECT_MUTATES_GRAPH);
+
+        assert_eq!(steps[1].kind, SequentialK8s);
+        assert_eq!(steps[1].policy, IgnoreErr);
+        assert_eq!(steps[1].requires_mask, SequentialDefinitions.bit());
+
+        assert_eq!(steps[2].kind, SequentialLspCross);
+        assert_eq!(steps[2].policy, IgnoreErr);
+        assert_eq!(steps[2].gate_flags, PLAN_STEP_GATE_REQUIRES_RESULT_CACHE);
+        assert_eq!(
+            steps[2].requires_mask,
+            SequentialDefinitions.bit() | SequentialK8s.bit()
+        );
+
+        assert_eq!(steps[5].kind, SequentialSemantic);
+        assert_eq!(
+            steps[5].requires_mask,
+            SequentialDefinitions.bit()
+                | SequentialK8s.bit()
+                | SequentialLspCross.bit()
+                | SequentialCalls.bit()
+                | SequentialUsages.bit()
+        );
+    }
+
+    #[test]
+    fn incremental_extract_resolve_typed_v2_metadata_matches_c_dispatch() {
+        use PlanStepPhase::IncrementalExtractResolve;
+        use PlanStepPolicy::IgnoreErr;
+        use PlanStepV2Kind::*;
+
+        let sequential =
+            steps_v2(PlanKind::IncrementalExtractResolve, MODE_MODERATE, 2, 50).unwrap();
+        assert_eq!(sequential.len(), 4);
+        assert_eq!(
+            sequential
+                .iter()
+                .map(|step| step.kind.as_name())
+                .collect::<Vec<_>>()
+                .join(","),
+            "definitions,calls,usages,semantic"
+        );
+        assert_eq!(sequential[0].kind, IncrementalDefinitions);
+        assert_eq!(sequential[0].phase, IncrementalExtractResolve);
+        assert_eq!(sequential[0].policy, IgnoreErr);
+        assert_eq!(sequential[0].gate_flags, 0);
+        assert_eq!(sequential[0].requires_mask, 0);
+        assert_eq!(sequential[0].effect_flags, PLAN_STEP_EFFECT_MUTATES_GRAPH);
+        assert_eq!(sequential[3].kind, IncrementalSemantic);
+        assert_eq!(
+            sequential[3].requires_mask,
+            IncrementalDefinitions.bit() | IncrementalCalls.bit() | IncrementalUsages.bit()
+        );
+        assert_eq!(
+            sequential
+                .iter()
+                .map(|step| step.kind.as_name())
+                .zip(sequential.iter().map(|step| step.policy.as_name()))
+                .map(|(name, policy)| format!("{name}:{policy}"))
+                .collect::<Vec<_>>()
+                .join(","),
+            describe(PlanKind::IncrementalExtractResolve, MODE_MODERATE, 2, 50)
+        );
+
+        let parallel = steps_v2(PlanKind::IncrementalExtractResolve, 0, 2, 51).unwrap();
+        assert_eq!(parallel.len(), 3);
+        assert_eq!(
+            parallel
+                .iter()
+                .map(|step| step.kind.as_name())
+                .collect::<Vec<_>>()
+                .join(","),
+            "incr_extract,incr_registry,incr_resolve"
+        );
+        assert_eq!(parallel[0].kind, IncrementalParallelExtract);
+        assert_eq!(parallel[0].phase, IncrementalExtractResolve);
+        assert_eq!(parallel[0].policy, IgnoreErr);
+        assert_eq!(parallel[0].requires_mask, 0);
+        assert_eq!(parallel[1].kind, IncrementalRegistry);
+        assert_eq!(parallel[1].requires_mask, IncrementalParallelExtract.bit());
+        assert_eq!(parallel[2].kind, IncrementalResolve);
+        assert_eq!(parallel[2].gate_flags, PLAN_STEP_GATE_NO_CROSS_LSP_PREBUILD);
+        assert_eq!(
+            parallel[2].requires_mask,
+            IncrementalParallelExtract.bit() | IncrementalRegistry.bit()
         );
     }
 
@@ -248,6 +829,67 @@ mod tests {
              incremental_dump:best_effort,persist_hashes:best_effort,\
              artifact_export:optional_existing_artifact"
         );
+    }
+
+    #[test]
+    fn incremental_post_typed_steps_capture_tail_policy() {
+        use PlanStepKind::*;
+        use PlanStepPolicy::*;
+
+        let full = incremental_post_steps(MODE_MODERATE);
+        assert_eq!(full.len(), 10);
+        assert_eq!(
+            full,
+            vec![
+                PlanStep {
+                    kind: K8s,
+                    policy: IgnoreErr
+                },
+                PlanStep {
+                    kind: IncrTests,
+                    policy: IgnoreErr
+                },
+                PlanStep {
+                    kind: IncrDecoratorTags,
+                    policy: IgnoreErr
+                },
+                PlanStep {
+                    kind: IncrConfiglink,
+                    policy: IgnoreErr
+                },
+                PlanStep {
+                    kind: IncrSimilarity,
+                    policy: IgnoreErr
+                },
+                PlanStep {
+                    kind: IncrSemanticEdges,
+                    policy: IgnoreErr
+                },
+                PlanStep {
+                    kind: EdgeRelink,
+                    policy: BestEffort
+                },
+                PlanStep {
+                    kind: IncrementalDump,
+                    policy: BestEffort
+                },
+                PlanStep {
+                    kind: PersistHashes,
+                    policy: BestEffort
+                },
+                PlanStep {
+                    kind: ArtifactExport,
+                    policy: OptionalExistingArtifact
+                },
+            ]
+        );
+
+        let fast = incremental_post_steps(MODE_FAST);
+        assert_eq!(fast.len(), 8);
+        assert_eq!(fast[4].kind, EdgeRelink);
+        assert_eq!(fast[5].kind, IncrementalDump);
+        assert_eq!(fast[6].kind, PersistHashes);
+        assert_eq!(fast[7].kind, ArtifactExport);
     }
 
     #[test]

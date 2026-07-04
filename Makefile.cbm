@@ -169,8 +169,10 @@ DISCOVER_SRCS = \
     src/discover/gitignore.c \
     src/discover/discover.c
 
-# Graph buffer module (new)
-GRAPH_BUFFER_SRCS = src/graph_buffer/graph_buffer.c
+# Graph buffer 模組
+GRAPH_BUFFER_SRCS = \
+    src/graph_buffer/graph_buffer.c \
+    src/graph_buffer/graph_buffer_mutation.c
 
 # Pipeline module (new)
 PIPELINE_SRCS = \
@@ -521,8 +523,8 @@ PP_OBJ_TEST = $(BUILD_DIR)/preprocessor.o
 # ── Targets ──────────────────────────────────────────────────────
 
 .PHONY: test test-repro test-foundation test-tsan cbm cbm-with-ui frontend embed clean-c \
-        rust-fmt rust-clippy rust-test rust-ffi-test rust-foundation-optin-test rust-pipeline-registry-optin-test rust-pipeline-plan-optin-test rust-language-graph-parity rust-language-graph-parity-update rust-baseline-fixtures rust-self-index-baseline rust-self-index-baseline-update rust-large-performance-baseline rust-large-performance-baseline-update rust-lint rust-dangerous-api rust-audit rust-security rust-ci \
-        lint lint-tidy lint-cppcheck lint-format security
+        rust-fmt rust-clippy rust-test rust-ffi-test rust-foundation-optin-test rust-pipeline-registry-optin-test rust-pipeline-plan-optin-test rust-language-graph-parity rust-language-graph-parity-update rust-baseline-fixtures rust-self-index-baseline rust-self-index-baseline-update rust-large-performance-baseline rust-large-performance-baseline-update rust-lint rust-dangerous-api rust-audit rust-security rust-ci rust-ci-tests \
+        lint lint-tidy lint-cppcheck lint-format lint-no-suppress lint-ci security
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)

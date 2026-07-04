@@ -237,7 +237,7 @@ static int resolve_usage_edges(cbm_pipeline_ctx_t *ctx, const CBMFileResult *res
         cbm_json_escape(esc_ref, sizeof(esc_ref), usage->ref_name);
         char uprops[CBM_SZ_512];
         snprintf(uprops, sizeof(uprops), "{\"callee\":\"%s\"}", esc_ref);
-        cbm_gbuf_insert_edge(ctx->gbuf, src->id, tgt->id, "USAGE", uprops);
+        cbm_gbuf_apply_insert_edge(ctx->gbuf, src->id, tgt->id, "USAGE", uprops);
         resolved++;
     }
     return resolved;
@@ -271,7 +271,7 @@ static int resolve_throw_edges(cbm_pipeline_ctx_t *ctx, const CBMFileResult *res
             continue;
         }
 
-        cbm_gbuf_insert_edge(ctx->gbuf, src->id, tgt->id, edge_type, "{}");
+        cbm_gbuf_apply_insert_edge(ctx->gbuf, src->id, tgt->id, edge_type, "{}");
         resolved++;
     }
     return resolved;
@@ -305,7 +305,7 @@ static int resolve_rw_edges(cbm_pipeline_ctx_t *ctx, const CBMFileResult *result
         }
 
         const char *edge_type = rw->is_write ? "WRITES" : "READS";
-        cbm_gbuf_insert_edge(ctx->gbuf, src->id, tgt->id, edge_type, "{}");
+        cbm_gbuf_apply_insert_edge(ctx->gbuf, src->id, tgt->id, edge_type, "{}");
         resolved++;
     }
     return resolved;

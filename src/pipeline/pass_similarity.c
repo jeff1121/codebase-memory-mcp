@@ -237,7 +237,7 @@ static int merge_sim_edges(cbm_gbuf_t *gbuf, sim_edge_buf_t *worker_bufs, int wo
             char props[PROPS_BUF_LEN];
             snprintf(props, sizeof(props), "{\"jaccard\":%.3f,\"same_file\":%s}", de->jaccard,
                      de->same_file ? "true" : "false");
-            cbm_gbuf_insert_edge(gbuf, de->source_id, de->target_id, "SIMILAR_TO", props);
+            cbm_gbuf_apply_insert_edge(gbuf, de->source_id, de->target_id, "SIMILAR_TO", props);
             total++;
         }
         free(worker_bufs[w].edges);

@@ -360,8 +360,8 @@ static int apply_decorator_tags(cbm_gbuf_t *gbuf, tagged_node_t *nodes, int node
         const char *props = gn->properties_json ? gn->properties_json : "{}";
         char *new_props = inject_decorator_tags(props, tag_words, tag_count);
         if (new_props) {
-            cbm_gbuf_upsert_node(gbuf, gn->label, gn->name, gn->qualified_name, gn->file_path,
-                                 gn->start_line, gn->end_line, new_props);
+            cbm_gbuf_apply_upsert_node(gbuf, gn->label, gn->name, gn->qualified_name, gn->file_path,
+                                       gn->start_line, gn->end_line, new_props);
             free(new_props);
             tagged++;
         }
