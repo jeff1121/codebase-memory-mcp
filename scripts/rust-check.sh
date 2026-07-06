@@ -56,5 +56,8 @@ make -f Makefile.cbm rust-store-arch-path-scope-optin-test
 echo "=== Rust MCP codec opt-in ==="
 make -f Makefile.cbm rust-mcp-codec-optin-test
 
+echo "=== Rust Cypher scalar func opt-in ==="
+make -f Makefile.cbm rust-cypher-scalar-func-optin-test
+
 echo "=== Rust language graph parity ==="
 make -f Makefile.cbm rust-language-graph-parity

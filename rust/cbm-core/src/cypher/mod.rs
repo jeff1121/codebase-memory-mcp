@@ -102,6 +102,35 @@ pub struct Token {
     pub text: Vec<u8>,
 }
 
+const SCALAR_FUNC_NAMES: [&[u8]; 14] = [
+    b"labels",
+    b"type",
+    b"id",
+    b"keys",
+    b"properties",
+    b"toInteger",
+    b"toFloat",
+    b"toBoolean",
+    b"size",
+    b"length",
+    b"trim",
+    b"ltrim",
+    b"rtrim",
+    b"reverse",
+];
+
+/// 對齊 `src/cypher/cypher.c` `scalar_func_canonical`：以 ASCII 大小寫不敏感
+/// （對齊 `cyp_ci_eq`）比對 `input`，回傳符合的 canonical 名稱索引（順序需與 C
+/// `names[]` 一致），或 `None`。索引由 C 端映射回其自身的 static 名稱字串，因此
+/// 保留原本回傳 static 指標的語意。
+#[must_use]
+pub fn scalar_func_index(input: Option<&[u8]>) -> Option<usize> {
+    let input = input?;
+    SCALAR_FUNC_NAMES
+        .iter()
+        .position(|name| input.eq_ignore_ascii_case(name))
+}
+
 #[must_use]
 pub fn lex(input: &[u8]) -> Vec<Token> {
     let mut tokens = Vec::new();
@@ -1261,6 +1290,28 @@ const TOKEN_NAMES: &[&str] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scalar_func_index_matches_c_contract() {
+        assert_eq!(scalar_func_index(Some(b"labels")), Some(0));
+        assert_eq!(scalar_func_index(Some(b"LABELS")), Some(0));
+        assert_eq!(scalar_func_index(Some(b"Type")), Some(1));
+        assert_eq!(scalar_func_index(Some(b"toInteger")), Some(5));
+        assert_eq!(scalar_func_index(Some(b"TOINTEGER")), Some(5));
+        assert_eq!(scalar_func_index(Some(b"toBoolean")), Some(7));
+        assert_eq!(scalar_func_index(Some(b"reverse")), Some(13));
+        assert_eq!(scalar_func_index(Some(b"REVERSE")), Some(13));
+        // 不符合：未知名稱、長度不符、空、null、由別處處理的關鍵字
+        assert_eq!(scalar_func_index(Some(b"unknown")), None);
+        assert_eq!(scalar_func_index(Some(b"label")), None);
+        assert_eq!(scalar_func_index(Some(b"labelsX")), None);
+        assert_eq!(scalar_func_index(Some(b"")), None);
+        assert_eq!(scalar_func_index(None), None);
+        assert_eq!(scalar_func_index(Some(b"toLower")), None);
+        assert_eq!(scalar_func_index(Some(b"toString")), None);
+        // 非 ASCII byte 不應誤判為已知函式
+        assert_eq!(scalar_func_index(Some(b"label\xc3\xa9")), None);
+    }
 
     #[test]
     fn lexes_core_contract_tokens() {

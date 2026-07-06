@@ -947,6 +947,19 @@ pub unsafe extern "C" fn cbm_rs_cypher_parse_summary_v1(
 #[no_mangle]
 /// # Safety
 ///
+/// `input` 必須是 null，或指向 NUL-terminated C string。回傳符合的 scalar function
+/// canonical 名稱索引（0..N-1，對齊 C `scalar_func_canonical` 的 `names` 順序），
+/// 或 `-1` 表示不符合。ASCII 大小寫不敏感，對齊 C `cyp_ci_eq`。
+pub unsafe extern "C" fn cbm_rs_cypher_scalar_func_index_v1(input: *const c_char) -> c_int {
+    match cypher::scalar_func_index(unsafe { c_bytes(input) }) {
+        Some(idx) => idx as c_int,
+        None => -1,
+    }
+}
+
+#[no_mangle]
+/// # Safety
+///
 /// `input` 必須是 null，或指向至少 `len` bytes 的可讀記憶體；`buf` 必須是
 /// null，或指向 `bufsize` bytes 的可寫記憶體。回傳 JSON-RPC request envelope
 /// summary 的完整長度；null input、負 len、非 object root 或缺少 string method

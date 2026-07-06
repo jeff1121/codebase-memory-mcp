@@ -1329,16 +1329,25 @@ static bool cyp_ci_eq(const char *a, const char *b) {
  * invoked by identifier — labels/type/id/keys/properties and the numeric/bool
  * casts toInteger/toFloat/toBoolean — or NULL if unrecognised (case-insensitive).
  * toLower/toUpper/toString are separate keyword tokens handled elsewhere. */
+#ifdef CBM_USE_RUST_CYPHER_SCALAR_FUNC
+extern int cbm_rs_cypher_scalar_func_index_v1(const char *input);
+#endif
+
 static const char *scalar_func_canonical(const char *s) {
     static const char *const names[] = {
         "labels", "type",   "id",   "keys",  "properties", "toInteger", "toFloat", "toBoolean",
         "size",   "length", "trim", "ltrim", "rtrim",      "reverse",   NULL};
+#ifdef CBM_USE_RUST_CYPHER_SCALAR_FUNC
+    int idx = cbm_rs_cypher_scalar_func_index_v1(s);
+    return idx < 0 ? NULL : names[idx];
+#else
     for (int i = 0; names[i]; i++) {
         if (cyp_ci_eq(s, names[i])) {
             return names[i];
         }
     }
     return NULL;
+#endif
 }
 
 /* True for single-argument functions that transform a scalar string value

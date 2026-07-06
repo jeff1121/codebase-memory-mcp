@@ -414,6 +414,7 @@ extern size_t cbm_rs_cypher_lex_summary_v1(char *buf, size_t bufsize, const unsi
                                            int len);
 extern size_t cbm_rs_cypher_parse_summary_v1(char *buf, size_t bufsize, const unsigned char *input,
                                              int len);
+extern int cbm_rs_cypher_scalar_func_index_v1(const char *input);
 extern size_t cbm_rs_mcp_jsonrpc_request_summary_v1(char *buf, size_t bufsize,
                                                     const unsigned char *input, int len);
 extern int cbm_rs_mcp_jsonrpc_parse_v1(const unsigned char *input, int len,
@@ -3270,6 +3271,25 @@ static void test_yaml_exports(void) {
     cbm_rs_yaml_free(top);
 }
 
+static void test_cypher_scalar_func_index_exports(void) {
+    /* 符合（ASCII 大小寫不敏感），索引對齊 C scalar_func_canonical 的 names[] 順序 */
+    check_int("cypher_scalar_labels", cbm_rs_cypher_scalar_func_index_v1("labels"), 0);
+    check_int("cypher_scalar_labels_upper", cbm_rs_cypher_scalar_func_index_v1("LABELS"), 0);
+    check_int("cypher_scalar_type", cbm_rs_cypher_scalar_func_index_v1("Type"), 1);
+    check_int("cypher_scalar_tointeger", cbm_rs_cypher_scalar_func_index_v1("toInteger"), 5);
+    check_int("cypher_scalar_tointeger_upper", cbm_rs_cypher_scalar_func_index_v1("TOINTEGER"), 5);
+    check_int("cypher_scalar_toboolean", cbm_rs_cypher_scalar_func_index_v1("toBoolean"), 7);
+    check_int("cypher_scalar_reverse", cbm_rs_cypher_scalar_func_index_v1("reverse"), 13);
+    /* 不符合 → -1 */
+    check_int("cypher_scalar_null", cbm_rs_cypher_scalar_func_index_v1(NULL), -1);
+    check_int("cypher_scalar_empty", cbm_rs_cypher_scalar_func_index_v1(""), -1);
+    check_int("cypher_scalar_unknown", cbm_rs_cypher_scalar_func_index_v1("unknown"), -1);
+    check_int("cypher_scalar_prefix", cbm_rs_cypher_scalar_func_index_v1("label"), -1);
+    check_int("cypher_scalar_suffix", cbm_rs_cypher_scalar_func_index_v1("labelsX"), -1);
+    check_int("cypher_scalar_tolower", cbm_rs_cypher_scalar_func_index_v1("toLower"), -1);
+    check_int("cypher_scalar_tostring", cbm_rs_cypher_scalar_func_index_v1("toString"), -1);
+}
+
 static void test_cypher_lexer_exports(void) {
     check_int("cypher_lex_count_null", cbm_rs_cypher_lex_token_count_v1(NULL, 0), -1);
     char invalid_buf[8] = "x";
@@ -3790,6 +3810,7 @@ int main(void) {
     test_yaml_exports();
     test_cypher_lexer_exports();
     test_cypher_parse_summary_export();
+    test_cypher_scalar_func_index_exports();
     test_mcp_jsonrpc_summary_export();
     test_mcp_jsonrpc_parse_export();
     test_mcp_tools_cursor_offset_exports();
