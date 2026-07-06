@@ -296,9 +296,12 @@ TEST_FOUNDATION_SUITE_SRCS = \
     tests/test_dyn_array.c \
     tests/test_str_intern.c \
     tests/test_log.c \
+    tests/test_profile.c \
     tests/test_diagnostics.c \
     tests/test_str_util.c \
+    tests/test_compat.c \
     tests/test_platform.c \
+    tests/test_yaml.c \
     tests/test_dump_verify.c
 
 TEST_FOUNDATION_SRCS = \
@@ -391,7 +394,7 @@ TEST_HTTPD_SRCS = tests/test_httpd.c
 
 TEST_SECURITY_SRCS = tests/test_security.c
 
-TEST_YAML_SRCS = tests/test_yaml.c
+TEST_YAML_SRCS =
 
 TEST_SIMHASH_SRCS = tests/test_simhash.c
 
@@ -455,7 +458,7 @@ TEST_REPRO_SRCS = \
     tests/repro/repro_lsp_java_cs.c \
     tests/repro/repro_lsp_kt_php_rust.c
 
-ALL_TEST_SRCS =tests/test_main.c $(TEST_FOUNDATION_SUITE_SRCS) $(TEST_EXTRACTION_SRCS) $(TEST_STORE_SRCS) $(TEST_CYPHER_SRCS) $(TEST_MCP_SRCS) $(TEST_DISCOVER_SRCS) $(TEST_GRAPH_BUFFER_SRCS) $(TEST_PIPELINE_SRCS) $(TEST_WATCHER_SRCS) $(TEST_LZ4_SRCS) $(TEST_ZSTD_SRCS) $(TEST_ARTIFACT_SRCS) $(TEST_SQLITE_WRITER_SRCS) $(TEST_GO_LSP_SRCS) $(TEST_C_LSP_SRCS) $(TEST_PHP_LSP_SRCS) $(TEST_CS_LSP_SRCS) $(TEST_CS_LSP_BENCH_SRCS) $(TEST_SCOPE_SRCS) $(TEST_TYPE_REP_SRCS) $(TEST_PY_LSP_SRCS) $(TEST_PY_LSP_BENCH_SRCS) $(TEST_PY_LSP_STRESS_SRCS) $(TEST_PY_LSP_SCALE_SRCS) $(TEST_TS_LSP_SRCS) $(TEST_JAVA_LSP_SRCS) $(TEST_KOTLIN_LSP_SRCS) $(TEST_RUST_LSP_SRCS) $(TEST_TRACES_SRCS) $(TEST_CLI_SRCS) $(TEST_MEM_SRCS) $(TEST_UI_SRCS) $(TEST_HTTPD_SRCS) $(TEST_SECURITY_SRCS) $(TEST_YAML_SRCS) $(TEST_SIMHASH_SRCS) $(TEST_STACK_OVERFLOW_SRCS) $(TEST_INTEGRATION_SRCS)
+ALL_TEST_SRCS =tests/test_main.c $(TEST_FOUNDATION_SUITE_SRCS) $(TEST_EXTRACTION_SRCS) $(TEST_STORE_SRCS) $(TEST_CYPHER_SRCS) $(TEST_MCP_SRCS) $(TEST_DISCOVER_SRCS) $(TEST_GRAPH_BUFFER_SRCS) $(TEST_PIPELINE_SRCS) $(TEST_WATCHER_SRCS) $(TEST_LZ4_SRCS) $(TEST_ZSTD_SRCS) $(TEST_ARTIFACT_SRCS) $(TEST_SQLITE_WRITER_SRCS) $(TEST_GO_LSP_SRCS) $(TEST_C_LSP_SRCS) $(TEST_PHP_LSP_SRCS) $(TEST_CS_LSP_SRCS) $(TEST_CS_LSP_BENCH_SRCS) $(TEST_SCOPE_SRCS) $(TEST_TYPE_REP_SRCS) $(TEST_PY_LSP_SRCS) $(TEST_PY_LSP_BENCH_SRCS) $(TEST_PY_LSP_STRESS_SRCS) $(TEST_PY_LSP_SCALE_SRCS) $(TEST_TS_LSP_SRCS) $(TEST_JAVA_LSP_SRCS) $(TEST_KOTLIN_LSP_SRCS) $(TEST_RUST_LSP_SRCS) $(TEST_TRACES_SRCS) $(TEST_CLI_SRCS) $(TEST_MEM_SRCS) $(TEST_UI_SRCS) $(TEST_HTTPD_SRCS) $(TEST_SECURITY_SRCS) $(TEST_SIMHASH_SRCS) $(TEST_STACK_OVERFLOW_SRCS) $(TEST_INTEGRATION_SRCS)
 
 
 # ── Build directories ────────────────────────────────────────────
@@ -494,13 +497,34 @@ endif
 ifeq ($(CBM_USE_RUST_PLATFORM_ENV_DIRS),1)
 CFLAGS_COMMON += -DCBM_USE_RUST_PLATFORM_ENV_DIRS
 endif
+ifeq ($(CBM_USE_RUST_PROFILE_ENV),1)
+CFLAGS_COMMON += -DCBM_USE_RUST_PROFILE_ENV
+endif
 ifeq ($(CBM_USE_RUST_PIPELINE_REGISTRY),1)
 CFLAGS_COMMON += -DCBM_USE_RUST_PIPELINE_REGISTRY
 endif
 ifeq ($(CBM_USE_RUST_PIPELINE_PLAN),1)
 CFLAGS_COMMON += -DCBM_USE_RUST_PIPELINE_PLAN
 endif
-ifneq ($(filter 1,$(CBM_USE_RUST_DUMP_VERIFY) $(CBM_USE_RUST_STR_INTERN) $(CBM_USE_RUST_STR_UTIL) $(CBM_USE_RUST_PLATFORM_PATH) $(CBM_USE_RUST_PLATFORM_CGROUP) $(CBM_USE_RUST_PLATFORM_ENV_DIRS) $(CBM_USE_RUST_PIPELINE_REGISTRY) $(CBM_USE_RUST_PIPELINE_PLAN)),)
+ifeq ($(CBM_USE_RUST_STORE_FTS_TOKENIZER),1)
+CFLAGS_COMMON += -DCBM_USE_RUST_STORE_FTS_TOKENIZER
+endif
+ifeq ($(CBM_USE_RUST_STORE_MMAP_RESOLVER),1)
+CFLAGS_COMMON += -DCBM_USE_RUST_STORE_MMAP_RESOLVER
+endif
+ifeq ($(CBM_USE_RUST_STORE_IMMUTABLE_URI),1)
+CFLAGS_COMMON += -DCBM_USE_RUST_STORE_IMMUTABLE_URI
+endif
+ifeq ($(CBM_USE_RUST_STORE_SEARCH_PATTERN),1)
+CFLAGS_COMMON += -DCBM_USE_RUST_STORE_SEARCH_PATTERN
+endif
+ifeq ($(CBM_USE_RUST_STORE_ARCH_HELPERS),1)
+CFLAGS_COMMON += -DCBM_USE_RUST_STORE_ARCH_HELPERS
+endif
+ifeq ($(CBM_USE_RUST_MCP_CODEC),1)
+CFLAGS_COMMON += -DCBM_USE_RUST_MCP_CODEC
+endif
+ifneq ($(filter 1,$(CBM_USE_RUST_DUMP_VERIFY) $(CBM_USE_RUST_STR_INTERN) $(CBM_USE_RUST_STR_UTIL) $(CBM_USE_RUST_PLATFORM_PATH) $(CBM_USE_RUST_PLATFORM_CGROUP) $(CBM_USE_RUST_PLATFORM_ENV_DIRS) $(CBM_USE_RUST_PROFILE_ENV) $(CBM_USE_RUST_PIPELINE_REGISTRY) $(CBM_USE_RUST_PIPELINE_PLAN) $(CBM_USE_RUST_STORE_FTS_TOKENIZER) $(CBM_USE_RUST_STORE_MMAP_RESOLVER) $(CBM_USE_RUST_STORE_IMMUTABLE_URI) $(CBM_USE_RUST_STORE_SEARCH_PATTERN) $(CBM_USE_RUST_STORE_ARCH_HELPERS) $(CBM_USE_RUST_MCP_CODEC)),)
 RUST_FOUNDATION_TEST_LIB = $(RUST_STATICLIB_TEST)
 RUST_FOUNDATION_PROD_LIB = $(RUST_STATICLIB_PROD)
 endif
@@ -523,7 +547,7 @@ PP_OBJ_TEST = $(BUILD_DIR)/preprocessor.o
 # ── Targets ──────────────────────────────────────────────────────
 
 .PHONY: test test-repro test-foundation test-tsan cbm cbm-with-ui frontend embed clean-c \
-        rust-fmt rust-clippy rust-test rust-ffi-test rust-foundation-optin-test rust-pipeline-registry-optin-test rust-pipeline-plan-optin-test rust-language-graph-parity rust-language-graph-parity-update rust-baseline-fixtures rust-self-index-baseline rust-self-index-baseline-update rust-large-performance-baseline rust-large-performance-baseline-update rust-lint rust-dangerous-api rust-audit rust-security rust-ci rust-ci-tests \
+        rust-fmt rust-clippy rust-test rust-ffi-test rust-foundation-optin-test rust-pipeline-registry-optin-test rust-pipeline-plan-optin-test rust-store-fts-tokenizer-optin-test rust-store-mmap-resolver-optin-test rust-store-immutable-uri-optin-test rust-store-search-pattern-optin-test rust-store-arch-helper-optin-test rust-mcp-codec-optin-test rust-language-graph-parity rust-language-graph-parity-update rust-baseline-fixtures rust-self-index-baseline rust-self-index-baseline-update rust-large-performance-baseline rust-large-performance-baseline-update rust-lint rust-dangerous-api rust-audit rust-security rust-ci rust-ci-tests \
         lint lint-tidy lint-cppcheck lint-format lint-no-suppress lint-ci security
 
 $(BUILD_DIR):
@@ -762,7 +786,9 @@ rust-foundation-optin-test:
 	$(MAKE) -f Makefile.cbm clean-c
 	$(MAKE) -f Makefile.cbm CBM_USE_RUST_PLATFORM_ENV_DIRS=1 test-foundation
 	$(MAKE) -f Makefile.cbm clean-c
-	$(MAKE) -f Makefile.cbm CBM_USE_RUST_DUMP_VERIFY=1 CBM_USE_RUST_STR_INTERN=1 CBM_USE_RUST_STR_UTIL=1 CBM_USE_RUST_PLATFORM_PATH=1 CBM_USE_RUST_PLATFORM_CGROUP=1 CBM_USE_RUST_PLATFORM_ENV_DIRS=1 test-foundation
+	$(MAKE) -f Makefile.cbm CBM_USE_RUST_PROFILE_ENV=1 test-foundation
+	$(MAKE) -f Makefile.cbm clean-c
+	$(MAKE) -f Makefile.cbm CBM_USE_RUST_DUMP_VERIFY=1 CBM_USE_RUST_STR_INTERN=1 CBM_USE_RUST_STR_UTIL=1 CBM_USE_RUST_PLATFORM_PATH=1 CBM_USE_RUST_PLATFORM_CGROUP=1 CBM_USE_RUST_PLATFORM_ENV_DIRS=1 CBM_USE_RUST_PROFILE_ENV=1 test-foundation
 
 rust-pipeline-registry-optin-test:
 	$(MAKE) -f Makefile.cbm clean-c
@@ -774,6 +800,36 @@ rust-pipeline-plan-optin-test:
 	$(MAKE) -f Makefile.cbm CBM_USE_RUST_PIPELINE_PLAN=1 $(BUILD_DIR)/test-runner
 	cd $(CURDIR) && $(BUILD_DIR)/test-runner pipeline
 
+rust-store-fts-tokenizer-optin-test:
+	$(MAKE) -f Makefile.cbm clean-c
+	$(MAKE) -f Makefile.cbm CBM_USE_RUST_STORE_FTS_TOKENIZER=1 $(BUILD_DIR)/test-runner
+	cd $(CURDIR) && $(BUILD_DIR)/test-runner store_compat mcp
+
+rust-store-mmap-resolver-optin-test:
+	$(MAKE) -f Makefile.cbm clean-c
+	$(MAKE) -f Makefile.cbm CBM_USE_RUST_STORE_MMAP_RESOLVER=1 $(BUILD_DIR)/test-runner
+	cd $(CURDIR) && $(BUILD_DIR)/test-runner store_pragmas store_compat
+
+rust-store-immutable-uri-optin-test:
+	$(MAKE) -f Makefile.cbm clean-c
+	$(MAKE) -f Makefile.cbm CBM_USE_RUST_STORE_IMMUTABLE_URI=1 $(BUILD_DIR)/test-runner
+	cd $(CURDIR) && $(BUILD_DIR)/test-runner store_compat mcp
+
+rust-store-search-pattern-optin-test:
+	$(MAKE) -f Makefile.cbm clean-c
+	$(MAKE) -f Makefile.cbm CBM_USE_RUST_STORE_SEARCH_PATTERN=1 $(BUILD_DIR)/test-runner
+	cd $(CURDIR) && $(BUILD_DIR)/test-runner store_search mcp
+
+rust-store-arch-helper-optin-test:
+	$(MAKE) -f Makefile.cbm clean-c
+	$(MAKE) -f Makefile.cbm CBM_USE_RUST_STORE_ARCH_HELPERS=1 $(BUILD_DIR)/test-runner
+	cd $(CURDIR) && $(BUILD_DIR)/test-runner store_arch store_search mcp
+
+rust-mcp-codec-optin-test:
+	$(MAKE) -f Makefile.cbm clean-c
+	$(MAKE) -f Makefile.cbm CBM_USE_RUST_MCP_CODEC=1 $(BUILD_DIR)/test-runner
+	cd $(CURDIR) && $(BUILD_DIR)/test-runner mcp
+
 rust-language-graph-parity:
 	rm -rf $(RUST_PARITY_DIR)
 	mkdir -p $(RUST_PARITY_DIR)
@@ -781,7 +837,7 @@ rust-language-graph-parity:
 	$(MAKE) -f Makefile.cbm cbm
 	cp $(BUILD_DIR)/codebase-memory-mcp $(RUST_PARITY_DIR)/cbm-default
 	$(MAKE) -f Makefile.cbm clean-c
-	$(MAKE) -f Makefile.cbm CBM_USE_RUST_PIPELINE_REGISTRY=1 CBM_USE_RUST_PIPELINE_PLAN=1 cbm
+	$(MAKE) -f Makefile.cbm CBM_USE_RUST_PIPELINE_REGISTRY=1 CBM_USE_RUST_PIPELINE_PLAN=1 CBM_USE_RUST_STORE_FTS_TOKENIZER=1 cbm
 	cp $(BUILD_DIR)/codebase-memory-mcp $(RUST_PARITY_DIR)/cbm-rust-pipeline
 	cd $(CURDIR) && python3 scripts/rust-language-graph-parity.py $(RUST_PARITY_DIR)/cbm-default $(RUST_PARITY_DIR)/cbm-rust-pipeline
 
@@ -792,7 +848,7 @@ rust-language-graph-parity-update:
 	$(MAKE) -f Makefile.cbm cbm
 	cp $(BUILD_DIR)/codebase-memory-mcp $(RUST_PARITY_DIR)/cbm-default
 	$(MAKE) -f Makefile.cbm clean-c
-	$(MAKE) -f Makefile.cbm CBM_USE_RUST_PIPELINE_REGISTRY=1 CBM_USE_RUST_PIPELINE_PLAN=1 cbm
+	$(MAKE) -f Makefile.cbm CBM_USE_RUST_PIPELINE_REGISTRY=1 CBM_USE_RUST_PIPELINE_PLAN=1 CBM_USE_RUST_STORE_FTS_TOKENIZER=1 cbm
 	cp $(BUILD_DIR)/codebase-memory-mcp $(RUST_PARITY_DIR)/cbm-rust-pipeline
 	cd $(CURDIR) && python3 scripts/rust-language-graph-parity.py $(RUST_PARITY_DIR)/cbm-default $(RUST_PARITY_DIR)/cbm-rust-pipeline --update
 
@@ -833,12 +889,12 @@ rust-audit:
 rust-security: rust-dangerous-api rust-audit
 	@echo "=== Rust source security checks passed; cargo-audit is enforced when RUST_AUDIT_REQUIRED=1 ==="
 
-rust-ci: rust-lint rust-test rust-ffi-test rust-foundation-optin-test rust-pipeline-registry-optin-test rust-pipeline-plan-optin-test rust-language-graph-parity rust-dangerous-api rust-audit
+rust-ci: rust-lint rust-test rust-ffi-test rust-foundation-optin-test rust-pipeline-registry-optin-test rust-pipeline-plan-optin-test rust-store-fts-tokenizer-optin-test rust-store-mmap-resolver-optin-test rust-store-immutable-uri-optin-test rust-store-search-pattern-optin-test rust-store-arch-helper-optin-test rust-mcp-codec-optin-test rust-language-graph-parity rust-dangerous-api rust-audit
 	@echo "=== Rust checks passed ==="
 
 # Test/parity subset of rust-ci for CI (dependency audit + dangerous-API
 # allow-list run in the separate security gate, so they are omitted here).
-rust-ci-tests: rust-lint rust-test rust-ffi-test rust-foundation-optin-test rust-pipeline-registry-optin-test rust-pipeline-plan-optin-test rust-language-graph-parity
+rust-ci-tests: rust-lint rust-test rust-ffi-test rust-foundation-optin-test rust-pipeline-registry-optin-test rust-pipeline-plan-optin-test rust-store-fts-tokenizer-optin-test rust-store-mmap-resolver-optin-test rust-store-immutable-uri-optin-test rust-store-search-pattern-optin-test rust-store-arch-helper-optin-test rust-mcp-codec-optin-test rust-language-graph-parity
 	@echo "=== Rust test/parity gates passed ==="
 
 # ── Linting ─────────────────────────────────────────────────────

@@ -289,10 +289,10 @@ static int check_go_class_implements(cbm_pipeline_ctx_t *ctx, const cbm_gbuf_nod
         }
         matched[m] = found;
     }
-    cbm_gbuf_insert_edge(ctx->gbuf, cls->id, iface->id, "IMPLEMENTS", "{}");
+    cbm_gbuf_apply_insert_edge(ctx->gbuf, cls->id, iface->id, "IMPLEMENTS", "{}");
     int edges = SKIP_ONE;
     for (int m = 0; m < im_count; m++) {
-        cbm_gbuf_insert_edge(ctx->gbuf, matched[m]->id, imethods[m].id, "OVERRIDE", "{}");
+        cbm_gbuf_apply_insert_edge(ctx->gbuf, matched[m]->id, imethods[m].id, "OVERRIDE", "{}");
         edges++;
     }
     return edges;
@@ -403,13 +403,12 @@ static void resolve_decorator(cbm_pipeline_ctx_t *ctx, const cbm_gbuf_node_t *no
          * stdlib annotation / proc-macro derive).  Materialise a synthetic
          * "Decorator" node so the DECORATES relation is still recorded.
          * Upsert dedupes by QN, so every use of the same decorator name shares
-         * one node (one extra node per distinct external decorator, project-
-         * wide).  Created in the single-threaded semantic pass, so direct
-         * ctx->gbuf mutation is safe here (mirrors pass_route_nodes). */
+         * one node (one extra node per distinct external decorator,
+         * project-wide). */
         char syn_qn[CBM_SZ_512];
         synth_decorator_qn(func_name, syn_qn, sizeof(syn_qn));
         int64_t syn_id =
-            cbm_gbuf_upsert_node(ctx->gbuf, "Decorator", func_name, syn_qn, "", 0, 0, "{}");
+            cbm_gbuf_apply_upsert_node(ctx->gbuf, "Decorator", func_name, syn_qn, "", 0, 0, "{}");
         if (syn_id != 0) {
             dec = cbm_gbuf_find_by_qn(ctx->gbuf, syn_qn);
         }
@@ -422,10 +421,10 @@ static void resolve_decorator(cbm_pipeline_ctx_t *ctx, const cbm_gbuf_node_t *no
         cbm_json_escape(esc_dec, sizeof(esc_dec), decorator);
         char props[CBM_SZ_512];
         snprintf(props, sizeof(props), "{\"decorator\":\"%s\"}", esc_dec);
-        cbm_gbuf_insert_edge(ctx->gbuf, node->id, dec->id, "DECORATES", props);
+        cbm_gbuf_apply_insert_edge(ctx->gbuf, node->id, dec->id, "DECORATES", props);
         /* Ensure a reference edge exists so the decorator appears in usage queries
          * without being misclassified as a real call by downstream passes. */
-        cbm_gbuf_insert_edge(ctx->gbuf, node->id, dec->id, "USAGE", "{}");
+        cbm_gbuf_apply_insert_edge(ctx->gbuf, node->id, dec->id, "USAGE", "{}");
         (*count)++;
     }
 }
@@ -457,7 +456,7 @@ static void sem_process_def_edges(cbm_pipeline_ctx_t *ctx, const CBMDefinition *
                 const char *edge_type = (base_label && strcmp(base_label, "Interface") == 0)
                                             ? "IMPLEMENTS"
                                             : "INHERITS";
-                cbm_gbuf_insert_edge(ctx->gbuf, node->id, base_node->id, edge_type, "{}");
+                cbm_gbuf_apply_insert_edge(ctx->gbuf, node->id, base_node->id, edge_type, "{}");
                 (*inherits_count)++;
             }
         }
@@ -514,7 +513,7 @@ static int resolve_impl_traits(cbm_pipeline_ctx_t *ctx, const CBMFileResult *res
         const cbm_gbuf_node_t *tn = cbm_gbuf_find_by_qn(ctx->gbuf, trait_qn);
         const cbm_gbuf_node_t *sn = cbm_gbuf_find_by_qn(ctx->gbuf, struct_qn);
         if (tn && sn && tn->id != sn->id) {
-            cbm_gbuf_insert_edge(ctx->gbuf, sn->id, tn->id, "IMPLEMENTS", "{}");
+            cbm_gbuf_apply_insert_edge(ctx->gbuf, sn->id, tn->id, "IMPLEMENTS", "{}");
             count++;
         }
     }

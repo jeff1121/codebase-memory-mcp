@@ -8,6 +8,7 @@
 
 enum { CBM_RS_INCR_POST_MAX_STEPS = 10 };
 enum { CBM_RS_PLAN_V2_MAX_STEPS = 16 };
+enum { CBM_RS_PLAN_TOP_MAX_STEPS = 12 };
 enum { CBM_RS_PLAN_STEP_MAX_KIND = 64 };
 
 enum {
@@ -84,6 +85,41 @@ enum {
 };
 enum { CBM_RS_PLAN_EFFECT_MUTATES_GRAPH = 1u << 0 };
 
+enum {
+    CBM_RS_PLAN_TOP_MACRO_EXTRACTION = 1,
+    CBM_RS_PLAN_TOP_USERCONFIG_LOAD = 2,
+    CBM_RS_PLAN_TOP_DISCOVER = 3,
+    CBM_RS_PLAN_TOP_TRY_INCREMENTAL_OR_DELETE_DB = 4,
+    CBM_RS_PLAN_TOP_STRUCTURE = 5,
+    CBM_RS_PLAN_TOP_EXTRACTION_DISPATCH = 6,
+    CBM_RS_PLAN_TOP_TESTS = 7,
+    CBM_RS_PLAN_TOP_GITHISTORY = 8,
+    CBM_RS_PLAN_TOP_PREDUMP = 9,
+    CBM_RS_PLAN_TOP_DUMP = 10,
+    CBM_RS_PLAN_TOP_PERSIST_HASHES = 11,
+    CBM_RS_PLAN_TOP_ARTIFACT_EXPORT = 12
+};
+
+enum { CBM_RS_PLAN_TOP_PHASE_FULL_PIPELINE = 5 };
+
+enum {
+    CBM_RS_PLAN_TOP_POLICY_REQUIRED = 0,
+    CBM_RS_PLAN_TOP_POLICY_BEST_EFFORT = 2,
+    CBM_RS_PLAN_TOP_POLICY_FULL_MODE_ONLY = 5,
+    CBM_RS_PLAN_TOP_POLICY_FAIL_OPEN = 6,
+    CBM_RS_PLAN_TOP_POLICY_EXISTING_DB_ONLY = 7,
+    CBM_RS_PLAN_TOP_POLICY_OPTIONAL_PERSISTENCE = 8
+};
+
+enum { CBM_RS_PLAN_TOP_GATE_SKIP_FAST = 1u << 0, CBM_RS_PLAN_TOP_GATE_MAY_SHORT_CIRCUIT = 1u << 1 };
+
+enum {
+    CBM_RS_PLAN_TOP_EFFECT_MUTATES_GRAPH = 1u << 0,
+    CBM_RS_PLAN_TOP_EFFECT_WRITES_STORE_OR_ARTIFACT = 1u << 1
+};
+
+enum { CBM_RS_PLAN_TOP_NO_NESTED_PLAN = -1 };
+
 typedef struct {
     int kind;
     int policy;
@@ -114,6 +150,32 @@ _Static_assert(offsetof(cbm_rs_pipeline_plan_step_v2_t, requires_mask) == 16,
                "PlanStepV2.requires_mask offset drift");
 _Static_assert(offsetof(cbm_rs_pipeline_plan_step_v2_t, effect_flags) == 24,
                "PlanStepV2.effect_flags offset drift");
+
+typedef struct {
+    int kind;
+    int phase;
+    int policy;
+    uint32_t gate_flags;
+    uint64_t requires_mask;
+    uint32_t effect_flags;
+    int nested_plan_kind;
+} cbm_rs_pipeline_top_step_v1_t;
+
+_Static_assert(sizeof(cbm_rs_pipeline_top_step_v1_t) == 32, "PipelineTopStepV1 ABI size drift");
+_Static_assert(offsetof(cbm_rs_pipeline_top_step_v1_t, kind) == 0,
+               "PipelineTopStepV1.kind offset drift");
+_Static_assert(offsetof(cbm_rs_pipeline_top_step_v1_t, phase) == 4,
+               "PipelineTopStepV1.phase offset drift");
+_Static_assert(offsetof(cbm_rs_pipeline_top_step_v1_t, policy) == 8,
+               "PipelineTopStepV1.policy offset drift");
+_Static_assert(offsetof(cbm_rs_pipeline_top_step_v1_t, gate_flags) == 12,
+               "PipelineTopStepV1.gate_flags offset drift");
+_Static_assert(offsetof(cbm_rs_pipeline_top_step_v1_t, requires_mask) == 16,
+               "PipelineTopStepV1.requires_mask offset drift");
+_Static_assert(offsetof(cbm_rs_pipeline_top_step_v1_t, effect_flags) == 24,
+               "PipelineTopStepV1.effect_flags offset drift");
+_Static_assert(offsetof(cbm_rs_pipeline_top_step_v1_t, nested_plan_kind) == 28,
+               "PipelineTopStepV1.nested_plan_kind offset drift");
 
 #ifdef CBM_USE_RUST_PIPELINE_PLAN
 

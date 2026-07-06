@@ -44,6 +44,6 @@ import、schema mismatch skip 與匯入後 graph 等價。`self-index-baseline.j
 index、schema、query、search、RSS guard 與 binary size guard；不屬於預設
 `scripts/test.sh`、`scripts/rust-check.sh` 或 `rust-ci`。`language-graph-parity.json`
 由 `make -f Makefile.cbm rust-language-graph-parity` 驗證，固定 Python、
-TypeScript、Go 與 YAML fixture 的 definitions、calls、imports、routes、
+TypeScript、Go、Rust、Java、C++ 與 YAML fixture 的 definitions、calls、imports、routes、
 semantic/LSP edges，並比對 default C path 與 Rust registry/plan opt-in path。
 目前 RSS 取樣支援 macOS/Linux。

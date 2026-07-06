@@ -7,7 +7,7 @@
 [![Languages](https://img.shields.io/badge/languages-158-orange)](https://github.com/DeusData/codebase-memory-mcp)
 [![Hybrid LSP](https://img.shields.io/badge/Hybrid_LSP-9_languages-blue)](#hybrid-lsp)
 [![Agents](https://img.shields.io/badge/agents-11-purple)](https://github.com/DeusData/codebase-memory-mcp)
-[![Pure C](https://img.shields.io/badge/pure_C-zero_dependencies-blue)](https://github.com/DeusData/codebase-memory-mcp)
+[![C default](https://img.shields.io/badge/C-default_with_Rust_opt--in-blue)](https://github.com/DeusData/codebase-memory-mcp)
 [![Rust core](https://img.shields.io/badge/Rust_core-experimental_opt--in-orange?logo=rust)](Rust-Refactor.md)
 [![Platform](https://img.shields.io/badge/macOS_%7C_Linux_%7C_Windows-supported-lightgrey)](https://github.com/DeusData/codebase-memory-mcp/releases/latest)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/DeusData/codebase-memory-mcp/badge)](https://scorecard.dev/viewer/?uri=github.com/DeusData/codebase-memory-mcp)
@@ -96,6 +96,17 @@ The `install` command automatically strips macOS quarantine attributes and ad-ho
 </details>
 
 The `install` command auto-detects all installed coding agents and configures MCP server entries, instruction files, skills, and pre-tool hooks for each.
+
+### Rust Core Progress
+
+`codebase-memory-mcp` is a **C-first** product by default. Rust components under
+`rust/` are introduced only through explicit opt-in flags (`CBM_USE_RUST_*`) and are
+validated against the default C behavior through parity gates.
+
+- Default binary: C-first path with optional Rust slices.
+- Rust slices: optional and additive (foundation, pipeline plan/registry, and the Store FTS tokenizer currently).
+- Release pipeline: PR and release jobs both run dedicated Rust gates (`_rust.yml`) before packaging.
+- Runtime switch: not enabled by default yet; Phase 5 switching work is still in progress (see [`Rust-Refactor.md`](Rust-Refactor.md)).
 
 ### Graph Visualization UI
 

@@ -8,6 +8,7 @@
 
 // for ISO timestamp
 
+#include <errno.h>
 #include <stdint.h>
 #include "foundation/constants.h"
 
@@ -66,6 +67,32 @@ enum {
 #include "foundation/log.h"
 #include "foundation/compat_regex.h"
 #include "foundation/str_util.h"
+
+#ifdef CBM_USE_RUST_STORE_FTS_TOKENIZER
+extern size_t cbm_rs_store_camel_split_v1(char *buf, size_t bufsize, const char *input);
+#endif
+#ifdef CBM_USE_RUST_STORE_MMAP_RESOLVER
+extern int64_t cbm_rs_store_resolve_mmap_size_value_v1(const char *value);
+#endif
+#ifdef CBM_USE_RUST_STORE_IMMUTABLE_URI
+extern size_t cbm_rs_store_build_immutable_uri_v1(char *buf, size_t bufsize, const char *path);
+#endif
+#ifdef CBM_USE_RUST_STORE_SEARCH_PATTERN
+extern size_t cbm_rs_store_glob_to_like_v1(char *buf, size_t bufsize, const char *pattern);
+extern size_t cbm_rs_store_ensure_case_insensitive_v1(char *buf, size_t bufsize,
+                                                      const char *pattern);
+extern size_t cbm_rs_store_strip_case_flag_v1(char *buf, size_t bufsize, const char *pattern);
+extern int cbm_rs_store_like_hint_count_v1(const char *pattern, int max_out);
+extern size_t cbm_rs_store_like_hint_v1(char *buf, size_t bufsize, const char *pattern, int max_out,
+                                        int index);
+#endif
+#ifdef CBM_USE_RUST_STORE_ARCH_HELPERS
+extern size_t cbm_rs_store_qn_to_package_v1(char *buf, size_t bufsize, const char *qn);
+extern size_t cbm_rs_store_qn_to_top_package_v1(char *buf, size_t bufsize, const char *qn);
+extern int cbm_rs_store_is_test_file_path_v1(const char *path);
+extern int cbm_rs_store_hop_to_risk_v1(int hop);
+extern size_t cbm_rs_store_risk_label_v1(char *buf, size_t bufsize, int level);
+#endif
 
 #define XXH_INLINE_ALL
 #include "xxhash/xxhash.h"
@@ -311,12 +338,17 @@ static int create_user_indexes(cbm_store_t *s) {
 int64_t cbm_store_resolve_mmap_size(void) {
     enum { MMAP_DEFAULT = 67108864, BASE_10 = 10 }; /* default 64 MB; decimal radix */
     char buf[ST_BUF_64];
-    if (cbm_safe_getenv("CBM_SQLITE_MMAP_SIZE", buf, sizeof(buf), NULL) == NULL) {
+    const char *value = cbm_safe_getenv("CBM_SQLITE_MMAP_SIZE", buf, sizeof(buf), NULL);
+#ifdef CBM_USE_RUST_STORE_MMAP_RESOLVER
+    return cbm_rs_store_resolve_mmap_size_value_v1(value);
+#endif
+    if (value == NULL) {
         return (int64_t)MMAP_DEFAULT;
     }
     char *end = NULL;
+    errno = 0;
     long long parsed = strtoll(buf, &end, BASE_10);
-    if (end == buf || *end != '\0') {
+    if (errno == ERANGE || end == buf || *end != '\0') {
         /* Malformed — fall back to default rather than fail the store open. */
         return (int64_t)MMAP_DEFAULT;
     }
@@ -422,6 +454,7 @@ static sqlite3_destructor_type cbm_sqlite_transient_destructor(void) {
 
 /* True if we should insert a space BEFORE input[i] to split a camelCase word
  * boundary (lowercase→uppercase or uppercase-run→uppercase-then-lowercase). */
+#ifndef CBM_USE_RUST_STORE_FTS_TOKENIZER
 static bool camel_should_split(const char *input, int i) {
     if (i <= 0) {
         return false;
@@ -437,10 +470,21 @@ static bool camel_should_split(const char *input, int i) {
     }
     return false;
 }
+#endif
 
 static void sqlite_camel_split(sqlite3_context *ctx, int argc, sqlite3_value **argv) {
     (void)argc;
     const char *input = (const char *)sqlite3_value_text(argv[0]);
+#ifdef CBM_USE_RUST_STORE_FTS_TOKENIZER
+    char rust_buf[CAMEL_SPLIT_BUF];
+    size_t rust_len = cbm_rs_store_camel_split_v1(rust_buf, sizeof(rust_buf), input);
+    if (rust_len < sizeof(rust_buf)) {
+        sqlite3_result_text(ctx, rust_buf, (int)rust_len, CBM_SQLITE_TRANSIENT);
+        return;
+    }
+    sqlite3_result_text(ctx, input ? input : "", SQLITE_AUTO_LEN, CBM_SQLITE_TRANSIENT);
+    return;
+#else
     if (!input || !input[0]) {
         sqlite3_result_text(ctx, input ? input : "", SQLITE_AUTO_LEN, CBM_SQLITE_TRANSIENT);
         return;
@@ -460,6 +504,7 @@ static void sqlite_camel_split(sqlite3_context *ctx, int argc, sqlite3_value **a
     }
     buf[len] = '\0';
     sqlite3_result_text(ctx, buf, len, CBM_SQLITE_TRANSIENT);
+#endif
 }
 
 /* ── REGEXP function for SQLite ──────────────────────────────────── */
@@ -650,6 +695,10 @@ const char *cbm_store_db_path(const cbm_store_t *s) {
  * for drive-letter paths so the drive is not parsed as a URI authority.
  * Returns false if the output buffer is too small. */
 static bool build_immutable_uri(const char *path, char *out, size_t out_sz) {
+#ifdef CBM_USE_RUST_STORE_IMMUTABLE_URI
+    size_t len = cbm_rs_store_build_immutable_uri_v1(out, out_sz, path);
+    return len != SIZE_MAX && len < out_sz;
+#else
     static const char PREFIX[] = "file://";
     static const char SUFFIX[] = "?immutable=1";
     static const char HEX[] = "0123456789ABCDEF";
@@ -699,6 +748,7 @@ static bool build_immutable_uri(const char *path, char *out, size_t out_sz) {
     pos += suffix_len;
     out[pos] = '\0';
     return true;
+#endif
 }
 
 cbm_store_t *cbm_store_open_path_query(const char *db_path) {
@@ -2198,6 +2248,22 @@ int cbm_store_restore_from(cbm_store_t *dst, cbm_store_t *src) {
 
 /* Convert a glob pattern to SQL LIKE pattern. */
 char *cbm_glob_to_like(const char *pattern) {
+#ifdef CBM_USE_RUST_STORE_SEARCH_PATTERN
+    size_t len = cbm_rs_store_glob_to_like_v1(NULL, 0, pattern);
+    if (len == SIZE_MAX) {
+        return NULL;
+    }
+    char *out = malloc(len + SKIP_ONE);
+    if (!out) {
+        return NULL;
+    }
+    size_t written = cbm_rs_store_glob_to_like_v1(out, len + SKIP_ONE, pattern);
+    if (written == SIZE_MAX) {
+        free(out);
+        return NULL;
+    }
+    return out;
+#else
     if (!pattern) {
         return NULL;
     }
@@ -2226,11 +2292,39 @@ char *cbm_glob_to_like(const char *pattern) {
     }
     out[j] = '\0';
     return out;
+#endif
 }
 
 /* ── extractLikeHints ─────────────────────────────────────────── */
 
 int cbm_extract_like_hints(const char *pattern, char **out, int max_out) {
+#ifdef CBM_USE_RUST_STORE_SEARCH_PATTERN
+    if (!pattern || !out || max_out <= 0) {
+        return 0;
+    }
+    int nhints = cbm_rs_store_like_hint_count_v1(pattern, max_out);
+    if (nhints <= 0) {
+        return 0;
+    }
+    int count = 0;
+    for (int i = 0; i < nhints && i < max_out; i++) {
+        size_t len = cbm_rs_store_like_hint_v1(NULL, 0, pattern, max_out, i);
+        if (len == SIZE_MAX) {
+            break;
+        }
+        char *hint = malloc(len + SKIP_ONE);
+        if (!hint) {
+            break;
+        }
+        size_t written = cbm_rs_store_like_hint_v1(hint, len + SKIP_ONE, pattern, max_out, i);
+        if (written == SIZE_MAX) {
+            free(hint);
+            break;
+        }
+        out[count++] = hint;
+    }
+    return count;
+#else
     if (!pattern || !out || max_out <= 0) {
         return 0;
     }
@@ -2295,12 +2389,17 @@ int cbm_extract_like_hints(const char *pattern, char **out, int max_out) {
         out[count++] = strdup(buf);
     }
     return count;
+#endif
 }
 
 /* ── ensureCaseInsensitive / stripCaseFlag ────────────────────── */
 
 const char *cbm_ensure_case_insensitive(const char *pattern) {
     static char buf[CBM_SZ_2K];
+#ifdef CBM_USE_RUST_STORE_SEARCH_PATTERN
+    (void)cbm_rs_store_ensure_case_insensitive_v1(buf, sizeof(buf), pattern);
+    return buf;
+#else
     if (!pattern) {
         buf[0] = '\0';
         return buf;
@@ -2312,10 +2411,15 @@ const char *cbm_ensure_case_insensitive(const char *pattern) {
         snprintf(buf, sizeof(buf), "(?i)%s", pattern);
     }
     return buf;
+#endif
 }
 
 const char *cbm_strip_case_flag(const char *pattern) {
     static char buf[CBM_SZ_2K];
+#ifdef CBM_USE_RUST_STORE_SEARCH_PATTERN
+    (void)cbm_rs_store_strip_case_flag_v1(buf, sizeof(buf), pattern);
+    return buf;
+#else
     if (!pattern) {
         buf[0] = '\0';
         return buf;
@@ -2326,6 +2430,7 @@ const char *cbm_strip_case_flag(const char *pattern) {
         snprintf(buf, sizeof(buf), "%s", pattern);
     }
     return buf;
+#endif
 }
 
 /* Bind value tracker for dynamic query building */
@@ -2915,6 +3020,13 @@ void cbm_store_traverse_free(cbm_traverse_result_t *out) {
 /* ── Impact analysis ────────────────────────────────────────────── */
 
 cbm_risk_level_t cbm_hop_to_risk(int hop) {
+#ifdef CBM_USE_RUST_STORE_ARCH_HELPERS
+    int level = cbm_rs_store_hop_to_risk_v1(hop);
+    if (level >= CBM_RISK_CRITICAL && level <= CBM_RISK_LOW) {
+        return (cbm_risk_level_t)level;
+    }
+    return CBM_RISK_LOW;
+#else
     switch (hop) {
     case SKIP_ONE:
         return CBM_RISK_CRITICAL;
@@ -2925,9 +3037,15 @@ cbm_risk_level_t cbm_hop_to_risk(int hop) {
     default:
         return CBM_RISK_LOW;
     }
+#endif
 }
 
 const char *cbm_risk_label(cbm_risk_level_t level) {
+#ifdef CBM_USE_RUST_STORE_ARCH_HELPERS
+    static CBM_TLS char buf[CBM_SZ_16];
+    (void)cbm_rs_store_risk_label_v1(buf, sizeof(buf), (int)level);
+    return buf;
+#else
     switch (level) {
     case CBM_RISK_CRITICAL:
         return "CRITICAL";
@@ -2939,6 +3057,7 @@ const char *cbm_risk_label(cbm_risk_level_t level) {
     default:
         return "LOW";
     }
+#endif
 }
 
 cbm_impact_summary_t cbm_build_impact_summary(const cbm_node_hop_t *hops, int hop_count,
@@ -3491,8 +3610,13 @@ void cbm_store_schema_free(cbm_schema_info_t *out) {
 
 /* ── Architecture helpers ───────────────────────────────────────── */
 
-/* Extract sub-package from QN: project.dir1.dir2.sym → dir1 (4+ parts → [2], else [1]) */
+/* 從 QN 擷取子 package：project.dir1.dir2.sym -> dir2（4+ parts -> [2]，否則 [1]） */
 const char *cbm_qn_to_package(const char *qn) {
+#ifdef CBM_USE_RUST_STORE_ARCH_HELPERS
+    static CBM_TLS char buf[CBM_SZ_256];
+    (void)cbm_rs_store_qn_to_package_v1(buf, sizeof(buf), qn);
+    return buf;
+#else
     if (!qn || !qn[0]) {
         return "";
     }
@@ -3527,10 +3651,16 @@ const char *cbm_qn_to_package(const char *qn) {
         }
     }
     return "";
+#endif
 }
 
 /* Extract top-level package from QN: project.dir1.rest → dir1 (segment[1]) */
 const char *cbm_qn_to_top_package(const char *qn) {
+#ifdef CBM_USE_RUST_STORE_ARCH_HELPERS
+    static CBM_TLS char buf[CBM_SZ_256];
+    (void)cbm_rs_store_qn_to_top_package_v1(buf, sizeof(buf), qn);
+    return buf;
+#else
     if (!qn || !qn[0]) {
         return "";
     }
@@ -3549,13 +3679,18 @@ const char *cbm_qn_to_top_package(const char *qn) {
         return buf;
     }
     return "";
+#endif
 }
 
 bool cbm_is_test_file_path(const char *fp) {
+#ifdef CBM_USE_RUST_STORE_ARCH_HELPERS
+    return cbm_rs_store_is_test_file_path_v1(fp) != 0;
+#else
     if (!fp || fp[0] == '\0') {
         return false;
     }
     return strstr(fp, "test") != NULL;
+#endif
 }
 
 /* File extension → language name mapping (table-driven) */

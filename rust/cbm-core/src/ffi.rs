@@ -5,21 +5,34 @@
 
 #![allow(unsafe_code)]
 
+use std::alloc::{alloc, dealloc, Layout};
 use std::ffi::CStr;
 use std::os::raw::{c_char, c_int, c_long, c_void};
 use std::path::Path;
 use std::ptr;
 use std::slice;
 
+use crate::cypher;
+use crate::foundation::compat as foundation_compat;
 use crate::foundation::diagnostics;
 use crate::foundation::dump_verify;
 use crate::foundation::hash_table::HashTable;
+use crate::foundation::log as foundation_log;
+use crate::foundation::mem as foundation_mem;
 use crate::foundation::platform;
+use crate::foundation::profile as foundation_profile;
 use crate::foundation::str_intern::CInternPool;
 use crate::foundation::str_util;
+use crate::foundation::yaml::Node as YamlNode;
+use crate::mcp;
+use crate::pipeline::fqn as pipeline_fqn;
 use crate::pipeline::graph_mutation;
 use crate::pipeline::plan::{self, PlanKind};
 use crate::pipeline::registry::{Entry as RegistryEntry, Registry};
+use crate::store::{
+    arch_helpers as store_arch_helpers, open as store_open, pragmas as store_pragmas,
+    schema_manifest, search_pattern as store_search_pattern, tokenization,
+};
 
 #[repr(C)]
 pub struct CbmRsRegistryEntry {
@@ -74,6 +87,17 @@ pub struct CbmRsPipelinePlanStepV2 {
 }
 
 #[repr(C)]
+pub struct CbmRsPipelineTopStepV1 {
+    pub kind: c_int,
+    pub phase: c_int,
+    pub policy: c_int,
+    pub gate_flags: u32,
+    pub requires_mask: u64,
+    pub effect_flags: u32,
+    pub nested_plan_kind: c_int,
+}
+
+#[repr(C)]
 pub struct CbmRsGbufMutationMetaV1 {
     pub kind: c_int,
     pub result_kind: c_int,
@@ -109,6 +133,62 @@ pub struct CbmRsGbufMutationValidationV1 {
     pub invalid_fields: u32,
     pub normalized_flags: u32,
     pub reserved0: u32,
+}
+
+#[repr(C)]
+pub struct CbmRsStoreSchemaManifestEntryV1 {
+    pub kind: c_int,
+    pub flags: u32,
+    pub name: *const c_char,
+    pub table_name: *const c_char,
+    pub column_name: *const c_char,
+}
+
+#[repr(C)]
+pub struct CbmRsStoreSchemaManifestEntryV2 {
+    pub kind: c_int,
+    pub flags: u32,
+    pub ordinal: c_int,
+    pub hidden: c_int,
+    pub name: *const c_char,
+    pub table_name: *const c_char,
+    pub column_name: *const c_char,
+    pub column_type: *const c_char,
+    pub default_sql: *const c_char,
+    pub columns_csv: *const c_char,
+    pub sql_fragment: *const c_char,
+}
+
+#[repr(C)]
+pub struct CbmRsStoreConnectionManifestEntryV1 {
+    pub kind: c_int,
+    pub flags: u32,
+    pub mode_mask: u32,
+    pub ordinal: c_int,
+    pub value_i64: i64,
+    pub name: *const c_char,
+    pub sql: *const c_char,
+    pub env_name: *const c_char,
+}
+
+#[repr(C)]
+pub struct CbmRsCypherTokenV1 {
+    pub kind: c_int,
+    pub pos: c_int,
+    pub text_len: c_int,
+    pub reserved0: c_int,
+}
+
+#[repr(C)]
+pub struct CbmRsMcpJsonRpcParseOutV1 {
+    pub id: i64,
+    pub has_id: c_int,
+    pub id_kind: c_int,
+    pub has_params: c_int,
+    pub jsonrpc_len: usize,
+    pub method_len: usize,
+    pub id_str_len: usize,
+    pub params_len: usize,
 }
 
 pub struct CbmRsRegistryHandle {
@@ -193,6 +273,13 @@ unsafe fn c_bytes<'a>(value: *const c_char) -> Option<&'a [u8]> {
     Some(unsafe { CStr::from_ptr(value) }.to_bytes())
 }
 
+unsafe fn c_bytes_with_len<'a>(value: *const u8, len: c_int) -> Option<&'a [u8]> {
+    if value.is_null() || len < 0 {
+        return None;
+    }
+    Some(unsafe { slice::from_raw_parts(value, len as usize) })
+}
+
 static EMPTY_CSTR: &[u8; 1] = b"\0";
 
 unsafe fn write_c_output(buf: *mut c_char, bufsize: usize, output: Option<&[u8]>) -> usize {
@@ -238,6 +325,255 @@ unsafe fn write_c_output_i32(buf: *mut c_char, bufsize: usize, output: Option<&[
         return -1;
     }
     output.len() as c_int
+}
+
+const ARENA_MAX_BLOCKS: usize = 256;
+const ARENA_DEFAULT_BLOCK_SIZE: usize = 64 * 1024;
+const ARENA_MIN_BLOCK_SIZE: usize = 64;
+const ARENA_ALIGN_MASK: usize = 7;
+const ARENA_BLOCK_ALIGN: usize = 8;
+
+#[repr(C)]
+pub struct CbmRsArena {
+    pub blocks: [*mut c_char; ARENA_MAX_BLOCKS],
+    pub block_sizes: [usize; ARENA_MAX_BLOCKS],
+    pub nblocks: c_int,
+    pub block_size: usize,
+    pub used: usize,
+    pub total_alloc: usize,
+}
+
+fn arena_empty() -> CbmRsArena {
+    CbmRsArena {
+        blocks: [ptr::null_mut(); ARENA_MAX_BLOCKS],
+        block_sizes: [0; ARENA_MAX_BLOCKS],
+        nblocks: 0,
+        block_size: 0,
+        used: 0,
+        total_alloc: 0,
+    }
+}
+
+unsafe fn arena_alloc_block(size: usize) -> *mut c_char {
+    let Ok(layout) = Layout::from_size_align(size, ARENA_BLOCK_ALIGN) else {
+        return ptr::null_mut();
+    };
+    unsafe { alloc(layout).cast::<c_char>() }
+}
+
+unsafe fn arena_free_block(ptr: *mut c_char, size: usize) {
+    if ptr.is_null() || size == 0 {
+        return;
+    }
+    let Ok(layout) = Layout::from_size_align(size, ARENA_BLOCK_ALIGN) else {
+        return;
+    };
+    unsafe {
+        dealloc(ptr.cast::<u8>(), layout);
+    }
+}
+
+fn arena_align_size(n: usize) -> Option<usize> {
+    Some(n.checked_add(ARENA_ALIGN_MASK)? & !ARENA_ALIGN_MASK)
+}
+
+unsafe fn arena_grow(arena: &mut CbmRsArena, min_size: usize) -> bool {
+    if arena.nblocks < 0 || arena.nblocks as usize >= ARENA_MAX_BLOCKS {
+        return false;
+    }
+    let Some(doubled) = arena.block_size.checked_mul(2) else {
+        return false;
+    };
+    let new_size = doubled.max(min_size);
+    let block = unsafe { arena_alloc_block(new_size) };
+    if block.is_null() {
+        return false;
+    }
+    let index = arena.nblocks as usize;
+    arena.blocks[index] = block;
+    arena.block_sizes[index] = new_size;
+    arena.nblocks += 1;
+    arena.block_size = new_size;
+    arena.used = 0;
+    true
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `arena` 必須是 null，或指向 layout-compatible `CBMArena` 的可寫記憶體。
+pub unsafe extern "C" fn cbm_rs_arena_init(arena: *mut CbmRsArena) {
+    unsafe { cbm_rs_arena_init_sized(arena, ARENA_DEFAULT_BLOCK_SIZE) };
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `arena` 必須是 null，或指向 layout-compatible `CBMArena` 的可寫記憶體。
+pub unsafe extern "C" fn cbm_rs_arena_init_sized(arena: *mut CbmRsArena, block_size: usize) {
+    if arena.is_null() {
+        return;
+    }
+    let block_size = block_size.max(ARENA_MIN_BLOCK_SIZE);
+    let mut next = arena_empty();
+    next.block_size = block_size;
+    let block = unsafe { arena_alloc_block(block_size) };
+    if !block.is_null() {
+        next.blocks[0] = block;
+        next.block_sizes[0] = block_size;
+        next.nblocks = 1;
+    }
+    unsafe {
+        *arena = next;
+    }
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `arena` 必須是 null，或指向由 `cbm_rs_arena_init*` 初始化且仍有效的
+/// layout-compatible `CBMArena`。
+pub unsafe extern "C" fn cbm_rs_arena_alloc(arena: *mut CbmRsArena, n: usize) -> *mut c_void {
+    if arena.is_null() || n == 0 {
+        return ptr::null_mut();
+    }
+    let arena = unsafe { &mut *arena };
+    if arena.nblocks <= 0 {
+        return ptr::null_mut();
+    }
+    let Some(aligned) = arena_align_size(n) else {
+        return ptr::null_mut();
+    };
+    if aligned > arena.block_size.saturating_sub(arena.used)
+        && !unsafe { arena_grow(arena, aligned) }
+    {
+        return ptr::null_mut();
+    }
+    let Some(new_used) = arena.used.checked_add(aligned) else {
+        return ptr::null_mut();
+    };
+    let Some(new_total) = arena.total_alloc.checked_add(aligned) else {
+        return ptr::null_mut();
+    };
+    let index = (arena.nblocks - 1) as usize;
+    let ptr = unsafe { arena.blocks[index].add(arena.used) };
+    arena.used = new_used;
+    arena.total_alloc = new_total;
+    ptr.cast::<c_void>()
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `arena` 必須是 null，或指向由 `cbm_rs_arena_init*` 初始化且仍有效的
+/// layout-compatible `CBMArena`。
+pub unsafe extern "C" fn cbm_rs_arena_calloc(arena: *mut CbmRsArena, n: usize) -> *mut c_void {
+    let ptr = unsafe { cbm_rs_arena_alloc(arena, n) };
+    if !ptr.is_null() {
+        unsafe {
+            ptr::write_bytes(ptr, 0, n);
+        }
+    }
+    ptr
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `arena` 必須有效或 null；`value` 必須是 null，或指向 NUL-terminated
+/// C string。
+pub unsafe extern "C" fn cbm_rs_arena_strdup(
+    arena: *mut CbmRsArena,
+    value: *const c_char,
+) -> *mut c_char {
+    if value.is_null() {
+        return ptr::null_mut();
+    }
+    let bytes = unsafe { CStr::from_ptr(value) }.to_bytes();
+    unsafe { cbm_rs_arena_strndup(arena, bytes.as_ptr(), bytes.len()) }
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `arena` 必須有效或 null；`value` 必須是 null，或指向至少 `len` bytes
+/// 的可讀記憶體。
+pub unsafe extern "C" fn cbm_rs_arena_strndup(
+    arena: *mut CbmRsArena,
+    value: *const u8,
+    len: usize,
+) -> *mut c_char {
+    if value.is_null() {
+        return ptr::null_mut();
+    }
+    let Some(len_with_nul) = len.checked_add(1) else {
+        return ptr::null_mut();
+    };
+    let dst = unsafe { cbm_rs_arena_alloc(arena, len_with_nul) }.cast::<c_char>();
+    if dst.is_null() {
+        return ptr::null_mut();
+    }
+    unsafe {
+        ptr::copy_nonoverlapping(value.cast::<c_char>(), dst, len);
+        *dst.add(len) = 0;
+    }
+    dst
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `arena` 必須是 null，或指向由 `cbm_rs_arena_init*` 初始化且仍有效的
+/// layout-compatible `CBMArena`。
+pub unsafe extern "C" fn cbm_rs_arena_reset(arena: *mut CbmRsArena) {
+    if arena.is_null() {
+        return;
+    }
+    let arena = unsafe { &mut *arena };
+    let nblocks = arena.nblocks.max(0) as usize;
+    for i in 1..nblocks.min(ARENA_MAX_BLOCKS) {
+        unsafe { arena_free_block(arena.blocks[i], arena.block_sizes[i]) };
+        arena.blocks[i] = ptr::null_mut();
+        arena.block_sizes[i] = 0;
+    }
+    if arena.nblocks > 1 {
+        arena.nblocks = 1;
+    }
+    arena.used = 0;
+    arena.total_alloc = 0;
+    if arena.nblocks == 1 {
+        arena.block_size = arena.block_sizes[0];
+    }
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `arena` 必須是 null，或指向由 `cbm_rs_arena_init*` 初始化且仍有效的
+/// layout-compatible `CBMArena`。
+pub unsafe extern "C" fn cbm_rs_arena_destroy(arena: *mut CbmRsArena) {
+    if arena.is_null() {
+        return;
+    }
+    let arena_ref = unsafe { &mut *arena };
+    let nblocks = arena_ref.nblocks.max(0) as usize;
+    for i in 0..nblocks.min(ARENA_MAX_BLOCKS) {
+        unsafe { arena_free_block(arena_ref.blocks[i], arena_ref.block_sizes[i]) };
+    }
+    unsafe {
+        *arena = arena_empty();
+    }
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `arena` 必須是 null，或指向 layout-compatible `CBMArena`。
+pub unsafe extern "C" fn cbm_rs_arena_total(arena: *const CbmRsArena) -> usize {
+    if arena.is_null() {
+        return 0;
+    }
+    unsafe { &*arena }.total_alloc
 }
 
 unsafe fn c_string_parts<'a>(parts: *const *const c_char, n: c_int) -> Option<Vec<&'a [u8]>> {
@@ -368,6 +704,132 @@ pub unsafe extern "C" fn cbm_rs_diag_format_ndjson(
 }
 
 #[no_mangle]
+pub extern "C" fn cbm_rs_compat_regex_known_flags(flags: c_int) -> c_int {
+    foundation_compat::regex_known_flags(flags)
+}
+
+#[no_mangle]
+pub extern "C" fn cbm_rs_compat_regex_match_cap(nmatch: c_int, has_matches: c_int) -> c_int {
+    foundation_compat::regex_match_cap(nmatch, has_matches != 0)
+}
+
+#[no_mangle]
+pub extern "C" fn cbm_rs_compat_regex_status(matched: c_int) -> c_int {
+    foundation_compat::regex_status_matched(matched != 0)
+}
+
+#[no_mangle]
+pub extern "C" fn cbm_rs_compat_thread_effective_stack_size(stack_size: usize) -> usize {
+    foundation_compat::thread_effective_stack_size(stack_size)
+}
+
+#[no_mangle]
+pub extern "C" fn cbm_rs_compat_aligned_alloc_precheck(
+    alignment: usize,
+    size: usize,
+    pointer_size: usize,
+) -> bool {
+    foundation_compat::aligned_alloc_precheck(alignment, size, pointer_size)
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `value` 必須是 null，或指向 NUL-terminated C string。
+pub unsafe extern "C" fn cbm_rs_log_parse_level_value(
+    value: *const c_char,
+    current: c_int,
+) -> c_int {
+    foundation_log::parse_level_value(unsafe { c_bytes(value) }, current)
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `value` 必須是 null，或指向 NUL-terminated C string。
+pub unsafe extern "C" fn cbm_rs_log_parse_format_value(
+    value: *const c_char,
+    current: c_int,
+) -> c_int {
+    foundation_log::parse_format_value(unsafe { c_bytes(value) }, current)
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `buf` 必須是 null，或指向 `bufsize` bytes 的可寫記憶體；`value` 必須是
+/// null，或指向 NUL-terminated C string。
+pub unsafe extern "C" fn cbm_rs_log_sanitize_text_atom(
+    buf: *mut c_char,
+    bufsize: usize,
+    value: *const c_char,
+) -> c_int {
+    let output = foundation_log::sanitize_text_atom(unsafe { c_bytes(value) });
+    unsafe { write_c_output_i32(buf, bufsize, Some(output.as_slice())) }
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `buf` 必須是 null，或指向 `bufsize` bytes 的可寫記憶體；`value` 必須是
+/// null，或指向 NUL-terminated C string。
+pub unsafe extern "C" fn cbm_rs_log_json_string(
+    buf: *mut c_char,
+    bufsize: usize,
+    value: *const c_char,
+) -> c_int {
+    let output = foundation_log::json_string(unsafe { c_bytes(value) });
+    unsafe { write_c_output_i32(buf, bufsize, Some(output.as_slice())) }
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `buf` 必須是 null，或指向 `bufsize` bytes 的可寫記憶體；`path` 必須是
+/// null，或指向 NUL-terminated C string。
+pub unsafe extern "C" fn cbm_rs_log_http_path_without_query(
+    buf: *mut c_char,
+    bufsize: usize,
+    path: *const c_char,
+) -> c_int {
+    let output = foundation_log::http_path_without_query(unsafe { c_bytes(path) });
+    unsafe { write_c_output_i32(buf, bufsize, Some(output.as_slice())) }
+}
+
+#[no_mangle]
+pub extern "C" fn cbm_rs_log_http_status_level(status: c_int) -> c_int {
+    foundation_log::http_status_level(status)
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `value` 必須是 null，或指向 NUL-terminated C string。
+pub unsafe extern "C" fn cbm_rs_profile_env_enabled(value: *const c_char) -> bool {
+    foundation_profile::env_enabled(unsafe { c_bytes(value) })
+}
+
+#[no_mangle]
+pub extern "C" fn cbm_rs_profile_elapsed_us(
+    start_sec: i64,
+    start_nsec: i64,
+    now_sec: i64,
+    now_nsec: i64,
+) -> i64 {
+    foundation_profile::elapsed_us(start_sec, start_nsec, now_sec, now_nsec)
+}
+
+#[no_mangle]
+pub extern "C" fn cbm_rs_profile_elapsed_ms(us: i64) -> i64 {
+    foundation_profile::elapsed_ms(us)
+}
+
+#[no_mangle]
+pub extern "C" fn cbm_rs_profile_rate_per_s(items: i64, us: i64) -> i64 {
+    foundation_profile::rate_per_s(items, us).unwrap_or(-1)
+}
+
+#[no_mangle]
 /// # Safety
 ///
 /// `buf` 必須是 null，或指向 `bufsize` bytes 的可寫記憶體；null 或
@@ -386,6 +848,186 @@ pub unsafe extern "C" fn cbm_rs_pipeline_plan_describe(
     };
     let output = plan::describe(kind, mode, worker_count, file_count);
     unsafe { write_c_output_i32(buf, bufsize, Some(output.as_bytes())) }
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `buf` 必須是 null，或指向 `bufsize` bytes 的可寫記憶體；`abs_path` 必須是
+/// null，或指向 NUL-terminated C string。
+pub unsafe extern "C" fn cbm_rs_pipeline_project_name_from_path(
+    buf: *mut c_char,
+    bufsize: usize,
+    abs_path: *const c_char,
+) -> usize {
+    let output = pipeline_fqn::project_name_from_path_bytes(unsafe { c_bytes(abs_path) });
+    unsafe { write_c_output(buf, bufsize, Some(&output)) }
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `input` 必須是 null，或指向至少 `len` bytes 的可讀記憶體；null 或負
+/// `len` 會回傳 `-1`。此 API 只固定 Cypher lexer token metadata，不建立 AST。
+pub unsafe extern "C" fn cbm_rs_cypher_lex_token_count_v1(input: *const u8, len: c_int) -> c_int {
+    let Some(input) = (unsafe { c_bytes_with_len(input, len) }) else {
+        return -1;
+    };
+    let count = cypher::lex(input).len();
+    if count > c_int::MAX as usize {
+        return -1;
+    }
+    count as c_int
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `input` contract 同 `cbm_rs_cypher_lex_token_count_v1`。`out` 必須非 null，
+/// 且指向至少 `cap` 個 `CbmRsCypherTokenV1` 的可寫陣列；cap 不足時回傳 `-1`。
+pub unsafe extern "C" fn cbm_rs_cypher_lex_tokens_v1(
+    input: *const u8,
+    len: c_int,
+    out: *mut CbmRsCypherTokenV1,
+    cap: c_int,
+) -> c_int {
+    if out.is_null() || cap < 0 {
+        return -1;
+    }
+    let Some(input) = (unsafe { c_bytes_with_len(input, len) }) else {
+        return -1;
+    };
+    let tokens = cypher::lex(input);
+    if cap < tokens.len() as c_int {
+        return -1;
+    }
+    let out = unsafe { slice::from_raw_parts_mut(out, tokens.len()) };
+    for (dst, token) in out.iter_mut().zip(tokens) {
+        dst.kind = token.kind;
+        dst.pos = token.pos;
+        dst.text_len = token.text.len().min(c_int::MAX as usize) as c_int;
+        dst.reserved0 = 0;
+    }
+    out.len() as c_int
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `input` contract 同 `cbm_rs_cypher_lex_token_count_v1`。`buf` 必須是 null，
+/// 或指向 `bufsize` bytes 的可寫記憶體；回傳完整 summary 長度，短 buffer 會
+/// NUL 結尾截斷。此 API 僅供 test-only parity fixture 使用。
+pub unsafe extern "C" fn cbm_rs_cypher_lex_summary_v1(
+    buf: *mut c_char,
+    bufsize: usize,
+    input: *const u8,
+    len: c_int,
+) -> usize {
+    let output = unsafe { c_bytes_with_len(input, len) }.map(cypher::summary);
+    unsafe { write_c_output(buf, bufsize, output.as_deref()) }
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `input` contract 同 `cbm_rs_cypher_lex_token_count_v1`。`buf` 必須是 null，
+/// 或指向 `bufsize` bytes 的可寫記憶體；回傳完整 normalized AST summary 長度，
+/// 短 buffer 會 NUL 結尾截斷。null input、負 len 或 parse failure 回傳 `SIZE_MAX`。
+/// 此 API 僅供 test-only parity fixture 使用，不執行 query，也不接 production opt-in。
+pub unsafe extern "C" fn cbm_rs_cypher_parse_summary_v1(
+    buf: *mut c_char,
+    bufsize: usize,
+    input: *const u8,
+    len: c_int,
+) -> usize {
+    let output = unsafe { c_bytes_with_len(input, len) }.and_then(cypher::parse_summary);
+    unsafe { write_c_output(buf, bufsize, output.as_deref()) }
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `input` 必須是 null，或指向至少 `len` bytes 的可讀記憶體；`buf` 必須是
+/// null，或指向 `bufsize` bytes 的可寫記憶體。回傳 JSON-RPC request envelope
+/// summary 的完整長度；null input、負 len、非 object root 或缺少 string method
+/// 回傳 `SIZE_MAX`。此 API 僅供 MCP JSON-RPC codec test-only parity 使用。
+pub unsafe extern "C" fn cbm_rs_mcp_jsonrpc_request_summary_v1(
+    buf: *mut c_char,
+    bufsize: usize,
+    input: *const u8,
+    len: c_int,
+) -> usize {
+    let output = unsafe { c_bytes_with_len(input, len) }.and_then(mcp::jsonrpc_request_summary);
+    unsafe { write_c_output(buf, bufsize, output.as_deref()) }
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `input` 必須是 null，或指向至少 `len` bytes 的可讀記憶體；`out` 必須是可寫
+/// 的 `CbmRsMcpJsonRpcParseOutV1*`。各輸出 buffer 可為 null；非 null 時必須指向
+/// 對應大小的可寫記憶體。成功回傳 0，parse failure 或 invalid args 回傳 -1。
+pub unsafe extern "C" fn cbm_rs_mcp_jsonrpc_parse_v1(
+    input: *const u8,
+    len: c_int,
+    out: *mut CbmRsMcpJsonRpcParseOutV1,
+    jsonrpc_buf: *mut c_char,
+    jsonrpc_bufsize: usize,
+    method_buf: *mut c_char,
+    method_bufsize: usize,
+    id_str_buf: *mut c_char,
+    id_str_bufsize: usize,
+    params_buf: *mut c_char,
+    params_bufsize: usize,
+) -> c_int {
+    if out.is_null() {
+        return -1;
+    }
+    let Some(input) = (unsafe { c_bytes_with_len(input, len) }) else {
+        return -1;
+    };
+    let Some(parsed) = mcp::jsonrpc_parse(input) else {
+        return -1;
+    };
+
+    let (id, has_id, id_kind, id_str) = match parsed.id {
+        mcp::ParsedId::None => (-1, 0, 0, None),
+        mcp::ParsedId::Int(value) => (value, 1, 1, None),
+        mcp::ParsedId::String(value) => (-1, 1, 2, Some(value)),
+        mcp::ParsedId::Other => (-1, 1, 3, None),
+    };
+    let params = parsed.params_raw;
+
+    unsafe {
+        *out = CbmRsMcpJsonRpcParseOutV1 {
+            id,
+            has_id,
+            id_kind,
+            has_params: c_int::from(params.is_some()),
+            jsonrpc_len: parsed.jsonrpc.len(),
+            method_len: parsed.method.len(),
+            id_str_len: id_str.as_ref().map_or(0, Vec::len),
+            params_len: params.as_ref().map_or(0, Vec::len),
+        };
+        write_c_output(
+            jsonrpc_buf,
+            jsonrpc_bufsize,
+            Some(parsed.jsonrpc.as_slice()),
+        );
+        write_c_output(method_buf, method_bufsize, Some(parsed.method.as_slice()));
+        if let Some(id_str) = id_str.as_ref() {
+            write_c_output(id_str_buf, id_str_bufsize, Some(id_str.as_slice()));
+        } else if !id_str_buf.is_null() && id_str_bufsize > 0 {
+            *id_str_buf = 0;
+        }
+        if let Some(params) = params.as_ref() {
+            write_c_output(params_buf, params_bufsize, Some(params.as_slice()));
+        } else if !params_buf.is_null() && params_bufsize > 0 {
+            *params_buf = 0;
+        }
+    }
+
+    0
 }
 
 #[no_mangle]
@@ -472,6 +1114,48 @@ pub unsafe extern "C" fn cbm_rs_pipeline_plan_steps_v2(
 }
 
 #[no_mangle]
+pub extern "C" fn cbm_rs_pipeline_full_plan_step_count_v1(
+    mode: c_int,
+    worker_count: c_int,
+    file_count: c_int,
+) -> c_int {
+    plan::full_pipeline_top_steps(mode, worker_count, file_count).len() as c_int
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `out` 必須非 null，且指向至少 `cap` 個 `CbmRsPipelineTopStepV1` 的可寫陣列。
+/// cap 不足或 out 為 null 時回傳 `-1`；成功時回傳 full pipeline top-level step 數。
+/// 此 API 僅描述 orchestration metadata，不供 C runtime dispatch 使用。
+pub unsafe extern "C" fn cbm_rs_pipeline_full_plan_steps_v1(
+    mode: c_int,
+    worker_count: c_int,
+    file_count: c_int,
+    out: *mut CbmRsPipelineTopStepV1,
+    cap: c_int,
+) -> c_int {
+    if out.is_null() || cap < 0 {
+        return -1;
+    }
+    let steps = plan::full_pipeline_top_steps(mode, worker_count, file_count);
+    if cap < steps.len() as c_int {
+        return -1;
+    }
+    let out = unsafe { slice::from_raw_parts_mut(out, steps.len()) };
+    for (dst, step) in out.iter_mut().zip(steps) {
+        dst.kind = step.kind as c_int;
+        dst.phase = step.phase as c_int;
+        dst.policy = step.policy as c_int;
+        dst.gate_flags = step.gate_flags;
+        dst.requires_mask = step.requires_mask;
+        dst.effect_flags = step.effect_flags;
+        dst.nested_plan_kind = step.nested_plan_kind;
+    }
+    out.len() as c_int
+}
+
+#[no_mangle]
 pub extern "C" fn cbm_rs_gbuf_mutation_command_count_v1() -> c_int {
     graph_mutation::command_metas().len() as c_int
 }
@@ -539,6 +1223,439 @@ pub unsafe extern "C" fn cbm_rs_gbuf_mutation_validate_v1(
         (*out).reserved0 = 0;
     }
     0
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `buf` 必須是 null，或指向 `bufsize` bytes 的可寫記憶體；`path` 必須是
+/// null，或指向 NUL-terminated C string。此 API 只建構 SQLite immutable
+/// URI fallback 字串，不開 SQLite、不執行 pragma、不保存 C 指標。
+pub unsafe extern "C" fn cbm_rs_store_build_immutable_uri_v1(
+    buf: *mut c_char,
+    bufsize: usize,
+    path: *const c_char,
+) -> usize {
+    let output = store_open::immutable_uri(unsafe { c_bytes(path) });
+    unsafe { write_c_output(buf, bufsize, output.as_deref()) }
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `buf` 必須是 null，或指向 `bufsize` bytes 的可寫記憶體；`pattern` 必須是
+/// null，或指向 NUL-terminated C string。此 API 只執行 glob 到 SQL LIKE
+/// pattern 的 byte-level 轉換，不碰 SQLite。
+pub unsafe extern "C" fn cbm_rs_store_glob_to_like_v1(
+    buf: *mut c_char,
+    bufsize: usize,
+    pattern: *const c_char,
+) -> usize {
+    let output = store_search_pattern::glob_to_like(unsafe { c_bytes(pattern) });
+    unsafe { write_c_output(buf, bufsize, output.as_deref()) }
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `buf` 必須是 null，或指向 `bufsize` bytes 的可寫記憶體；`pattern` 必須是
+/// null，或指向 NUL-terminated C string。null pattern 會輸出空字串。
+pub unsafe extern "C" fn cbm_rs_store_ensure_case_insensitive_v1(
+    buf: *mut c_char,
+    bufsize: usize,
+    pattern: *const c_char,
+) -> usize {
+    let output = store_search_pattern::ensure_case_insensitive(unsafe { c_bytes(pattern) });
+    unsafe { write_c_output(buf, bufsize, Some(&output)) }
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `buf` 必須是 null，或指向 `bufsize` bytes 的可寫記憶體；`pattern` 必須是
+/// null，或指向 NUL-terminated C string。null pattern 會輸出空字串。
+pub unsafe extern "C" fn cbm_rs_store_strip_case_flag_v1(
+    buf: *mut c_char,
+    bufsize: usize,
+    pattern: *const c_char,
+) -> usize {
+    let output = store_search_pattern::strip_case_flag(unsafe { c_bytes(pattern) });
+    unsafe { write_c_output(buf, bufsize, Some(&output)) }
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `pattern` 必須是 null，或指向 NUL-terminated C string。回傳最多 `max_out`
+/// 個 LIKE hint 的數量；不配置 Rust-owned output。
+pub unsafe extern "C" fn cbm_rs_store_like_hint_count_v1(
+    pattern: *const c_char,
+    max_out: c_int,
+) -> c_int {
+    store_search_pattern::like_hints(unsafe { c_bytes(pattern) }, max_out).len() as c_int
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `buf` 必須是 null，或指向 `bufsize` bytes 的可寫記憶體；`pattern` 必須是
+/// null，或指向 NUL-terminated C string。`index` 不存在時回傳 `SIZE_MAX`。
+pub unsafe extern "C" fn cbm_rs_store_like_hint_v1(
+    buf: *mut c_char,
+    bufsize: usize,
+    pattern: *const c_char,
+    max_out: c_int,
+    index: c_int,
+) -> usize {
+    if index < 0 {
+        return usize::MAX;
+    }
+    let hints = store_search_pattern::like_hints(unsafe { c_bytes(pattern) }, max_out);
+    let output = hints.get(index as usize).map(Vec::as_slice);
+    unsafe { write_c_output(buf, bufsize, output) }
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `buf` 必須是 null，或指向 `bufsize` bytes 的可寫記憶體；`qn` 必須是
+/// null，或指向 NUL-terminated C string。此 API 只執行 QN segment 的
+/// byte-level extraction，不碰 SQLite。
+pub unsafe extern "C" fn cbm_rs_store_qn_to_package_v1(
+    buf: *mut c_char,
+    bufsize: usize,
+    qn: *const c_char,
+) -> usize {
+    let output = store_arch_helpers::qn_to_package(unsafe { c_bytes(qn) });
+    unsafe { write_c_output(buf, bufsize, Some(&output)) }
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `buf` 必須是 null，或指向 `bufsize` bytes 的可寫記憶體；`qn` 必須是
+/// null，或指向 NUL-terminated C string。此 API 只執行 QN top-level
+/// segment 的 byte-level extraction，不碰 SQLite。
+pub unsafe extern "C" fn cbm_rs_store_qn_to_top_package_v1(
+    buf: *mut c_char,
+    bufsize: usize,
+    qn: *const c_char,
+) -> usize {
+    let output = store_arch_helpers::qn_to_top_package(unsafe { c_bytes(qn) });
+    unsafe { write_c_output(buf, bufsize, Some(&output)) }
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `path` 必須是 null，或指向 NUL-terminated C string。此 API 只做
+/// case-sensitive byte substring predicate，不保存 C 指標。
+pub unsafe extern "C" fn cbm_rs_store_is_test_file_path_v1(path: *const c_char) -> c_int {
+    if store_arch_helpers::is_test_file_path(unsafe { c_bytes(path) }) {
+        1
+    } else {
+        0
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn cbm_rs_store_hop_to_risk_v1(hop: c_int) -> c_int {
+    store_arch_helpers::hop_to_risk(hop)
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `buf` 必須是 null，或指向 `bufsize` bytes 的可寫記憶體。此 API 只將
+/// risk enum 值轉為既有 C label 字串。
+pub unsafe extern "C" fn cbm_rs_store_risk_label_v1(
+    buf: *mut c_char,
+    bufsize: usize,
+    level: c_int,
+) -> usize {
+    let output = store_arch_helpers::risk_label(level);
+    unsafe { write_c_output(buf, bufsize, Some(output)) }
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `buf` 必須是 null，或指向 `bufsize` bytes 的可寫記憶體；`input` 必須是
+/// null，或指向 NUL-terminated C string。此 API 只固定 Store FTS
+/// `cbm_camel_split` 的 test-only byte-level contract，不開 SQLite。
+pub unsafe extern "C" fn cbm_rs_store_camel_split_v1(
+    buf: *mut c_char,
+    bufsize: usize,
+    input: *const c_char,
+) -> usize {
+    let output = tokenization::camel_split_bytes(unsafe { c_bytes(input) });
+    unsafe { write_c_output(buf, bufsize, Some(&output)) }
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `value` 必須是 null，或是有效的 NUL-terminated C string。此 API
+/// 只固定 `CBM_SQLITE_MMAP_SIZE` 字串值到 `PRAGMA mmap_size` 數值的
+/// test-only contract；不讀 env、不開 SQLite、不改變 production path。
+pub unsafe extern "C" fn cbm_rs_store_resolve_mmap_size_value_v1(value: *const c_char) -> i64 {
+    store_pragmas::resolve_mmap_size_value(unsafe { c_bytes(value) })
+}
+
+#[no_mangle]
+pub extern "C" fn cbm_rs_store_schema_manifest_entry_count_v1() -> c_int {
+    schema_manifest::entries().len() as c_int
+}
+
+#[no_mangle]
+pub extern "C" fn cbm_rs_store_schema_manifest_user_index_count_v1() -> c_int {
+    schema_manifest::user_index_count() as c_int
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `out` 必須非 null，且指向至少 `cap` 個 `CbmRsStoreSchemaManifestEntryV1`
+/// 的可寫陣列。成功回傳實際 entry 數；out 為 null、cap 為負數或不足時回傳 `-1`。
+/// 回傳的 C string 指標指向 Rust static manifest，呼叫端不得 free。
+pub unsafe extern "C" fn cbm_rs_store_schema_manifest_entries_v1(
+    out: *mut CbmRsStoreSchemaManifestEntryV1,
+    cap: c_int,
+) -> c_int {
+    if out.is_null() || cap < 0 {
+        return -1;
+    }
+    let entries = schema_manifest::entries();
+    if cap < entries.len() as c_int {
+        return -1;
+    }
+    let out = unsafe { slice::from_raw_parts_mut(out, entries.len()) };
+    for (dst, entry) in out.iter_mut().zip(entries) {
+        dst.kind = entry.kind;
+        dst.flags = entry.flags;
+        dst.name = entry.name.as_ptr().cast::<c_char>();
+        dst.table_name = entry.table_name.as_ptr().cast::<c_char>();
+        dst.column_name = entry.column_name.as_ptr().cast::<c_char>();
+    }
+    out.len() as c_int
+}
+
+#[no_mangle]
+pub extern "C" fn cbm_rs_store_schema_manifest_entry_count_v2() -> c_int {
+    schema_manifest::entries_v2().len() as c_int
+}
+
+#[no_mangle]
+pub extern "C" fn cbm_rs_store_schema_manifest_table_column_count_v2() -> c_int {
+    schema_manifest::table_column_count_v2() as c_int
+}
+
+#[no_mangle]
+pub extern "C" fn cbm_rs_store_schema_manifest_fts_shadow_count_v2() -> c_int {
+    schema_manifest::fts_shadow_table_count_v2() as c_int
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `out` 必須非 null，且指向至少 `cap` 個 `CbmRsStoreSchemaManifestEntryV2`
+/// 的可寫陣列。成功回傳實際 entry 數；out 為 null、cap 為負數或不足時回傳 `-1`。
+/// 回傳的 C string 指標指向 Rust static manifest，呼叫端不得 free。
+pub unsafe extern "C" fn cbm_rs_store_schema_manifest_entries_v2(
+    out: *mut CbmRsStoreSchemaManifestEntryV2,
+    cap: c_int,
+) -> c_int {
+    if out.is_null() || cap < 0 {
+        return -1;
+    }
+    let entries = schema_manifest::entries_v2();
+    if cap < entries.len() as c_int {
+        return -1;
+    }
+    let out = unsafe { slice::from_raw_parts_mut(out, entries.len()) };
+    for (dst, entry) in out.iter_mut().zip(entries) {
+        dst.kind = entry.kind;
+        dst.flags = entry.flags;
+        dst.ordinal = entry.ordinal;
+        dst.hidden = entry.hidden;
+        dst.name = entry.name.as_ptr().cast::<c_char>();
+        dst.table_name = entry.table_name.as_ptr().cast::<c_char>();
+        dst.column_name = entry.column_name.as_ptr().cast::<c_char>();
+        dst.column_type = entry.column_type.as_ptr().cast::<c_char>();
+        dst.default_sql = entry.default_sql.as_ptr().cast::<c_char>();
+        dst.columns_csv = entry.columns_csv.as_ptr().cast::<c_char>();
+        dst.sql_fragment = entry.sql_fragment.as_ptr().cast::<c_char>();
+    }
+    out.len() as c_int
+}
+
+#[no_mangle]
+pub extern "C" fn cbm_rs_store_connection_manifest_entry_count_v1() -> c_int {
+    schema_manifest::connection_entries_v1().len() as c_int
+}
+
+#[no_mangle]
+pub extern "C" fn cbm_rs_store_connection_manifest_write_pragma_count_v1() -> c_int {
+    schema_manifest::connection_write_pragma_count_v1() as c_int
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `out` 必須非 null，且指向至少 `cap` 個 `CbmRsStoreConnectionManifestEntryV1`
+/// 的可寫陣列。成功回傳實際 entry 數；out 為 null、cap 為負數或不足時回傳 `-1`。
+/// 回傳的 C string 指標指向 Rust static manifest，呼叫端不得 free。
+pub unsafe extern "C" fn cbm_rs_store_connection_manifest_entries_v1(
+    out: *mut CbmRsStoreConnectionManifestEntryV1,
+    cap: c_int,
+) -> c_int {
+    if out.is_null() || cap < 0 {
+        return -1;
+    }
+    let entries = schema_manifest::connection_entries_v1();
+    if cap < entries.len() as c_int {
+        return -1;
+    }
+    let out = unsafe { slice::from_raw_parts_mut(out, entries.len()) };
+    for (dst, entry) in out.iter_mut().zip(entries) {
+        dst.kind = entry.kind;
+        dst.flags = entry.flags;
+        dst.mode_mask = entry.mode_mask;
+        dst.ordinal = entry.ordinal;
+        dst.value_i64 = entry.value_i64;
+        dst.name = entry.name.as_ptr().cast::<c_char>();
+        dst.sql = entry.sql.as_ptr().cast::<c_char>();
+        dst.env_name = entry.env_name.as_ptr().cast::<c_char>();
+    }
+    out.len() as c_int
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `text` 必須是 null，或指向至少 `len` bytes 的可讀記憶體。此 API
+/// 對齊 `cbm_yaml_parse` 的 test-only contract：null 或 `len <= 0`
+/// 會回傳空 map handle；呼叫端必須用 `cbm_rs_yaml_free` 釋放。
+pub unsafe extern "C" fn cbm_rs_yaml_parse(text: *const u8, len: c_int) -> *mut YamlNode {
+    let input = if text.is_null() || len <= 0 {
+        None
+    } else {
+        Some(unsafe { slice::from_raw_parts(text, len as usize) })
+    };
+    Box::into_raw(Box::new(YamlNode::parse(input, len)))
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `root` 必須是 null，或是 `cbm_rs_yaml_parse` 回傳且尚未 free 的指標。
+pub unsafe extern "C" fn cbm_rs_yaml_free(root: *mut YamlNode) {
+    if root.is_null() {
+        return;
+    }
+    unsafe {
+        drop(Box::from_raw(root));
+    }
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `root` 必須是 null，或是 `cbm_rs_yaml_parse` 回傳且仍有效的指標；
+/// `path` 必須是 null，或是有效的 NUL-terminated C string。回傳指標
+/// 由 YAML tree 擁有，呼叫端不得 free，且只在 `root` free 前有效。
+pub unsafe extern "C" fn cbm_rs_yaml_get_str(
+    root: *const YamlNode,
+    path: *const c_char,
+) -> *const c_char {
+    if root.is_null() {
+        return ptr::null();
+    }
+    let Some(path) = (unsafe { c_bytes(path) }) else {
+        return ptr::null();
+    };
+    unsafe { &*root }
+        .get_str(path)
+        .map_or(ptr::null(), |value| value.as_ptr().cast::<c_char>())
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `root` 與 `path` contract 同 `cbm_rs_yaml_get_str`。
+pub unsafe extern "C" fn cbm_rs_yaml_get_float(
+    root: *const YamlNode,
+    path: *const c_char,
+    default_val: f64,
+) -> f64 {
+    if root.is_null() {
+        return default_val;
+    }
+    let Some(path) = (unsafe { c_bytes(path) }) else {
+        return default_val;
+    };
+    unsafe { &*root }.get_float(path, default_val)
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `root` 與 `path` contract 同 `cbm_rs_yaml_get_str`。
+pub unsafe extern "C" fn cbm_rs_yaml_get_bool(
+    root: *const YamlNode,
+    path: *const c_char,
+    default_val: bool,
+) -> bool {
+    if root.is_null() {
+        return default_val;
+    }
+    let Some(path) = (unsafe { c_bytes(path) }) else {
+        return default_val;
+    };
+    unsafe { &*root }.get_bool(path, default_val)
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `root` 與 `path` contract 同 `cbm_rs_yaml_get_str`。`out` 必須是 null，
+/// 或指向至少 `max_out` 個 `const char*` 的可寫陣列；null 或 `max_out <= 0`
+/// 回傳 0。寫入的字串由 YAML tree 擁有。
+pub unsafe extern "C" fn cbm_rs_yaml_get_str_list(
+    root: *const YamlNode,
+    path: *const c_char,
+    out: *mut *const c_char,
+    max_out: c_int,
+) -> c_int {
+    if root.is_null() || out.is_null() || max_out <= 0 {
+        return 0;
+    }
+    let Some(path) = (unsafe { c_bytes(path) }) else {
+        return 0;
+    };
+    let Some(items) = unsafe { &*root }.str_list(path) else {
+        return 0;
+    };
+    let count = items.len().min(max_out as usize);
+    let out = unsafe { slice::from_raw_parts_mut(out, count) };
+    for (dst, item) in out.iter_mut().zip(items.into_iter().take(count)) {
+        *dst = item.as_ptr().cast::<c_char>();
+    }
+    count as c_int
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `root` 與 `path` contract 同 `cbm_rs_yaml_get_str`。
+pub unsafe extern "C" fn cbm_rs_yaml_has(root: *const YamlNode, path: *const c_char) -> bool {
+    if root.is_null() {
+        return false;
+    }
+    let Some(path) = (unsafe { c_bytes(path) }) else {
+        return false;
+    };
+    unsafe { &*root }.has(path)
 }
 
 #[no_mangle]
@@ -842,6 +1959,62 @@ pub unsafe extern "C" fn cbm_rs_detect_cgroup_mem(cgroup_root: *const c_char) ->
     };
     let root = String::from_utf8_lossy(root);
     platform::detect_cgroup_mem(Path::new(root.as_ref()))
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `ram_fraction` 只在第一次 init 生效；後續呼叫為 no-op。
+pub extern "C" fn cbm_rs_mem_init(ram_fraction: f64) {
+    foundation_mem::init(ram_fraction)
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// 回傳目前 RSS（byte）；失敗時回 0。
+pub extern "C" fn cbm_rs_mem_rss() -> usize {
+    foundation_mem::rss()
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// 回傳 peak RSS（byte）；失敗時回傳目前 RSS 的 best-effort 值。
+pub extern "C" fn cbm_rs_mem_peak_rss() -> usize {
+    foundation_mem::peak_rss()
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// 回傳目前 RAM budget（byte）。
+pub extern "C" fn cbm_rs_mem_budget() -> usize {
+    foundation_mem::budget()
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// 回傳目前是否超過 budget；同時更新簡易 pressure hysteresis 狀態。
+pub extern "C" fn cbm_rs_mem_over_budget() -> bool {
+    foundation_mem::over_budget()
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `num_workers <= 0` 視為 1，直接回傳原始 budget。
+pub extern "C" fn cbm_rs_mem_worker_budget(num_workers: c_int) -> usize {
+    foundation_mem::worker_budget(num_workers)
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// 回收未使用頁面（test-only 目前為 no-op）。
+pub extern "C" fn cbm_rs_mem_collect() {
+    foundation_mem::collect()
 }
 
 #[no_mangle]

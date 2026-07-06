@@ -15,21 +15,55 @@
         "semantic": true
       },
       "edge_type_histogram": {
-        "CALLS": 13,
-        "CONTAINS_FILE": 63,
-        "CONTAINS_FOLDER": 5,
+        "CALLS": 24,
+        "CONTAINS_FILE": 66,
+        "CONTAINS_FOLDER": 8,
         "DECORATES": 2,
-        "DEFINES": 843,
-        "DEFINES_METHOD": 4,
+        "DEFINES": 874,
+        "DEFINES_METHOD": 16,
         "HANDLES": 2,
         "HAS_BRANCH": 1,
-        "IMPLEMENTS": 1,
+        "IMPLEMENTS": 2,
         "IMPORTS": 2,
+        "INHERITS": 2,
         "OVERRIDE": 1,
-        "USAGE": 11,
-        "WRITES": 1
+        "USAGE": 21,
+        "WRITES": 2
       },
       "interesting_edges": [
+        [
+          "CALLS",
+          "Function",
+          "cppEntry",
+          "cpp/app.cpp",
+          "Method",
+          "run",
+          "cpp/app.cpp",
+          "lsp_type_dispatch",
+          ""
+        ],
+        [
+          "CALLS",
+          "Method",
+          "run",
+          "cpp/app.cpp",
+          "Function",
+          "cppHelper",
+          "cpp/app.cpp",
+          "lsp_direct",
+          ""
+        ],
+        [
+          "CALLS",
+          "Method",
+          "run",
+          "cpp/app.cpp",
+          "Method",
+          "cppName",
+          "cpp/app.cpp",
+          "lsp_implicit_this",
+          ""
+        ],
         [
           "CALLS",
           "Function",
@@ -72,6 +106,50 @@
           "Helper",
           "go/orders.go",
           "lsp_direct",
+          ""
+        ],
+        [
+          "CALLS",
+          "Method",
+          "javaEntry",
+          "java/App.java",
+          "Method",
+          "JavaWorker",
+          "java/App.java",
+          "lsp_constructor",
+          ""
+        ],
+        [
+          "CALLS",
+          "Method",
+          "javaEntry",
+          "java/App.java",
+          "Method",
+          "run",
+          "java/App.java",
+          "lsp_type_dispatch",
+          ""
+        ],
+        [
+          "CALLS",
+          "Method",
+          "run",
+          "java/App.java",
+          "Method",
+          "decorate",
+          "java/App.java",
+          "lsp_static_call",
+          ""
+        ],
+        [
+          "CALLS",
+          "Method",
+          "run",
+          "java/App.java",
+          "Method",
+          "javaName",
+          "java/App.java",
+          "lsp_type_dispatch",
           ""
         ],
         [
@@ -131,6 +209,50 @@
         ],
         [
           "CALLS",
+          "Method",
+          "run",
+          "rs/lib.rs",
+          "Function",
+          "rust_helper",
+          "rs/lib.rs",
+          "lsp_direct",
+          ""
+        ],
+        [
+          "CALLS",
+          "Method",
+          "run",
+          "rs/lib.rs",
+          "Method",
+          "rust_name",
+          "rs/lib.rs",
+          "lsp_trait_dispatch",
+          ""
+        ],
+        [
+          "CALLS",
+          "Function",
+          "rust_entry",
+          "rs/lib.rs",
+          "Method",
+          "new",
+          "rs/lib.rs",
+          "lsp_constructor",
+          ""
+        ],
+        [
+          "CALLS",
+          "Function",
+          "rust_entry",
+          "rs/lib.rs",
+          "Method",
+          "run",
+          "rs/lib.rs",
+          "lsp_method_dispatch",
+          ""
+        ],
+        [
+          "CALLS",
           "Module",
           "ts/server.ts",
           "ts/server.ts",
@@ -159,7 +281,7 @@
           "Method",
           "run",
           "ts/service.ts",
-          "unique_name",
+          "field_type_hint",
           ""
         ],
         [
@@ -192,6 +314,72 @@
           "Method",
           "get",
           "<python-builtins>",
+          "",
+          ""
+        ],
+        [
+          "DEFINES",
+          "File",
+          "app.cpp",
+          "cpp/app.cpp",
+          "Class",
+          "CppNamed",
+          "cpp/app.cpp",
+          "",
+          ""
+        ],
+        [
+          "DEFINES",
+          "File",
+          "app.cpp",
+          "cpp/app.cpp",
+          "Class",
+          "CppWorker",
+          "cpp/app.cpp",
+          "",
+          ""
+        ],
+        [
+          "DEFINES",
+          "File",
+          "app.cpp",
+          "cpp/app.cpp",
+          "Function",
+          "cppEntry",
+          "cpp/app.cpp",
+          "",
+          ""
+        ],
+        [
+          "DEFINES",
+          "File",
+          "app.cpp",
+          "cpp/app.cpp",
+          "Function",
+          "cppHelper",
+          "cpp/app.cpp",
+          "",
+          ""
+        ],
+        [
+          "DEFINES",
+          "File",
+          "app.cpp",
+          "cpp/app.cpp",
+          "Method",
+          "cppName",
+          "cpp/app.cpp",
+          "",
+          ""
+        ],
+        [
+          "DEFINES",
+          "File",
+          "app.cpp",
+          "cpp/app.cpp",
+          "Method",
+          "run",
+          "cpp/app.cpp",
           "",
           ""
         ],
@@ -286,6 +474,116 @@
         [
           "DEFINES",
           "File",
+          "App.java",
+          "java/App.java",
+          "Class",
+          "JavaHelpers",
+          "java/App.java",
+          "",
+          ""
+        ],
+        [
+          "DEFINES",
+          "File",
+          "App.java",
+          "java/App.java",
+          "Interface",
+          "JavaNamed",
+          "java/App.java",
+          "",
+          ""
+        ],
+        [
+          "DEFINES",
+          "File",
+          "App.java",
+          "java/App.java",
+          "Class",
+          "JavaWorker",
+          "java/App.java",
+          "",
+          ""
+        ],
+        [
+          "DEFINES",
+          "File",
+          "App.java",
+          "java/App.java",
+          "Method",
+          "JavaWorker",
+          "java/App.java",
+          "",
+          ""
+        ],
+        [
+          "DEFINES",
+          "File",
+          "App.java",
+          "java/App.java",
+          "Method",
+          "decorate",
+          "java/App.java",
+          "",
+          ""
+        ],
+        [
+          "DEFINES",
+          "File",
+          "App.java",
+          "java/App.java",
+          "Method",
+          "javaEntry",
+          "java/App.java",
+          "",
+          ""
+        ],
+        [
+          "DEFINES",
+          "File",
+          "App.java",
+          "java/App.java",
+          "Method",
+          "javaName",
+          "java/App.java",
+          "",
+          ""
+        ],
+        [
+          "DEFINES",
+          "File",
+          "App.java",
+          "java/App.java",
+          "Function",
+          "javaName",
+          "java/App.java",
+          "",
+          ""
+        ],
+        [
+          "DEFINES",
+          "File",
+          "App.java",
+          "java/App.java",
+          "Method",
+          "javaName",
+          "java/App.java",
+          "",
+          ""
+        ],
+        [
+          "DEFINES",
+          "File",
+          "App.java",
+          "java/App.java",
+          "Method",
+          "run",
+          "java/App.java",
+          "",
+          ""
+        ],
+        [
+          "DEFINES",
+          "File",
           "app.py",
           "py/app.py",
           "Function",
@@ -374,6 +672,83 @@
         [
           "DEFINES",
           "File",
+          "lib.rs",
+          "rs/lib.rs",
+          "Interface",
+          "RustNamed",
+          "rs/lib.rs",
+          "",
+          ""
+        ],
+        [
+          "DEFINES",
+          "File",
+          "lib.rs",
+          "rs/lib.rs",
+          "Struct",
+          "RustWorker",
+          "rs/lib.rs",
+          "",
+          ""
+        ],
+        [
+          "DEFINES",
+          "File",
+          "lib.rs",
+          "rs/lib.rs",
+          "Method",
+          "run",
+          "rs/lib.rs",
+          "",
+          ""
+        ],
+        [
+          "DEFINES",
+          "File",
+          "lib.rs",
+          "rs/lib.rs",
+          "Function",
+          "rust_entry",
+          "rs/lib.rs",
+          "",
+          ""
+        ],
+        [
+          "DEFINES",
+          "File",
+          "lib.rs",
+          "rs/lib.rs",
+          "Function",
+          "rust_helper",
+          "rs/lib.rs",
+          "",
+          ""
+        ],
+        [
+          "DEFINES",
+          "File",
+          "lib.rs",
+          "rs/lib.rs",
+          "Method",
+          "rust_name",
+          "rs/lib.rs",
+          "",
+          ""
+        ],
+        [
+          "DEFINES",
+          "File",
+          "lib.rs",
+          "rs/lib.rs",
+          "Method",
+          "rust_name",
+          "rs/lib.rs",
+          "",
+          ""
+        ],
+        [
+          "DEFINES",
+          "File",
           "server.ts",
           "ts/server.ts",
           "Function",
@@ -417,6 +792,28 @@
         ],
         [
           "DEFINES_METHOD",
+          "Class",
+          "CppWorker",
+          "cpp/app.cpp",
+          "Method",
+          "cppName",
+          "cpp/app.cpp",
+          "",
+          ""
+        ],
+        [
+          "DEFINES_METHOD",
+          "Class",
+          "CppWorker",
+          "cpp/app.cpp",
+          "Method",
+          "run",
+          "cpp/app.cpp",
+          "",
+          ""
+        ],
+        [
+          "DEFINES_METHOD",
           "Struct",
           "Entity",
           "go/orders.go",
@@ -440,11 +837,121 @@
         [
           "DEFINES_METHOD",
           "Class",
+          "App",
+          "java/App.java",
+          "Method",
+          "javaEntry",
+          "java/App.java",
+          "",
+          ""
+        ],
+        [
+          "DEFINES_METHOD",
+          "Class",
+          "JavaHelpers",
+          "java/App.java",
+          "Method",
+          "decorate",
+          "java/App.java",
+          "",
+          ""
+        ],
+        [
+          "DEFINES_METHOD",
+          "Interface",
+          "JavaNamed",
+          "java/App.java",
+          "Method",
+          "javaName",
+          "java/App.java",
+          "",
+          ""
+        ],
+        [
+          "DEFINES_METHOD",
+          "Class",
+          "JavaWorker",
+          "java/App.java",
+          "Method",
+          "JavaWorker",
+          "java/App.java",
+          "",
+          ""
+        ],
+        [
+          "DEFINES_METHOD",
+          "Class",
+          "JavaWorker",
+          "java/App.java",
+          "Method",
+          "javaName",
+          "java/App.java",
+          "",
+          ""
+        ],
+        [
+          "DEFINES_METHOD",
+          "Class",
+          "JavaWorker",
+          "java/App.java",
+          "Method",
+          "run",
+          "java/App.java",
+          "",
+          ""
+        ],
+        [
+          "DEFINES_METHOD",
+          "Class",
           "Greeter",
           "py/greeter.py",
           "Method",
           "hello",
           "py/greeter.py",
+          "",
+          ""
+        ],
+        [
+          "DEFINES_METHOD",
+          "Interface",
+          "RustNamed",
+          "rs/lib.rs",
+          "Method",
+          "rust_name",
+          "rs/lib.rs",
+          "",
+          ""
+        ],
+        [
+          "DEFINES_METHOD",
+          "Struct",
+          "RustWorker",
+          "rs/lib.rs",
+          "Method",
+          "new",
+          "rs/lib.rs",
+          "",
+          ""
+        ],
+        [
+          "DEFINES_METHOD",
+          "Struct",
+          "RustWorker",
+          "rs/lib.rs",
+          "Method",
+          "run",
+          "rs/lib.rs",
+          "",
+          ""
+        ],
+        [
+          "DEFINES_METHOD",
+          "Struct",
+          "RustWorker",
+          "rs/lib.rs",
+          "Method",
+          "rust_name",
+          "rs/lib.rs",
           "",
           ""
         ],
@@ -493,6 +1000,17 @@
           ""
         ],
         [
+          "IMPLEMENTS",
+          "Struct",
+          "RustWorker",
+          "rs/lib.rs",
+          "Interface",
+          "RustNamed",
+          "rs/lib.rs",
+          "",
+          ""
+        ],
+        [
           "IMPORTS",
           "File",
           "app.py",
@@ -515,6 +1033,28 @@
           ""
         ],
         [
+          "INHERITS",
+          "Class",
+          "CppWorker",
+          "cpp/app.cpp",
+          "Class",
+          "CppNamed",
+          "cpp/app.cpp",
+          "",
+          ""
+        ],
+        [
+          "INHERITS",
+          "Class",
+          "JavaWorker",
+          "java/App.java",
+          "Interface",
+          "JavaNamed",
+          "java/App.java",
+          "",
+          ""
+        ],
+        [
           "OVERRIDE",
           "Method",
           "Name",
@@ -529,8 +1069,28 @@
       "interesting_nodes": [
         [
           "Class",
+          "CppNamed",
+          "cpp/app.cpp"
+        ],
+        [
+          "Class",
+          "CppWorker",
+          "cpp/app.cpp"
+        ],
+        [
+          "Class",
           "Greeter",
           "py/greeter.py"
+        ],
+        [
+          "Class",
+          "JavaHelpers",
+          "java/App.java"
+        ],
+        [
+          "Class",
+          "JavaWorker",
+          "java/App.java"
         ],
         [
           "Class",
@@ -559,6 +1119,16 @@
         ],
         [
           "Function",
+          "cppEntry",
+          "cpp/app.cpp"
+        ],
+        [
+          "Function",
+          "cppHelper",
+          "cpp/app.cpp"
+        ],
+        [
+          "Function",
           "decode_token",
           "py/routes.py"
         ],
@@ -584,6 +1154,11 @@
         ],
         [
           "Function",
+          "javaName",
+          "java/App.java"
+        ],
+        [
+          "Function",
           "log_call",
           "py/greeter.py"
         ],
@@ -594,8 +1169,23 @@
         ],
         [
           "Function",
+          "rust_entry",
+          "rs/lib.rs"
+        ],
+        [
+          "Function",
+          "rust_helper",
+          "rs/lib.rs"
+        ],
+        [
+          "Function",
           "start",
           "ts/server.ts"
+        ],
+        [
+          "Interface",
+          "JavaNamed",
+          "java/App.java"
         ],
         [
           "Interface",
@@ -603,6 +1193,16 @@
           "go/orders.go"
         ],
         [
+          "Interface",
+          "RustNamed",
+          "rs/lib.rs"
+        ],
+        [
+          "Method",
+          "JavaWorker",
+          "java/App.java"
+        ],
+        [
           "Method",
           "Name",
           "go/orders.go"
@@ -611,6 +1211,16 @@
           "Method",
           "Name",
           "go/orders.go"
+        ],
+        [
+          "Method",
+          "cppName",
+          "cpp/app.cpp"
+        ],
+        [
+          "Method",
+          "decorate",
+          "java/App.java"
         ],
         [
           "Method",
@@ -619,34 +1229,80 @@
         ],
         [
           "Method",
+          "javaEntry",
+          "java/App.java"
+        ],
+        [
+          "Method",
+          "javaName",
+          "java/App.java"
+        ],
+        [
+          "Method",
+          "javaName",
+          "java/App.java"
+        ],
+        [
+          "Method",
+          "run",
+          "cpp/app.cpp"
+        ],
+        [
+          "Method",
+          "run",
+          "java/App.java"
+        ],
+        [
+          "Method",
+          "run",
+          "rs/lib.rs"
+        ],
+        [
+          "Method",
           "run",
           "ts/service.ts"
+        ],
+        [
+          "Method",
+          "rust_name",
+          "rs/lib.rs"
+        ],
+        [
+          "Method",
+          "rust_name",
+          "rs/lib.rs"
         ],
         [
           "Struct",
           "Entity",
           "go/orders.go"
+        ],
+        [
+          "Struct",
+          "RustWorker",
+          "rs/lib.rs"
         ]
       ],
       "node_label_histogram": {
         "Branch": 1,
-        "Class": 7,
-        "File": 63,
-        "Folder": 4,
-        "Function": 71,
-        "Interface": 1,
-        "Method": 9,
-        "Module": 62,
+        "Class": 12,
+        "Field": 2,
+        "File": 66,
+        "Folder": 6,
+        "Function": 76,
+        "Interface": 3,
+        "Method": 21,
+        "Module": 65,
         "Project": 1,
         "Resource": 1,
         "Route": 3,
-        "Struct": 1,
-        "Variable": 6
+        "Struct": 2,
+        "Variable": 7
       }
     },
     "index": {
-      "edges": 949,
-      "nodes": 230,
+      "edges": 1023,
+      "nodes": 266,
       "project": "rust_refactor_language_parity",
       "status": "indexed"
     }

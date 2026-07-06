@@ -12,6 +12,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "cypher/cypher.h"
+#include "foundation/arena.h"
 #include "graph_buffer/graph_buffer.h"
 #include "pipeline/pipeline.h"
 #include "pipeline/rust_plan.h"
@@ -20,12 +22,37 @@
 #include <unistd.h>
 #endif
 
+_Static_assert(CBM_ARENA_MAX_BLOCKS == 256, "Rust arena ABI expects CBM_ARENA_MAX_BLOCKS=256");
+_Static_assert(CBM_ARENA_DEFAULT_BLOCK_SIZE == ((size_t)64 * 1024),
+               "Rust arena ABI expects CBM_ARENA_DEFAULT_BLOCK_SIZE=64KiB");
+_Static_assert(offsetof(CBMArena, blocks) == 0, "CBMArena.blocks offset drift");
+_Static_assert(offsetof(CBMArena, block_sizes) == sizeof(((CBMArena *)0)->blocks),
+               "CBMArena.block_sizes offset drift");
+_Static_assert(offsetof(CBMArena, nblocks) ==
+                   sizeof(((CBMArena *)0)->blocks) + sizeof(((CBMArena *)0)->block_sizes),
+               "CBMArena.nblocks offset drift");
+_Static_assert(offsetof(CBMArena, used) == offsetof(CBMArena, block_size) + sizeof(size_t),
+               "CBMArena.used offset drift");
+_Static_assert(offsetof(CBMArena, total_alloc) == offsetof(CBMArena, used) + sizeof(size_t),
+               "CBMArena.total_alloc offset drift");
+_Static_assert(sizeof(CBMArena) >= offsetof(CBMArena, total_alloc) + sizeof(size_t),
+               "CBMArena size drift");
 _Static_assert(CBM_MODE_FULL == 0, "Rust plan ABI expects CBM_MODE_FULL=0");
 _Static_assert(CBM_MODE_MODERATE == 1, "Rust plan ABI expects CBM_MODE_MODERATE=1");
 _Static_assert(CBM_MODE_FAST == 2, "Rust plan ABI expects CBM_MODE_FAST=2");
 
 extern int cbm_rs_dump_verify_is_degraded(int committed_nodes, int persisted_nodes, double ratio,
                                           int min_floor);
+
+extern void cbm_rs_arena_init(CBMArena *arena);
+extern void cbm_rs_arena_init_sized(CBMArena *arena, size_t block_size);
+extern void *cbm_rs_arena_alloc(CBMArena *arena, size_t n);
+extern void *cbm_rs_arena_calloc(CBMArena *arena, size_t n);
+extern char *cbm_rs_arena_strdup(CBMArena *arena, const char *value);
+extern char *cbm_rs_arena_strndup(CBMArena *arena, const unsigned char *value, size_t len);
+extern void cbm_rs_arena_reset(CBMArena *arena);
+extern void cbm_rs_arena_destroy(CBMArena *arena);
+extern size_t cbm_rs_arena_total(const CBMArena *arena);
 
 typedef struct CInternPool CInternPool;
 
@@ -60,6 +87,13 @@ extern size_t cbm_rs_app_local_dir(char *buf, size_t bufsize);
 extern size_t cbm_rs_resolve_cache_dir(char *buf, size_t bufsize);
 extern int cbm_rs_detect_cgroup_cpus(const char *cgroup_root);
 extern size_t cbm_rs_detect_cgroup_mem(const char *cgroup_root);
+extern void cbm_rs_mem_init(double ram_fraction);
+extern size_t cbm_rs_mem_rss(void);
+extern size_t cbm_rs_mem_peak_rss(void);
+extern size_t cbm_rs_mem_budget(void);
+extern bool cbm_rs_mem_over_budget(void);
+extern size_t cbm_rs_mem_worker_budget(int num_workers);
+extern void cbm_rs_mem_collect(void);
 
 /* hash_table：test-only borrowed-pointer 契約 parity（對齊 src/foundation/hash_table.c） */
 typedef struct CBMRustHashTable CBMRustHashTable;
@@ -74,6 +108,18 @@ extern void *cbm_rs_ht_delete(CBMRustHashTable *ht, const char *key);
 extern unsigned int cbm_rs_ht_count(const CBMRustHashTable *ht);
 extern void cbm_rs_ht_clear(CBMRustHashTable *ht);
 extern void cbm_rs_ht_foreach(const CBMRustHashTable *ht, cbm_rs_ht_iter_fn func, void *userdata);
+
+/* yaml：test-only parser/query 契約 parity（對齊 src/foundation/yaml.c） */
+typedef struct CBMRustYamlNode CBMRustYamlNode;
+extern CBMRustYamlNode *cbm_rs_yaml_parse(const unsigned char *text, int len);
+extern void cbm_rs_yaml_free(CBMRustYamlNode *root);
+extern const char *cbm_rs_yaml_get_str(const CBMRustYamlNode *root, const char *path);
+extern double cbm_rs_yaml_get_float(const CBMRustYamlNode *root, const char *path,
+                                    double default_val);
+extern bool cbm_rs_yaml_get_bool(const CBMRustYamlNode *root, const char *path, bool default_val);
+extern int cbm_rs_yaml_get_str_list(const CBMRustYamlNode *root, const char *path, const char **out,
+                                    int max_out);
+extern bool cbm_rs_yaml_has(const CBMRustYamlNode *root, const char *path);
 
 typedef struct {
     int count;
@@ -102,10 +148,55 @@ extern int cbm_rs_diag_format_path(char *buf, size_t bufsize, const char *tmpdir
                                    const char *ext);
 extern int cbm_rs_diag_format_json(char *buf, size_t bufsize, const CbmRsDiagSnapshot *snapshot);
 extern int cbm_rs_diag_format_ndjson(char *buf, size_t bufsize, const CbmRsDiagSnapshot *snapshot);
+extern int cbm_rs_compat_regex_known_flags(int flags);
+extern int cbm_rs_compat_regex_match_cap(int nmatch, int has_matches);
+extern int cbm_rs_compat_regex_status(int matched);
+extern size_t cbm_rs_compat_thread_effective_stack_size(size_t stack_size);
+extern bool cbm_rs_compat_aligned_alloc_precheck(size_t alignment, size_t size,
+                                                 size_t pointer_size);
+extern int cbm_rs_log_parse_level_value(const char *value, int current);
+extern int cbm_rs_log_parse_format_value(const char *value, int current);
+extern int cbm_rs_log_sanitize_text_atom(char *buf, size_t bufsize, const char *value);
+extern int cbm_rs_log_json_string(char *buf, size_t bufsize, const char *value);
+extern int cbm_rs_log_http_path_without_query(char *buf, size_t bufsize, const char *path);
+extern int cbm_rs_log_http_status_level(int status);
+extern bool cbm_rs_profile_env_enabled(const char *value);
+extern int64_t cbm_rs_profile_elapsed_us(int64_t start_sec, int64_t start_nsec, int64_t now_sec,
+                                         int64_t now_nsec);
+extern int64_t cbm_rs_profile_elapsed_ms(int64_t us);
+extern int64_t cbm_rs_profile_rate_per_s(int64_t items, int64_t us);
+extern size_t cbm_rs_pipeline_project_name_from_path(char *buf, size_t bufsize,
+                                                     const char *abs_path);
 extern int cbm_rs_pipeline_plan_describe(int kind, int mode, int worker_count, int file_count,
                                          char *buf, size_t bufsize);
 typedef cbm_rs_pipeline_plan_step_t CbmRsPipelinePlanStep;
 typedef cbm_rs_pipeline_plan_step_v2_t CbmRsPipelinePlanStepV2;
+typedef cbm_rs_pipeline_top_step_v1_t CbmRsPipelineTopStepV1;
+
+typedef struct {
+    int kind;
+    int pos;
+    int text_len;
+    int reserved0;
+} CbmRsCypherTokenV1;
+
+typedef struct {
+    int64_t id;
+    int has_id;
+    int id_kind;
+    int has_params;
+    size_t jsonrpc_len;
+    size_t method_len;
+    size_t id_str_len;
+    size_t params_len;
+} CbmRsMcpJsonRpcParseOutV1;
+
+enum {
+    CBM_RS_MCP_ID_NONE = 0,
+    CBM_RS_MCP_ID_INT = 1,
+    CBM_RS_MCP_ID_STRING = 2,
+    CBM_RS_MCP_ID_OTHER = 3,
+};
 
 _Static_assert(sizeof(CbmRsPipelinePlanStepV2) == 32, "PlanStepV2 ABI size drift");
 _Static_assert(offsetof(CbmRsPipelinePlanStepV2, kind) == 0, "PlanStepV2.kind offset drift");
@@ -117,6 +208,53 @@ _Static_assert(offsetof(CbmRsPipelinePlanStepV2, requires_mask) == 16,
                "PlanStepV2.requires_mask offset drift");
 _Static_assert(offsetof(CbmRsPipelinePlanStepV2, effect_flags) == 24,
                "PlanStepV2.effect_flags offset drift");
+_Static_assert(sizeof(CbmRsPipelineTopStepV1) == 32, "PipelineTopStepV1 ABI size drift");
+_Static_assert(offsetof(CbmRsPipelineTopStepV1, kind) == 0, "PipelineTopStepV1.kind offset drift");
+_Static_assert(offsetof(CbmRsPipelineTopStepV1, phase) == 4,
+               "PipelineTopStepV1.phase offset drift");
+_Static_assert(offsetof(CbmRsPipelineTopStepV1, policy) == 8,
+               "PipelineTopStepV1.policy offset drift");
+_Static_assert(offsetof(CbmRsPipelineTopStepV1, gate_flags) == 12,
+               "PipelineTopStepV1.gate_flags offset drift");
+_Static_assert(offsetof(CbmRsPipelineTopStepV1, requires_mask) == 16,
+               "PipelineTopStepV1.requires_mask offset drift");
+_Static_assert(offsetof(CbmRsPipelineTopStepV1, effect_flags) == 24,
+               "PipelineTopStepV1.effect_flags offset drift");
+_Static_assert(offsetof(CbmRsPipelineTopStepV1, nested_plan_kind) == 28,
+               "PipelineTopStepV1.nested_plan_kind offset drift");
+_Static_assert(TOK_MATCH == 0, "Rust Cypher lexer ABI expects TOK_MATCH=0");
+_Static_assert(TOK_OPTIONAL == 45, "Rust Cypher lexer ABI expects TOK_OPTIONAL=45");
+_Static_assert(TOK_CALL == 47, "Rust Cypher lexer ABI expects TOK_CALL=47");
+_Static_assert(TOK_EXISTS == 51, "Rust Cypher lexer ABI expects TOK_EXISTS=51");
+_Static_assert(TOK_LPAREN == 66, "Rust Cypher lexer ABI expects TOK_LPAREN=66");
+_Static_assert(TOK_IDENT == 85, "Rust Cypher lexer ABI expects TOK_IDENT=85");
+_Static_assert(TOK_STRING == 86, "Rust Cypher lexer ABI expects TOK_STRING=86");
+_Static_assert(TOK_NUMBER == 87, "Rust Cypher lexer ABI expects TOK_NUMBER=87");
+_Static_assert(TOK_EOF == 88, "Rust Cypher lexer ABI expects TOK_EOF=88");
+_Static_assert(sizeof(CbmRsCypherTokenV1) == 16, "CypherTokenV1 ABI size drift");
+_Static_assert(offsetof(CbmRsCypherTokenV1, kind) == 0, "CypherTokenV1.kind offset drift");
+_Static_assert(offsetof(CbmRsCypherTokenV1, pos) == 4, "CypherTokenV1.pos offset drift");
+_Static_assert(offsetof(CbmRsCypherTokenV1, text_len) == 8, "CypherTokenV1.text_len offset drift");
+_Static_assert(offsetof(CbmRsCypherTokenV1, reserved0) == 12,
+               "CypherTokenV1.reserved0 offset drift");
+_Static_assert(offsetof(CbmRsMcpJsonRpcParseOutV1, id) == 0,
+               "McpJsonRpcParseOutV1.id offset drift");
+_Static_assert(offsetof(CbmRsMcpJsonRpcParseOutV1, has_id) == 8,
+               "McpJsonRpcParseOutV1.has_id offset drift");
+_Static_assert(offsetof(CbmRsMcpJsonRpcParseOutV1, id_kind) == 12,
+               "McpJsonRpcParseOutV1.id_kind offset drift");
+_Static_assert(offsetof(CbmRsMcpJsonRpcParseOutV1, has_params) == 16,
+               "McpJsonRpcParseOutV1.has_params offset drift");
+_Static_assert(offsetof(CbmRsMcpJsonRpcParseOutV1, jsonrpc_len) == 24,
+               "McpJsonRpcParseOutV1.jsonrpc_len offset drift");
+_Static_assert(offsetof(CbmRsMcpJsonRpcParseOutV1, method_len) == 24 + sizeof(size_t),
+               "McpJsonRpcParseOutV1.method_len offset drift");
+_Static_assert(offsetof(CbmRsMcpJsonRpcParseOutV1, id_str_len) == 24 + 2 * sizeof(size_t),
+               "McpJsonRpcParseOutV1.id_str_len offset drift");
+_Static_assert(offsetof(CbmRsMcpJsonRpcParseOutV1, params_len) == 24 + 3 * sizeof(size_t),
+               "McpJsonRpcParseOutV1.params_len offset drift");
+_Static_assert(sizeof(CbmRsMcpJsonRpcParseOutV1) == 24 + 4 * sizeof(size_t),
+               "McpJsonRpcParseOutV1 ABI size drift");
 
 typedef struct {
     int kind;
@@ -139,6 +277,39 @@ typedef struct {
     uint32_t normalized_flags;
     uint32_t reserved0;
 } CbmRsGbufMutationValidationV1;
+
+typedef struct {
+    int kind;
+    uint32_t flags;
+    const char *name;
+    const char *table_name;
+    const char *column_name;
+} CbmRsStoreSchemaManifestEntryV1;
+
+typedef struct {
+    int kind;
+    uint32_t flags;
+    int ordinal;
+    int hidden;
+    const char *name;
+    const char *table_name;
+    const char *column_name;
+    const char *column_type;
+    const char *default_sql;
+    const char *columns_csv;
+    const char *sql_fragment;
+} CbmRsStoreSchemaManifestEntryV2;
+
+typedef struct {
+    int kind;
+    uint32_t flags;
+    uint32_t mode_mask;
+    int ordinal;
+    int64_t value_i64;
+    const char *name;
+    const char *sql;
+    const char *env_name;
+} CbmRsStoreConnectionManifestEntryV1;
 
 _Static_assert(sizeof(CbmRsGbufMutationMetaV1) == 32, "GbufMutationMetaV1 ABI size drift");
 _Static_assert(offsetof(CbmRsGbufMutationMetaV1, kind) == 0,
@@ -166,16 +337,121 @@ _Static_assert(sizeof(CbmRsGbufMutationValidationV1) == 24,
                "GbufMutationValidationV1 ABI size drift");
 _Static_assert(offsetof(CbmRsGbufMutationValidationV1, missing_fields) == 8,
                "GbufMutationValidationV1.missing_fields offset drift");
+_Static_assert(offsetof(CbmRsStoreSchemaManifestEntryV1, kind) == 0,
+               "StoreSchemaManifestEntryV1.kind offset drift");
+_Static_assert(offsetof(CbmRsStoreSchemaManifestEntryV1, flags) == 4,
+               "StoreSchemaManifestEntryV1.flags offset drift");
+_Static_assert(offsetof(CbmRsStoreSchemaManifestEntryV1, name) == 8,
+               "StoreSchemaManifestEntryV1.name offset drift");
+_Static_assert(offsetof(CbmRsStoreSchemaManifestEntryV1, table_name) == 8 + sizeof(const char *),
+               "StoreSchemaManifestEntryV1.table_name offset drift");
+_Static_assert(offsetof(CbmRsStoreSchemaManifestEntryV1, column_name) ==
+                   8 + 2 * sizeof(const char *),
+               "StoreSchemaManifestEntryV1.column_name offset drift");
+_Static_assert(sizeof(CbmRsStoreSchemaManifestEntryV1) == 8 + 3 * sizeof(const char *),
+               "StoreSchemaManifestEntryV1 ABI size drift");
+_Static_assert(offsetof(CbmRsStoreSchemaManifestEntryV2, kind) == 0,
+               "StoreSchemaManifestEntryV2.kind offset drift");
+_Static_assert(offsetof(CbmRsStoreSchemaManifestEntryV2, flags) == 4,
+               "StoreSchemaManifestEntryV2.flags offset drift");
+_Static_assert(offsetof(CbmRsStoreSchemaManifestEntryV2, ordinal) == 8,
+               "StoreSchemaManifestEntryV2.ordinal offset drift");
+_Static_assert(offsetof(CbmRsStoreSchemaManifestEntryV2, hidden) == 12,
+               "StoreSchemaManifestEntryV2.hidden offset drift");
+_Static_assert(offsetof(CbmRsStoreSchemaManifestEntryV2, name) == 16,
+               "StoreSchemaManifestEntryV2.name offset drift");
+_Static_assert(offsetof(CbmRsStoreSchemaManifestEntryV2, table_name) == 16 + sizeof(const char *),
+               "StoreSchemaManifestEntryV2.table_name offset drift");
+_Static_assert(offsetof(CbmRsStoreSchemaManifestEntryV2, column_name) ==
+                   16 + 2 * sizeof(const char *),
+               "StoreSchemaManifestEntryV2.column_name offset drift");
+_Static_assert(offsetof(CbmRsStoreSchemaManifestEntryV2, column_type) ==
+                   16 + 3 * sizeof(const char *),
+               "StoreSchemaManifestEntryV2.column_type offset drift");
+_Static_assert(offsetof(CbmRsStoreSchemaManifestEntryV2, default_sql) ==
+                   16 + 4 * sizeof(const char *),
+               "StoreSchemaManifestEntryV2.default_sql offset drift");
+_Static_assert(offsetof(CbmRsStoreSchemaManifestEntryV2, columns_csv) ==
+                   16 + 5 * sizeof(const char *),
+               "StoreSchemaManifestEntryV2.columns_csv offset drift");
+_Static_assert(offsetof(CbmRsStoreSchemaManifestEntryV2, sql_fragment) ==
+                   16 + 6 * sizeof(const char *),
+               "StoreSchemaManifestEntryV2.sql_fragment offset drift");
+_Static_assert(sizeof(CbmRsStoreSchemaManifestEntryV2) == 16 + 7 * sizeof(const char *),
+               "StoreSchemaManifestEntryV2 ABI size drift");
+_Static_assert(offsetof(CbmRsStoreConnectionManifestEntryV1, kind) == 0,
+               "StoreConnectionManifestEntryV1.kind offset drift");
+_Static_assert(offsetof(CbmRsStoreConnectionManifestEntryV1, flags) == 4,
+               "StoreConnectionManifestEntryV1.flags offset drift");
+_Static_assert(offsetof(CbmRsStoreConnectionManifestEntryV1, mode_mask) == 8,
+               "StoreConnectionManifestEntryV1.mode_mask offset drift");
+_Static_assert(offsetof(CbmRsStoreConnectionManifestEntryV1, ordinal) == 12,
+               "StoreConnectionManifestEntryV1.ordinal offset drift");
+_Static_assert(offsetof(CbmRsStoreConnectionManifestEntryV1, value_i64) == 16,
+               "StoreConnectionManifestEntryV1.value_i64 offset drift");
+_Static_assert(offsetof(CbmRsStoreConnectionManifestEntryV1, name) == 24,
+               "StoreConnectionManifestEntryV1.name offset drift");
+_Static_assert(offsetof(CbmRsStoreConnectionManifestEntryV1, sql) == 24 + sizeof(const char *),
+               "StoreConnectionManifestEntryV1.sql offset drift");
+_Static_assert(offsetof(CbmRsStoreConnectionManifestEntryV1, env_name) ==
+                   24 + 2 * sizeof(const char *),
+               "StoreConnectionManifestEntryV1.env_name offset drift");
+_Static_assert(sizeof(CbmRsStoreConnectionManifestEntryV1) == 24 + 3 * sizeof(const char *),
+               "StoreConnectionManifestEntryV1 ABI size drift");
 
 extern int cbm_rs_pipeline_incremental_post_step_count(int mode);
 extern int cbm_rs_pipeline_incremental_post_steps(int mode, CbmRsPipelinePlanStep *out, int cap);
 extern int cbm_rs_pipeline_plan_step_count_v2(int kind, int mode, int worker_count, int file_count);
 extern int cbm_rs_pipeline_plan_steps_v2(int kind, int mode, int worker_count, int file_count,
                                          CbmRsPipelinePlanStepV2 *out, int cap);
+extern int cbm_rs_pipeline_full_plan_step_count_v1(int mode, int worker_count, int file_count);
+extern int cbm_rs_pipeline_full_plan_steps_v1(int mode, int worker_count, int file_count,
+                                              CbmRsPipelineTopStepV1 *out, int cap);
+extern int cbm_rs_cypher_lex_token_count_v1(const unsigned char *input, int len);
+extern int cbm_rs_cypher_lex_tokens_v1(const unsigned char *input, int len, CbmRsCypherTokenV1 *out,
+                                       int cap);
+extern size_t cbm_rs_cypher_lex_summary_v1(char *buf, size_t bufsize, const unsigned char *input,
+                                           int len);
+extern size_t cbm_rs_cypher_parse_summary_v1(char *buf, size_t bufsize, const unsigned char *input,
+                                             int len);
+extern size_t cbm_rs_mcp_jsonrpc_request_summary_v1(char *buf, size_t bufsize,
+                                                    const unsigned char *input, int len);
+extern int cbm_rs_mcp_jsonrpc_parse_v1(const unsigned char *input, int len,
+                                       CbmRsMcpJsonRpcParseOutV1 *out, char *jsonrpc_buf,
+                                       size_t jsonrpc_bufsize, char *method_buf,
+                                       size_t method_bufsize, char *id_str_buf,
+                                       size_t id_str_bufsize, char *params_buf,
+                                       size_t params_bufsize);
 extern int cbm_rs_gbuf_mutation_command_count_v1(void);
 extern int cbm_rs_gbuf_mutation_commands_v1(CbmRsGbufMutationMetaV1 *out, int cap);
 extern int cbm_rs_gbuf_mutation_validate_v1(const CbmRsGbufMutationCmdV1 *cmd,
                                             CbmRsGbufMutationValidationV1 *out);
+extern int cbm_rs_store_schema_manifest_entry_count_v1(void);
+extern int cbm_rs_store_schema_manifest_user_index_count_v1(void);
+extern int cbm_rs_store_schema_manifest_entries_v1(CbmRsStoreSchemaManifestEntryV1 *out, int cap);
+extern int cbm_rs_store_schema_manifest_entry_count_v2(void);
+extern int cbm_rs_store_schema_manifest_table_column_count_v2(void);
+extern int cbm_rs_store_schema_manifest_fts_shadow_count_v2(void);
+extern int cbm_rs_store_schema_manifest_entries_v2(CbmRsStoreSchemaManifestEntryV2 *out, int cap);
+extern size_t cbm_rs_store_build_immutable_uri_v1(char *buf, size_t bufsize, const char *path);
+extern size_t cbm_rs_store_glob_to_like_v1(char *buf, size_t bufsize, const char *pattern);
+extern size_t cbm_rs_store_ensure_case_insensitive_v1(char *buf, size_t bufsize,
+                                                      const char *pattern);
+extern size_t cbm_rs_store_strip_case_flag_v1(char *buf, size_t bufsize, const char *pattern);
+extern int cbm_rs_store_like_hint_count_v1(const char *pattern, int max_out);
+extern size_t cbm_rs_store_like_hint_v1(char *buf, size_t bufsize, const char *pattern,
+                                        int max_out, int index);
+extern size_t cbm_rs_store_qn_to_package_v1(char *buf, size_t bufsize, const char *qn);
+extern size_t cbm_rs_store_qn_to_top_package_v1(char *buf, size_t bufsize, const char *qn);
+extern int cbm_rs_store_is_test_file_path_v1(const char *path);
+extern int cbm_rs_store_hop_to_risk_v1(int hop);
+extern size_t cbm_rs_store_risk_label_v1(char *buf, size_t bufsize, int level);
+extern size_t cbm_rs_store_camel_split_v1(char *buf, size_t bufsize, const char *input);
+extern int64_t cbm_rs_store_resolve_mmap_size_value_v1(const char *value);
+extern int cbm_rs_store_connection_manifest_entry_count_v1(void);
+extern int cbm_rs_store_connection_manifest_write_pragma_count_v1(void);
+extern int cbm_rs_store_connection_manifest_entries_v1(CbmRsStoreConnectionManifestEntryV1 *out,
+                                                       int cap);
 
 typedef struct {
     const char *name;
@@ -237,6 +513,13 @@ static void check_u32(const char *name, unsigned int actual, unsigned int expect
 static void check_u64(const char *name, uint64_t actual, uint64_t expected) {
     if (actual != expected) {
         fprintf(stderr, "%s: expected %" PRIu64 ", got %" PRIu64 "\n", name, expected, actual);
+        exit(1);
+    }
+}
+
+static void check_i64(const char *name, int64_t actual, int64_t expected) {
+    if (actual != expected) {
+        fprintf(stderr, "%s: expected %" PRId64 ", got %" PRId64 "\n", name, expected, actual);
         exit(1);
     }
 }
@@ -381,6 +664,95 @@ static void test_dump_verify_exports(void) {
                false);
     check_bool("tight_ratio", cbm_rs_dump_verify_is_degraded(1000, 900, 0.95, 50), true);
     check_bool("growth", cbm_rs_dump_verify_is_degraded(500, 750, 0.5, 50), false);
+}
+
+static void test_arena_exports(void) {
+    enum {
+        ARENA_DEFAULT_BLOCK_SIZE = 64 * 1024,
+        ARENA_MIN_BLOCK_SIZE = 64,
+    };
+
+    check_null("arena_alloc_null", cbm_rs_arena_alloc(NULL, 16));
+    check_null("arena_calloc_null", cbm_rs_arena_calloc(NULL, 16));
+    check_null("arena_strdup_null_arena", cbm_rs_arena_strdup(NULL, "hello"));
+    check_null("arena_strndup_null_arena",
+               cbm_rs_arena_strndup(NULL, (const unsigned char *)"hello", 5));
+    check_size("arena_total_null", cbm_rs_arena_total(NULL), 0);
+    cbm_rs_arena_reset(NULL);
+    cbm_rs_arena_destroy(NULL);
+
+    CBMArena arena;
+    cbm_rs_arena_init(&arena);
+    check_size("arena_default_count", (size_t)arena.nblocks, 1);
+    check_size("arena_default_block_size", arena.block_size, ARENA_DEFAULT_BLOCK_SIZE);
+    check_size("arena_default_first_size", arena.block_sizes[0], ARENA_DEFAULT_BLOCK_SIZE);
+    check_size("arena_default_used", arena.used, 0);
+    check_size("arena_default_total", arena.total_alloc, 0);
+    check_null("arena_alloc_zero", cbm_rs_arena_alloc(&arena, 0));
+    cbm_rs_arena_destroy(&arena);
+    check_size("arena_destroy_count", (size_t)arena.nblocks, 0);
+    check_size("arena_destroy_total", arena.total_alloc, 0);
+    cbm_rs_arena_destroy(&arena);
+    check_size("arena_double_destroy_count", (size_t)arena.nblocks, 0);
+
+    cbm_rs_arena_init_sized(&arena, 32);
+    check_size("arena_sized_clamp", arena.block_size, ARENA_MIN_BLOCK_SIZE);
+    check_size("arena_sized_first_size", arena.block_sizes[0], ARENA_MIN_BLOCK_SIZE);
+    void *p1 = cbm_rs_arena_alloc(&arena, 1);
+    void *p2 = cbm_rs_arena_alloc(&arena, 1);
+    check_not_null("arena_alloc_p1", p1);
+    check_not_null("arena_alloc_p2", p2);
+    check_size("arena_alloc_p1_align", (uintptr_t)p1 % 8, 0);
+    check_size("arena_alloc_p2_align", (uintptr_t)p2 % 8, 0);
+    check_size("arena_alloc_delta", (size_t)((char *)p2 - (char *)p1), 8);
+    check_size("arena_used_after_two_allocs", arena.used, 16);
+    check_size("arena_total_after_two_allocs", cbm_rs_arena_total(&arena), 16);
+
+    unsigned char *zero = (unsigned char *)cbm_rs_arena_calloc(&arena, 16);
+    check_not_null("arena_calloc", zero);
+    for (int i = 0; i < 16; i++) {
+        if (zero[i] != 0) {
+            fprintf(stderr, "arena_calloc_zero failed at %d\n", i);
+            exit(1);
+        }
+    }
+
+    char *hello = cbm_rs_arena_strdup(&arena, "hello world");
+    check_not_null("arena_strdup", hello);
+    check_str("arena_strdup_value", hello, "hello world");
+    check_null("arena_strdup_null_value", cbm_rs_arena_strdup(&arena, NULL));
+
+    char *prefix =
+        cbm_rs_arena_strndup(&arena, (const unsigned char *)"hello world", strlen("hello"));
+    check_not_null("arena_strndup", prefix);
+    check_str("arena_strndup_value", prefix, "hello");
+    const unsigned char raw[] = {'a', '\0', 'b'};
+    char *raw_copy = cbm_rs_arena_strndup(&arena, raw, sizeof(raw));
+    check_not_null("arena_strndup_raw", raw_copy);
+    check_int("arena_strndup_raw_0", raw_copy[0], 'a');
+    check_int("arena_strndup_raw_1", raw_copy[1], '\0');
+    check_int("arena_strndup_raw_2", raw_copy[2], 'b');
+    check_int("arena_strndup_raw_3", raw_copy[3], '\0');
+
+    cbm_rs_arena_destroy(&arena);
+
+    cbm_rs_arena_init_sized(&arena, 64);
+    check_not_null("arena_growth_1", cbm_rs_arena_alloc(&arena, 48));
+    check_size("arena_growth_count_1", (size_t)arena.nblocks, 1);
+    check_not_null("arena_growth_2", cbm_rs_arena_alloc(&arena, 48));
+    check_size("arena_growth_count_2", (size_t)arena.nblocks, 2);
+    check_size("arena_growth_block_size", arena.block_size, 128);
+    cbm_rs_arena_reset(&arena);
+    check_size("arena_reset_count", (size_t)arena.nblocks, 1);
+    check_size("arena_reset_block_size", arena.block_size, arena.block_sizes[0]);
+    check_size("arena_reset_first_size", arena.block_sizes[0], 64);
+    check_size("arena_reset_used", arena.used, 0);
+    check_size("arena_reset_total", arena.total_alloc, 0);
+    check_not_null("arena_reuse_after_reset", cbm_rs_arena_alloc(&arena, 16));
+    cbm_rs_arena_destroy(&arena);
+
+    memset(&arena, 0, sizeof(arena));
+    check_null("arena_corrupt_zero_nblocks", cbm_rs_arena_alloc(&arena, 16));
 }
 
 static void test_intern_null_contracts(void) {
@@ -740,6 +1112,26 @@ static void test_platform_cgroup_exports(void) {
 }
 #endif
 
+static void test_mem_exports(void) {
+    EnvSnapshot snapshots[1];
+    env_snapshot_save(&snapshots[0], "CBM_MEM_BUDGET_MB");
+
+    env_set_checked("CBM_MEM_BUDGET_MB", "1536");
+    cbm_rs_mem_init(0.5);
+
+    check_size("mem_budget_override", cbm_rs_mem_budget(), (size_t)1536 * 1024 * 1024);
+    check_size("mem_worker_budget_zero", cbm_rs_mem_worker_budget(0), cbm_rs_mem_budget());
+    check_size("mem_worker_budget_neg", cbm_rs_mem_worker_budget(-3), cbm_rs_mem_budget());
+    check_size("mem_worker_budget_div4", cbm_rs_mem_worker_budget(4), cbm_rs_mem_budget() / 4);
+    check_bool("mem_over_budget_contract", cbm_rs_mem_over_budget(),
+               cbm_rs_mem_rss() > cbm_rs_mem_budget());
+    check_bool("mem_collect_no_crash", (cbm_rs_mem_collect(), true), true);
+    check_bool("mem_peak_non_zero", cbm_rs_mem_peak_rss() >= cbm_rs_mem_rss(), true);
+
+    env_snapshot_restore(snapshots, 1);
+    cbm_rs_mem_collect();
+}
+
 static CbmRsDiagSnapshot diagnostics_fixture_snapshot(void) {
     CbmRsDiagSnapshot snapshot = {
         .uptime_s = 17,
@@ -828,6 +1220,160 @@ static void test_diagnostics_exports(void) {
     check_int("diag_ndjson_null_snapshot", cbm_rs_diag_format_ndjson(line, sizeof(line), NULL), -1);
 }
 
+static void test_compat_exports(void) {
+    enum {
+        REG_EXTENDED = 1,
+        REG_ICASE = 2,
+        REG_NOSUB = 4,
+        REG_NEWLINE = 8,
+        REG_KNOWN_MASK = 15,
+        REG_OK = 0,
+        REG_NOMATCH = -1,
+        REG_MATCH_CAP = 32,
+    };
+
+    check_int("compat_regex_known_flags",
+              cbm_rs_compat_regex_known_flags(REG_EXTENDED | REG_ICASE | 0x80),
+              REG_EXTENDED | REG_ICASE);
+    check_int("compat_regex_match_cap_negative", cbm_rs_compat_regex_match_cap(-1, 1), 0);
+    check_int("compat_regex_match_cap_no_matches", cbm_rs_compat_regex_match_cap(4, 0), 0);
+    check_int("compat_regex_match_cap_small", cbm_rs_compat_regex_match_cap(4, 1), 4);
+    check_int("compat_regex_match_cap_large", cbm_rs_compat_regex_match_cap(40, 1), REG_MATCH_CAP);
+    check_int("compat_regex_status_match", cbm_rs_compat_regex_status(1), REG_OK);
+    check_int("compat_regex_status_nomatch", cbm_rs_compat_regex_status(0), REG_NOMATCH);
+    check_int("compat_regex_all_flags", cbm_rs_compat_regex_known_flags(0xff), REG_KNOWN_MASK);
+
+    check_size("compat_thread_default_stack", cbm_rs_compat_thread_effective_stack_size(0),
+               (size_t)8 * 1024 * 1024);
+    check_size("compat_thread_explicit_stack", cbm_rs_compat_thread_effective_stack_size(65536),
+               65536);
+    check_bool("compat_aligned_precheck_ok",
+               cbm_rs_compat_aligned_alloc_precheck(16, 128, sizeof(void *)), true);
+    check_bool("compat_aligned_precheck_small_alignment",
+               cbm_rs_compat_aligned_alloc_precheck(4, 128, sizeof(void *)), false);
+    check_bool("compat_aligned_precheck_non_power_two",
+               cbm_rs_compat_aligned_alloc_precheck(24, 128, sizeof(void *)), false);
+    check_bool("compat_aligned_precheck_zero_size",
+               cbm_rs_compat_aligned_alloc_precheck(16, 0, sizeof(void *)), false);
+}
+
+static void test_log_profile_exports(void) {
+    enum {
+        LOG_DEBUG = 0,
+        LOG_INFO = 1,
+        LOG_WARN = 2,
+        LOG_ERROR = 3,
+        LOG_NONE = 4,
+        LOG_FORMAT_TEXT = 0,
+        LOG_FORMAT_JSON = 1,
+    };
+    char buf[128];
+    char small[4];
+
+    check_int("log_level_warn_text", cbm_rs_log_parse_level_value("WARN", LOG_INFO), LOG_WARN);
+    check_int("log_level_numeric", cbm_rs_log_parse_level_value("3", LOG_INFO), LOG_ERROR);
+    check_int("log_level_none", cbm_rs_log_parse_level_value("none", LOG_INFO), LOG_NONE);
+    check_int("log_level_invalid_keeps_current", cbm_rs_log_parse_level_value("verbose", LOG_WARN),
+              LOG_WARN);
+    check_int("log_level_empty_keeps_current", cbm_rs_log_parse_level_value("", LOG_WARN),
+              LOG_WARN);
+    check_int("log_level_null_keeps_current", cbm_rs_log_parse_level_value(NULL, LOG_WARN),
+              LOG_WARN);
+
+    check_int("log_format_json", cbm_rs_log_parse_format_value("json", LOG_FORMAT_TEXT),
+              LOG_FORMAT_JSON);
+    check_int("log_format_text", cbm_rs_log_parse_format_value("TEXT", LOG_FORMAT_JSON),
+              LOG_FORMAT_TEXT);
+    check_int("log_format_invalid_keeps_current",
+              cbm_rs_log_parse_format_value("structured", LOG_FORMAT_JSON), LOG_FORMAT_JSON);
+
+    check_int("log_text_atom_len",
+              cbm_rs_log_sanitize_text_atom(buf, sizeof(buf), "line\r\nbreak\tvalue"), 17);
+    check_str("log_text_atom", buf, "line__break_value");
+    check_int("log_text_atom_small", cbm_rs_log_sanitize_text_atom(small, sizeof(small), "abcdef"),
+              -1);
+    check_int("log_text_atom_null_buf", cbm_rs_log_sanitize_text_atom(NULL, sizeof(buf), "abcdef"),
+              -1);
+
+    check_int("log_json_string_len",
+              cbm_rs_log_json_string(buf, sizeof(buf), "line\n\"quote\"\\tail"), 23);
+    check_str("log_json_string", buf, "\"line\\n\\\"quote\\\"\\\\tail\"");
+    check_int("log_json_string_small", cbm_rs_log_json_string(small, sizeof(small), "abcdef"), -1);
+
+    check_int("log_http_path_len",
+              cbm_rs_log_http_path_without_query(buf, sizeof(buf), "/api/layout?token=x#frag"), 11);
+    check_str("log_http_path", buf, "/api/layout");
+    check_int("log_http_path_fragment",
+              cbm_rs_log_http_path_without_query(buf, sizeof(buf), "/api/layout#frag"), 11);
+    check_str("log_http_path_fragment_value", buf, "/api/layout");
+    check_int("log_http_level_info", cbm_rs_log_http_status_level(200), LOG_INFO);
+    check_int("log_http_level_warn", cbm_rs_log_http_status_level(404), LOG_WARN);
+    check_int("log_http_level_error", cbm_rs_log_http_status_level(500), LOG_ERROR);
+
+    check_bool("profile_env_null", cbm_rs_profile_env_enabled(NULL), false);
+    check_bool("profile_env_empty", cbm_rs_profile_env_enabled(""), false);
+    check_bool("profile_env_zero", cbm_rs_profile_env_enabled("0"), false);
+    check_bool("profile_env_double_zero", cbm_rs_profile_env_enabled("00"), false);
+    check_bool("profile_env_one", cbm_rs_profile_env_enabled("1"), true);
+    check_bool("profile_env_false_string", cbm_rs_profile_env_enabled("false"), true);
+    check_i64("profile_elapsed_us", cbm_rs_profile_elapsed_us(10, 900000000, 12, 100250000),
+              1200250);
+    check_i64("profile_elapsed_ms", cbm_rs_profile_elapsed_ms(1200250), 1200);
+    check_i64("profile_rate", cbm_rs_profile_rate_per_s(12, 3000), 4000);
+    check_i64("profile_rate_zero_us", cbm_rs_profile_rate_per_s(12, 0), -1);
+    check_i64("profile_rate_zero_items", cbm_rs_profile_rate_per_s(0, 3000), -1);
+}
+
+static void test_pipeline_project_name_exports(void) {
+    char out[128];
+
+    check_size("project_name_null_len",
+               cbm_rs_pipeline_project_name_from_path(out, sizeof(out), NULL), strlen("root"));
+    check_str("project_name_null_out", out, "root");
+    check_size("project_name_empty_len",
+               cbm_rs_pipeline_project_name_from_path(out, sizeof(out), ""), strlen("root"));
+    check_str("project_name_empty_out", out, "root");
+    check_size("project_name_slashes_len",
+               cbm_rs_pipeline_project_name_from_path(out, sizeof(out), "///"), strlen("root"));
+    check_str("project_name_slashes_out", out, "root");
+
+    check_size("project_name_unix_len",
+               cbm_rs_pipeline_project_name_from_path(out, sizeof(out), "/Users/dev/my-project"),
+               strlen("Users-dev-my-project"));
+    check_str("project_name_unix_out", out, "Users-dev-my-project");
+    check_size("project_name_windows_len",
+               cbm_rs_pipeline_project_name_from_path(out, sizeof(out), "C:\\Users\\dev\\project"),
+               strlen("C-Users-dev-project"));
+    check_str("project_name_windows_out", out, "C-Users-dev-project");
+    check_size("project_name_drive_canon_len",
+               cbm_rs_pipeline_project_name_from_path(out, sizeof(out), "c:/WEBDEV/Cardio-Cloud"),
+               strlen("C-WEBDEV-Cardio-Cloud"));
+    check_str("project_name_drive_canon_out", out, "C-WEBDEV-Cardio-Cloud");
+    check_size("project_name_unsafe_len",
+               cbm_rs_pipeline_project_name_from_path(out, sizeof(out), "/x/a..b/my project"),
+               strlen("x-a.b-my-project"));
+    check_str("project_name_unsafe_out", out, "x-a.b-my-project");
+    check_size("project_name_unicode_len",
+               cbm_rs_pipeline_project_name_from_path(out, sizeof(out), "/tmp/\xe5\xbc\x80"),
+               strlen("tmp-e5bc80"));
+    check_str("project_name_unicode_out", out, "tmp-e5bc80");
+
+    char small[6];
+    memset(small, 'Z', sizeof(small));
+    check_size(
+        "project_name_trunc_len",
+        cbm_rs_pipeline_project_name_from_path(small, sizeof(small), "/Users/dev/my-project"),
+        strlen("Users-dev-my-project"));
+    check_str("project_name_trunc_out", small, "Users");
+    check_size("project_name_len_only",
+               cbm_rs_pipeline_project_name_from_path(NULL, 0, "/Users/dev/my-project"),
+               strlen("Users-dev-my-project"));
+}
+
+static uint64_t plan_top_step_bit(int kind) {
+    return UINT64_C(1) << (kind - 1);
+}
+
 static void test_pipeline_plan_exports(void) {
     enum {
         PLAN_SEQUENTIAL = CBM_RS_PLAN_SEQUENTIAL,
@@ -867,6 +1413,19 @@ static void test_pipeline_plan_exports(void) {
         PLAN_PHASE_SEQUENTIAL_EXTRACT = CBM_RS_PLAN_PHASE_SEQUENTIAL_EXTRACT,
         PLAN_PHASE_PARALLEL_EXTRACT = CBM_RS_PLAN_PHASE_PARALLEL_EXTRACT,
         PLAN_PHASE_INCREMENTAL_EXTRACT_RESOLVE = CBM_RS_PLAN_PHASE_INCREMENTAL_EXTRACT_RESOLVE,
+        PLAN_TOP_MACRO_EXTRACTION = CBM_RS_PLAN_TOP_MACRO_EXTRACTION,
+        PLAN_TOP_USERCONFIG_LOAD = CBM_RS_PLAN_TOP_USERCONFIG_LOAD,
+        PLAN_TOP_DISCOVER = CBM_RS_PLAN_TOP_DISCOVER,
+        PLAN_TOP_TRY_INCREMENTAL_OR_DELETE_DB = CBM_RS_PLAN_TOP_TRY_INCREMENTAL_OR_DELETE_DB,
+        PLAN_TOP_STRUCTURE = CBM_RS_PLAN_TOP_STRUCTURE,
+        PLAN_TOP_EXTRACTION_DISPATCH = CBM_RS_PLAN_TOP_EXTRACTION_DISPATCH,
+        PLAN_TOP_TESTS = CBM_RS_PLAN_TOP_TESTS,
+        PLAN_TOP_GITHISTORY = CBM_RS_PLAN_TOP_GITHISTORY,
+        PLAN_TOP_PREDUMP = CBM_RS_PLAN_TOP_PREDUMP,
+        PLAN_TOP_DUMP = CBM_RS_PLAN_TOP_DUMP,
+        PLAN_TOP_PERSIST_HASHES = CBM_RS_PLAN_TOP_PERSIST_HASHES,
+        PLAN_TOP_ARTIFACT_EXPORT = CBM_RS_PLAN_TOP_ARTIFACT_EXPORT,
+        PLAN_TOP_PHASE_FULL_PIPELINE = CBM_RS_PLAN_TOP_PHASE_FULL_PIPELINE,
         PLAN_POLICY_REQUIRED = CBM_RS_PLAN_POLICY_REQUIRED,
         INCR_POST_K8S = CBM_RS_INCR_POST_K8S,
         INCR_POST_TESTS = CBM_RS_INCR_POST_TESTS,
@@ -886,6 +1445,17 @@ static void test_pipeline_plan_exports(void) {
         PLAN_GATE_REQUIRES_RESULT_CACHE = CBM_RS_PLAN_GATE_REQUIRES_RESULT_CACHE,
         PLAN_GATE_NO_CROSS_LSP_PREBUILD = CBM_RS_PLAN_GATE_NO_CROSS_LSP_PREBUILD,
         PLAN_EFFECT_MUTATES_GRAPH = CBM_RS_PLAN_EFFECT_MUTATES_GRAPH,
+        PLAN_TOP_POLICY_REQUIRED = CBM_RS_PLAN_TOP_POLICY_REQUIRED,
+        PLAN_TOP_POLICY_BEST_EFFORT = CBM_RS_PLAN_TOP_POLICY_BEST_EFFORT,
+        PLAN_TOP_POLICY_FULL_MODE_ONLY = CBM_RS_PLAN_TOP_POLICY_FULL_MODE_ONLY,
+        PLAN_TOP_POLICY_FAIL_OPEN = CBM_RS_PLAN_TOP_POLICY_FAIL_OPEN,
+        PLAN_TOP_POLICY_EXISTING_DB_ONLY = CBM_RS_PLAN_TOP_POLICY_EXISTING_DB_ONLY,
+        PLAN_TOP_POLICY_OPTIONAL_PERSISTENCE = CBM_RS_PLAN_TOP_POLICY_OPTIONAL_PERSISTENCE,
+        PLAN_TOP_GATE_SKIP_FAST = CBM_RS_PLAN_TOP_GATE_SKIP_FAST,
+        PLAN_TOP_GATE_MAY_SHORT_CIRCUIT = CBM_RS_PLAN_TOP_GATE_MAY_SHORT_CIRCUIT,
+        PLAN_TOP_EFFECT_MUTATES_GRAPH = CBM_RS_PLAN_TOP_EFFECT_MUTATES_GRAPH,
+        PLAN_TOP_EFFECT_WRITES_STORE_OR_ARTIFACT = CBM_RS_PLAN_TOP_EFFECT_WRITES_STORE_OR_ARTIFACT,
+        PLAN_TOP_NO_NESTED_PLAN = CBM_RS_PLAN_TOP_NO_NESTED_PLAN,
         MODE_FULL = CBM_MODE_FULL,
         MODE_MODERATE = CBM_MODE_MODERATE,
         MODE_FAST = CBM_MODE_FAST,
@@ -896,6 +1466,8 @@ static void test_pipeline_plan_exports(void) {
     CbmRsPipelinePlanStep short_steps[9];
     CbmRsPipelinePlanStepV2 steps_v2[7];
     CbmRsPipelinePlanStepV2 short_steps_v2[6];
+    CbmRsPipelineTopStepV1 top_steps[CBM_RS_PLAN_TOP_MAX_STEPS];
+    CbmRsPipelineTopStepV1 short_top_steps[CBM_RS_PLAN_TOP_MAX_STEPS - 1];
 
     const char *seq =
         "definitions:required,k8s:ignore_err,lsp_cross:ignore_err:requires_result_cache,"
@@ -1226,6 +1798,84 @@ static void test_pipeline_plan_exports(void) {
     check_int("plan_predump_v2_steps_invalid_kind",
               cbm_rs_pipeline_plan_steps_v2(99, MODE_FULL, 0, 0, steps_v2, 6), -1);
 
+    check_int("plan_full_top_count_parallel",
+              cbm_rs_pipeline_full_plan_step_count_v1(MODE_FULL, 2, 51), CBM_RS_PLAN_TOP_MAX_STEPS);
+    check_int(
+        "plan_full_top_steps_parallel_len",
+        cbm_rs_pipeline_full_plan_steps_v1(MODE_FULL, 2, 51, top_steps, CBM_RS_PLAN_TOP_MAX_STEPS),
+        CBM_RS_PLAN_TOP_MAX_STEPS);
+    check_int("plan_full_top_step0_kind", top_steps[0].kind, PLAN_TOP_MACRO_EXTRACTION);
+    check_int("plan_full_top_step0_phase", top_steps[0].phase, PLAN_TOP_PHASE_FULL_PIPELINE);
+    check_int("plan_full_top_step0_policy", top_steps[0].policy, PLAN_TOP_POLICY_FULL_MODE_ONLY);
+    check_int("plan_full_top_step0_nested", top_steps[0].nested_plan_kind, PLAN_TOP_NO_NESTED_PLAN);
+    check_int("plan_full_top_step1_kind", top_steps[1].kind, PLAN_TOP_USERCONFIG_LOAD);
+    check_int("plan_full_top_step1_policy", top_steps[1].policy, PLAN_TOP_POLICY_FAIL_OPEN);
+    check_int("plan_full_top_step3_kind", top_steps[3].kind, PLAN_TOP_TRY_INCREMENTAL_OR_DELETE_DB);
+    check_int("plan_full_top_step3_policy", top_steps[3].policy, PLAN_TOP_POLICY_EXISTING_DB_ONLY);
+    check_u32("plan_full_top_step3_gate", top_steps[3].gate_flags, PLAN_TOP_GATE_MAY_SHORT_CIRCUIT);
+    check_u32("plan_full_top_step3_effect", top_steps[3].effect_flags,
+              PLAN_TOP_EFFECT_WRITES_STORE_OR_ARTIFACT);
+    check_int("plan_full_top_step5_kind", top_steps[5].kind, PLAN_TOP_EXTRACTION_DISPATCH);
+    check_int("plan_full_top_step5_nested", top_steps[5].nested_plan_kind,
+              PLAN_PARALLEL_EXTRACTION);
+    check_u64("plan_full_top_step5_requires", top_steps[5].requires_mask,
+              plan_top_step_bit(PLAN_TOP_MACRO_EXTRACTION) |
+                  plan_top_step_bit(PLAN_TOP_USERCONFIG_LOAD) |
+                  plan_top_step_bit(PLAN_TOP_DISCOVER) |
+                  plan_top_step_bit(PLAN_TOP_TRY_INCREMENTAL_OR_DELETE_DB) |
+                  plan_top_step_bit(PLAN_TOP_STRUCTURE));
+    check_u32("plan_full_top_step5_effect", top_steps[5].effect_flags,
+              PLAN_TOP_EFFECT_MUTATES_GRAPH);
+    check_int("plan_full_top_step7_kind", top_steps[7].kind, PLAN_TOP_GITHISTORY);
+    check_u32("plan_full_top_step7_gate", top_steps[7].gate_flags, PLAN_TOP_GATE_SKIP_FAST);
+    check_int("plan_full_top_step8_kind", top_steps[8].kind, PLAN_TOP_PREDUMP);
+    check_int("plan_full_top_step8_nested", top_steps[8].nested_plan_kind, PLAN_PREDUMP);
+    check_u64("plan_full_top_step8_requires", top_steps[8].requires_mask,
+              plan_top_step_bit(PLAN_TOP_MACRO_EXTRACTION) |
+                  plan_top_step_bit(PLAN_TOP_USERCONFIG_LOAD) |
+                  plan_top_step_bit(PLAN_TOP_DISCOVER) |
+                  plan_top_step_bit(PLAN_TOP_TRY_INCREMENTAL_OR_DELETE_DB) |
+                  plan_top_step_bit(PLAN_TOP_STRUCTURE) |
+                  plan_top_step_bit(PLAN_TOP_EXTRACTION_DISPATCH) |
+                  plan_top_step_bit(PLAN_TOP_TESTS) | plan_top_step_bit(PLAN_TOP_GITHISTORY));
+    check_int("plan_full_top_step9_kind", top_steps[9].kind, PLAN_TOP_DUMP);
+    check_u32("plan_full_top_step9_effect", top_steps[9].effect_flags,
+              PLAN_TOP_EFFECT_WRITES_STORE_OR_ARTIFACT);
+    check_int("plan_full_top_step10_kind", top_steps[10].kind, PLAN_TOP_PERSIST_HASHES);
+    check_int("plan_full_top_step10_policy", top_steps[10].policy, PLAN_TOP_POLICY_BEST_EFFORT);
+    check_int("plan_full_top_step11_kind", top_steps[11].kind, PLAN_TOP_ARTIFACT_EXPORT);
+    check_int("plan_full_top_step11_policy", top_steps[11].policy,
+              PLAN_TOP_POLICY_OPTIONAL_PERSISTENCE);
+
+    check_int("plan_full_top_count_fast", cbm_rs_pipeline_full_plan_step_count_v1(MODE_FAST, 2, 51),
+              11);
+    check_int(
+        "plan_full_top_steps_fast_len",
+        cbm_rs_pipeline_full_plan_steps_v1(MODE_FAST, 2, 51, top_steps, CBM_RS_PLAN_TOP_MAX_STEPS),
+        11);
+    check_int("plan_full_top_fast_no_githistory_slot", top_steps[7].kind, PLAN_TOP_PREDUMP);
+    check_u64(
+        "plan_full_top_fast_predump_requires", top_steps[7].requires_mask,
+        plan_top_step_bit(PLAN_TOP_MACRO_EXTRACTION) | plan_top_step_bit(PLAN_TOP_USERCONFIG_LOAD) |
+            plan_top_step_bit(PLAN_TOP_DISCOVER) |
+            plan_top_step_bit(PLAN_TOP_TRY_INCREMENTAL_OR_DELETE_DB) |
+            plan_top_step_bit(PLAN_TOP_STRUCTURE) |
+            plan_top_step_bit(PLAN_TOP_EXTRACTION_DISPATCH) | plan_top_step_bit(PLAN_TOP_TESTS));
+    check_int(
+        "plan_full_top_steps_sequential_len",
+        cbm_rs_pipeline_full_plan_steps_v1(MODE_FULL, 1, 99, top_steps, CBM_RS_PLAN_TOP_MAX_STEPS),
+        CBM_RS_PLAN_TOP_MAX_STEPS);
+    check_int("plan_full_top_step5_nested_seq", top_steps[5].nested_plan_kind, PLAN_SEQUENTIAL);
+    check_int("plan_full_top_steps_null",
+              cbm_rs_pipeline_full_plan_steps_v1(MODE_FULL, 2, 51, NULL, CBM_RS_PLAN_TOP_MAX_STEPS),
+              -1);
+    check_int("plan_full_top_steps_short",
+              cbm_rs_pipeline_full_plan_steps_v1(MODE_FULL, 2, 51, short_top_steps,
+                                                 CBM_RS_PLAN_TOP_MAX_STEPS - 1),
+              -1);
+    check_int("plan_full_top_steps_negative",
+              cbm_rs_pipeline_full_plan_steps_v1(MODE_FULL, 2, 51, top_steps, -1), -1);
+
     const char *full_fast =
         "macro_extraction:full_mode_only,userconfig_load:fail_open,discover:required,"
         "try_incremental_or_delete_db:existing_db_only,structure:required,"
@@ -1416,6 +2066,694 @@ static void test_gbuf_mutation_metadata_exports(void) {
               -1);
     check_int("gbuf_mut_validate_null_out", cbm_rs_gbuf_mutation_validate_v1(&delete_file, NULL),
               -1);
+}
+
+#define CBM_RS_STORE_SCHEMA_KIND_CORE_TABLE 1
+#define CBM_RS_STORE_SCHEMA_KIND_FTS_TABLE 2
+#define CBM_RS_STORE_SCHEMA_KIND_USER_INDEX 3
+#define CBM_RS_STORE_SCHEMA_KIND_GENERATED_COLUMN 4
+#define CBM_RS_STORE_SCHEMA_KIND_TABLE_COLUMN 5
+#define CBM_RS_STORE_SCHEMA_KIND_FTS_SHADOW_TABLE 6
+
+#define CBM_RS_STORE_SCHEMA_FLAG_REQUIRED (UINT32_C(1) << 0)
+#define CBM_RS_STORE_SCHEMA_FLAG_DROPPABLE_USER_INDEX (UINT32_C(1) << 1)
+#define CBM_RS_STORE_SCHEMA_FLAG_GENERATED (UINT32_C(1) << 2)
+#define CBM_RS_STORE_SCHEMA_FLAG_FTS (UINT32_C(1) << 3)
+#define CBM_RS_STORE_SCHEMA_FLAG_NOT_NULL (UINT32_C(1) << 4)
+#define CBM_RS_STORE_SCHEMA_FLAG_PRIMARY_KEY (UINT32_C(1) << 5)
+#define CBM_RS_STORE_SCHEMA_FLAG_UNIQUE (UINT32_C(1) << 6)
+#define CBM_RS_STORE_SCHEMA_FLAG_AUTOINCREMENT (UINT32_C(1) << 7)
+#define CBM_RS_STORE_SCHEMA_FLAG_FK_CASCADE (UINT32_C(1) << 8)
+
+#define CBM_RS_STORE_CONN_KIND_OPEN_MODE 1
+#define CBM_RS_STORE_CONN_KIND_PRAGMA 2
+#define CBM_RS_STORE_CONN_KIND_READ_PROBE 3
+#define CBM_RS_STORE_CONN_KIND_FALLBACK 4
+
+#define CBM_RS_STORE_CONN_MODE_MEMORY (UINT32_C(1) << 0)
+#define CBM_RS_STORE_CONN_MODE_WRITE (UINT32_C(1) << 1)
+#define CBM_RS_STORE_CONN_MODE_READ_ONLY (UINT32_C(1) << 2)
+#define CBM_RS_STORE_CONN_MODE_BULK_BEGIN (UINT32_C(1) << 3)
+#define CBM_RS_STORE_CONN_MODE_BULK_END (UINT32_C(1) << 4)
+
+#define CBM_RS_STORE_CONN_FLAG_REQUIRED (UINT32_C(1) << 0)
+#define CBM_RS_STORE_CONN_FLAG_NO_CREATE (UINT32_C(1) << 1)
+#define CBM_RS_STORE_CONN_FLAG_READ_ONLY (UINT32_C(1) << 2)
+#define CBM_RS_STORE_CONN_FLAG_URI (UINT32_C(1) << 3)
+#define CBM_RS_STORE_CONN_FLAG_WRITES_DB_OR_WAL (UINT32_C(1) << 4)
+#define CBM_RS_STORE_CONN_FLAG_BEST_EFFORT (UINT32_C(1) << 5)
+#define CBM_RS_STORE_CONN_FLAG_ENV_BACKED (UINT32_C(1) << 6)
+
+static const CbmRsStoreSchemaManifestEntryV1 *find_store_schema_entry(
+    const CbmRsStoreSchemaManifestEntryV1 *entries, int count, int kind, const char *name) {
+    for (int i = 0; i < count; i++) {
+        if (entries[i].kind == kind && entries[i].name && strcmp(entries[i].name, name) == 0) {
+            return &entries[i];
+        }
+    }
+    return NULL;
+}
+
+static void check_store_schema_entry(const CbmRsStoreSchemaManifestEntryV1 *entries, int count,
+                                     int kind, const char *name, const char *table_name,
+                                     const char *column_name, uint32_t flags) {
+    const CbmRsStoreSchemaManifestEntryV1 *entry =
+        find_store_schema_entry(entries, count, kind, name);
+    if (!entry) {
+        fprintf(stderr, "store_schema_missing: kind=%d name=%s\n", kind, name);
+        exit(1);
+    }
+    check_str("store_schema_table", entry->table_name, table_name);
+    check_str("store_schema_column", entry->column_name, column_name);
+    check_u32("store_schema_flags", entry->flags, flags);
+}
+
+static const CbmRsStoreSchemaManifestEntryV2 *find_store_schema_entry_v2(
+    const CbmRsStoreSchemaManifestEntryV2 *entries, int count, int kind, const char *name) {
+    for (int i = 0; i < count; i++) {
+        if (entries[i].kind == kind && entries[i].name && strcmp(entries[i].name, name) == 0) {
+            return &entries[i];
+        }
+    }
+    return NULL;
+}
+
+static void check_store_schema_entry_v2(const CbmRsStoreSchemaManifestEntryV2 *entries, int count,
+                                        int kind, const char *name, const char *table_name,
+                                        const char *column_name, const char *column_type,
+                                        const char *default_sql, const char *columns_csv,
+                                        const char *sql_fragment, int ordinal, int hidden,
+                                        uint32_t flags) {
+    const CbmRsStoreSchemaManifestEntryV2 *entry =
+        find_store_schema_entry_v2(entries, count, kind, name);
+    if (!entry) {
+        fprintf(stderr, "store_schema_v2_missing: kind=%d name=%s\n", kind, name);
+        exit(1);
+    }
+    check_str("store_schema_v2_table", entry->table_name, table_name);
+    check_str("store_schema_v2_column", entry->column_name, column_name);
+    check_str("store_schema_v2_type", entry->column_type, column_type);
+    check_str("store_schema_v2_default", entry->default_sql, default_sql);
+    check_str("store_schema_v2_columns", entry->columns_csv, columns_csv);
+    check_str("store_schema_v2_sql", entry->sql_fragment, sql_fragment);
+    check_int("store_schema_v2_ordinal", entry->ordinal, ordinal);
+    check_int("store_schema_v2_hidden", entry->hidden, hidden);
+    check_u32("store_schema_v2_flags", entry->flags, flags);
+}
+
+static const CbmRsStoreConnectionManifestEntryV1 *find_store_connection_entry(
+    const CbmRsStoreConnectionManifestEntryV1 *entries, int count, int kind, const char *name) {
+    for (int i = 0; i < count; i++) {
+        if (entries[i].kind == kind && entries[i].name && strcmp(entries[i].name, name) == 0) {
+            return &entries[i];
+        }
+    }
+    return NULL;
+}
+
+static void check_store_connection_entry(const CbmRsStoreConnectionManifestEntryV1 *entries,
+                                         int count, int kind, const char *name, uint32_t flags,
+                                         uint32_t mode_mask, int ordinal, int64_t value_i64,
+                                         const char *sql, const char *env_name) {
+    const CbmRsStoreConnectionManifestEntryV1 *entry =
+        find_store_connection_entry(entries, count, kind, name);
+    if (!entry) {
+        fprintf(stderr, "store_connection_missing: kind=%d name=%s\n", kind, name);
+        exit(1);
+    }
+    check_u32("store_connection_flags", entry->flags, flags);
+    check_u32("store_connection_mode", entry->mode_mask, mode_mask);
+    check_int("store_connection_ordinal", entry->ordinal, ordinal);
+    check_u64("store_connection_value", (uint64_t)entry->value_i64, (uint64_t)value_i64);
+    check_str("store_connection_sql", entry->sql, sql);
+    check_str("store_connection_env", entry->env_name, env_name);
+}
+
+static void test_store_camel_split_exports(void) {
+    char buf[4096];
+    char short_buf[8];
+
+    check_size("store_camel_null_len", cbm_rs_store_camel_split_v1(buf, sizeof(buf), NULL), 0);
+    check_str("store_camel_null", buf, "");
+    check_size("store_camel_empty_len", cbm_rs_store_camel_split_v1(buf, sizeof(buf), ""), 0);
+    check_str("store_camel_empty", buf, "");
+
+    const char *camel_expected = "updateCloudClient update Cloud Client";
+    check_size("store_camel_update_len",
+               cbm_rs_store_camel_split_v1(buf, sizeof(buf), "updateCloudClient"),
+               strlen(camel_expected));
+    check_str("store_camel_update", buf, camel_expected);
+    check_size("store_camel_xml_len", cbm_rs_store_camel_split_v1(buf, sizeof(buf), "XMLParser"),
+               strlen("XMLParser XML Parser"));
+    check_str("store_camel_xml", buf, "XMLParser XML Parser");
+    check_size("store_camel_snake_len", cbm_rs_store_camel_split_v1(buf, sizeof(buf), "snake_case"),
+               strlen("snake_case snake_case"));
+    check_str("store_camel_snake", buf, "snake_case snake_case");
+
+    const char non_ascii[] = "caf\303\251HTTP";
+    const char non_ascii_expected[] = "caf\303\251HTTP caf\303\251HTTP";
+    check_size("store_camel_non_ascii_len",
+               cbm_rs_store_camel_split_v1(buf, sizeof(buf), non_ascii),
+               strlen(non_ascii_expected));
+    check_str("store_camel_non_ascii", buf, non_ascii_expected);
+
+    memset(buf, 0, sizeof(buf));
+    memset(short_buf, 0, sizeof(short_buf));
+    check_size("store_camel_short_len",
+               cbm_rs_store_camel_split_v1(short_buf, sizeof(short_buf), "updateCloud"),
+               strlen("updateCloud update Cloud"));
+    check_str("store_camel_short_value", short_buf, "updateC");
+
+    char fallback[2048];
+    memset(fallback, 'a', sizeof(fallback) - 1);
+    fallback[sizeof(fallback) - 1] = '\0';
+    check_size("store_camel_fallback_len", cbm_rs_store_camel_split_v1(buf, sizeof(buf), fallback),
+               sizeof(fallback) - 1);
+    check_size("store_camel_fallback_cmp", (size_t)memcmp(buf, fallback, sizeof(fallback)), 0);
+
+    char near_limit[2047];
+    memset(near_limit, 'a', sizeof(near_limit) - 1);
+    near_limit[sizeof(near_limit) - 1] = '\0';
+    check_size("store_camel_near_limit_len",
+               cbm_rs_store_camel_split_v1(buf, sizeof(buf), near_limit), 2047);
+    check_int("store_camel_near_limit_space", buf[sizeof(near_limit) - 1], ' ');
+    check_int("store_camel_near_limit_nul", buf[2047], '\0');
+}
+
+static void test_store_immutable_uri_exports(void) {
+    char buf[256];
+    char small[16];
+
+    const char *posix_expected = "file:///tmp/codebase%20memory/graph.db?immutable=1";
+    check_size(
+        "store_immutable_posix_len",
+        cbm_rs_store_build_immutable_uri_v1(buf, sizeof(buf), "/tmp/codebase memory/graph.db"),
+        strlen(posix_expected));
+    check_str("store_immutable_posix", buf, posix_expected);
+
+    check_size("store_immutable_relative_len",
+               cbm_rs_store_build_immutable_uri_v1(buf, sizeof(buf), "tmp/a.db"),
+               strlen("file:///tmp/a.db?immutable=1"));
+    check_str("store_immutable_relative", buf, "file:///tmp/a.db?immutable=1");
+
+    check_size("store_immutable_root_len",
+               cbm_rs_store_build_immutable_uri_v1(buf, sizeof(buf), "/"),
+               strlen("file:///?immutable=1"));
+    check_str("store_immutable_root", buf, "file:///?immutable=1");
+
+    const char *windows_expected = "file:///C:/Users/dev/graph.db?immutable=1";
+    check_size("store_immutable_windows_len",
+               cbm_rs_store_build_immutable_uri_v1(buf, sizeof(buf), "C:\\Users\\dev\\graph.db"),
+               strlen(windows_expected));
+    check_str("store_immutable_windows", buf, windows_expected);
+    check_size("store_immutable_windows_forward_len",
+               cbm_rs_store_build_immutable_uri_v1(buf, sizeof(buf), "C:/Users/dev/graph.db"),
+               strlen(windows_expected));
+    check_str("store_immutable_windows_forward", buf, windows_expected);
+
+    const char *unc_expected = "file://///server/share/db.sqlite?immutable=1";
+    check_size(
+        "store_immutable_unc_len",
+        cbm_rs_store_build_immutable_uri_v1(buf, sizeof(buf), "\\\\server\\share\\db.sqlite"),
+        strlen(unc_expected));
+    check_str("store_immutable_unc", buf, unc_expected);
+
+    const char *safe_expected = "file:///repo/.safe-_:~?immutable=1";
+    check_size("store_immutable_safe_len",
+               cbm_rs_store_build_immutable_uri_v1(buf, sizeof(buf), "repo/.safe-_:~"),
+               strlen(safe_expected));
+    check_str("store_immutable_safe", buf, safe_expected);
+
+    const char *escaped_expected = "file:///tmp/a%3Fb%23c%26d%3De.db?immutable=1";
+    check_size("store_immutable_escape_len",
+               cbm_rs_store_build_immutable_uri_v1(buf, sizeof(buf), "/tmp/a?b#c&d=e.db"),
+               strlen(escaped_expected));
+    check_str("store_immutable_escape", buf, escaped_expected);
+
+    check_size("store_immutable_percent_len",
+               cbm_rs_store_build_immutable_uri_v1(buf, sizeof(buf), "/tmp/a%20b.db"),
+               strlen("file:///tmp/a%2520b.db?immutable=1"));
+    check_str("store_immutable_percent", buf, "file:///tmp/a%2520b.db?immutable=1");
+
+    const char non_ascii[] = "/tmp/\xe5\xbc\x80.db";
+    const char *non_ascii_expected = "file:///tmp/%E5%BC%80.db?immutable=1";
+    check_size("store_immutable_non_ascii_len",
+               cbm_rs_store_build_immutable_uri_v1(buf, sizeof(buf), non_ascii),
+               strlen(non_ascii_expected));
+    check_str("store_immutable_non_ascii", buf, non_ascii_expected);
+
+    check_size("store_immutable_empty_len",
+               cbm_rs_store_build_immutable_uri_v1(buf, sizeof(buf), ""),
+               strlen("file:///?immutable=1"));
+    check_str("store_immutable_empty", buf, "file:///?immutable=1");
+
+    check_size("store_immutable_null", cbm_rs_store_build_immutable_uri_v1(buf, sizeof(buf), NULL),
+               SIZE_MAX);
+    check_size("store_immutable_length_only",
+               cbm_rs_store_build_immutable_uri_v1(NULL, 0, "/tmp/a b.db"),
+               strlen("file:///tmp/a%20b.db?immutable=1"));
+
+    memset(small, 'Z', sizeof(small));
+    check_size("store_immutable_short_len",
+               cbm_rs_store_build_immutable_uri_v1(small, sizeof(small), "/tmp/a b.db"),
+               strlen("file:///tmp/a%20b.db?immutable=1"));
+    check_str("store_immutable_short_value", small, "file:///tmp/a%2");
+}
+
+static void test_store_search_pattern_exports(void) {
+    char buf[512];
+    char small[4];
+
+    check_size("store_glob_null", cbm_rs_store_glob_to_like_v1(buf, sizeof(buf), NULL), SIZE_MAX);
+    check_size("store_glob_len_only", cbm_rs_store_glob_to_like_v1(NULL, 0, "**/*.py"),
+               strlen("%%.py"));
+    check_size("store_glob_doublestar", cbm_rs_store_glob_to_like_v1(buf, sizeof(buf), "**/*.py"),
+               strlen("%%.py"));
+    check_str("store_glob_doublestar_value", buf, "%%.py");
+    check_size("store_glob_empty", cbm_rs_store_glob_to_like_v1(buf, sizeof(buf), ""), 0);
+    check_str("store_glob_empty_value", buf, "");
+    check_size("store_glob_brackets",
+               cbm_rs_store_glob_to_like_v1(buf, sizeof(buf), "src/[abc]/*.ts"),
+               strlen("src/[abc]/%.ts"));
+    check_str("store_glob_brackets_value", buf, "src/[abc]/%.ts");
+    check_size("store_glob_question",
+               cbm_rs_store_glob_to_like_v1(buf, sizeof(buf), "f???.txt"),
+               strlen("f___.txt"));
+    check_str("store_glob_question_value", buf, "f___.txt");
+    memset(small, 'Z', sizeof(small));
+    check_size("store_glob_short", cbm_rs_store_glob_to_like_v1(small, sizeof(small), "**/*.py"),
+               strlen("%%.py"));
+    check_str("store_glob_short_value", small, "%%.");
+
+    check_size("store_case_ensure_null",
+               cbm_rs_store_ensure_case_insensitive_v1(buf, sizeof(buf), NULL), 0);
+    check_str("store_case_ensure_null_value", buf, "");
+    check_size("store_case_ensure_len_only",
+               cbm_rs_store_ensure_case_insensitive_v1(NULL, 0, "handler"), strlen("(?i)handler"));
+    check_size("store_case_ensure_plain",
+               cbm_rs_store_ensure_case_insensitive_v1(buf, sizeof(buf), "handler"),
+               strlen("(?i)handler"));
+    check_str("store_case_ensure_plain_value", buf, "(?i)handler");
+    check_size("store_case_ensure_prefixed",
+               cbm_rs_store_ensure_case_insensitive_v1(buf, sizeof(buf), "(?i)handler"),
+               strlen("(?i)handler"));
+    check_str("store_case_ensure_prefixed_value", buf, "(?i)handler");
+    check_size("store_case_ensure_empty",
+               cbm_rs_store_ensure_case_insensitive_v1(buf, sizeof(buf), ""), strlen("(?i)"));
+    check_str("store_case_ensure_empty_value", buf, "(?i)");
+    memset(small, 'Z', sizeof(small));
+    check_size("store_case_ensure_short",
+               cbm_rs_store_ensure_case_insensitive_v1(small, sizeof(small), "handler"),
+               strlen("(?i)handler"));
+    check_str("store_case_ensure_short_value", small, "(?i");
+
+    check_size("store_case_strip_null", cbm_rs_store_strip_case_flag_v1(buf, sizeof(buf), NULL),
+               0);
+    check_str("store_case_strip_null_value", buf, "");
+    check_size("store_case_strip_prefixed",
+               cbm_rs_store_strip_case_flag_v1(buf, sizeof(buf), "(?i)handler"),
+               strlen("handler"));
+    check_str("store_case_strip_prefixed_value", buf, "handler");
+    check_size("store_case_strip_plain",
+               cbm_rs_store_strip_case_flag_v1(buf, sizeof(buf), "handler"), strlen("handler"));
+    check_str("store_case_strip_plain_value", buf, "handler");
+    check_size("store_case_strip_double",
+               cbm_rs_store_strip_case_flag_v1(buf, sizeof(buf), "(?i)(?i)double"),
+               strlen("(?i)double"));
+    check_str("store_case_strip_double_value", buf, "(?i)double");
+
+    check_int("store_like_null_count", cbm_rs_store_like_hint_count_v1(NULL, 16), 0);
+    check_int("store_like_zero_count", cbm_rs_store_like_hint_count_v1(".*handler.*", 0), 0);
+    check_int("store_like_negative_count", cbm_rs_store_like_hint_count_v1(".*handler.*", -1), 0);
+    check_int("store_like_alt_count", cbm_rs_store_like_hint_count_v1(".*foo|.*bar", 16), 0);
+    check_int("store_like_escaped_pipe_count", cbm_rs_store_like_hint_count_v1("foo\\|bar", 16),
+              0);
+    check_int("store_like_handler_count", cbm_rs_store_like_hint_count_v1(".*handler.*", 16), 1);
+    check_size("store_like_handler_len",
+               cbm_rs_store_like_hint_v1(NULL, 0, ".*handler.*", 16, 0), strlen("handler"));
+    check_size("store_like_handler_value_len",
+               cbm_rs_store_like_hint_v1(buf, sizeof(buf), ".*handler.*", 16, 0),
+               strlen("handler"));
+    check_str("store_like_handler_value", buf, "handler");
+    memset(small, 'Z', sizeof(small));
+    check_size("store_like_short_len",
+               cbm_rs_store_like_hint_v1(small, sizeof(small), ".*handler.*", 16, 0),
+               strlen("handler"));
+    check_str("store_like_short_value", small, "han");
+    check_size("store_like_missing_index",
+               cbm_rs_store_like_hint_v1(buf, sizeof(buf), ".*handler.*", 16, 1), SIZE_MAX);
+    check_size("store_like_negative_index",
+               cbm_rs_store_like_hint_v1(buf, sizeof(buf), ".*handler.*", 16, -1), SIZE_MAX);
+
+    check_int("store_like_multi_count", cbm_rs_store_like_hint_count_v1(".*Order.*Handler.*", 16),
+              2);
+    check_size("store_like_multi_first",
+               cbm_rs_store_like_hint_v1(buf, sizeof(buf), ".*Order.*Handler.*", 16, 0),
+               strlen("Order"));
+    check_str("store_like_multi_first_value", buf, "Order");
+    check_size("store_like_multi_second",
+               cbm_rs_store_like_hint_v1(buf, sizeof(buf), ".*Order.*Handler.*", 16, 1),
+               strlen("Handler"));
+    check_str("store_like_multi_second_value", buf, "Handler");
+
+    check_int("store_like_escaped_dot_count", cbm_rs_store_like_hint_count_v1("foo\\.bar", 16),
+              1);
+    check_size("store_like_escaped_dot_len",
+               cbm_rs_store_like_hint_v1(buf, sizeof(buf), "foo\\.bar", 16, 0),
+               strlen("foo.bar"));
+    check_str("store_like_escaped_dot_value", buf, "foo.bar");
+    check_int("store_like_escaped_meta_count",
+              cbm_rs_store_like_hint_count_v1("foo\\*bar\\?baz", 16), 1);
+    check_size("store_like_escaped_meta_len",
+               cbm_rs_store_like_hint_v1(buf, sizeof(buf), "foo\\*bar\\?baz", 16, 0),
+               strlen("foo*bar?baz"));
+    check_str("store_like_escaped_meta_value", buf, "foo*bar?baz");
+
+    check_int("store_like_max_count", cbm_rs_store_like_hint_count_v1(".*aaa.*bbb.*ccc.*ddd.*", 2),
+              2);
+    check_size("store_like_max_missing",
+               cbm_rs_store_like_hint_v1(buf, sizeof(buf), ".*aaa.*bbb.*ccc.*ddd.*", 2, 2),
+               SIZE_MAX);
+
+    char long_pattern[301];
+    memset(long_pattern, 'a', sizeof(long_pattern) - 1);
+    long_pattern[sizeof(long_pattern) - 1] = '\0';
+    check_int("store_like_long_count", cbm_rs_store_like_hint_count_v1(long_pattern, 16), 1);
+    check_size("store_like_long_len",
+               cbm_rs_store_like_hint_v1(buf, sizeof(buf), long_pattern, 16, 0), 255);
+    check_size("store_like_long_strlen", strlen(buf), 255);
+    for (size_t i = 0; i < 255; i++) {
+        if (buf[i] != 'a') {
+            fail("store_like_long_byte", "unexpected byte");
+        }
+    }
+    check_int("store_like_long_nul", buf[255], '\0');
+}
+
+static void test_store_arch_helper_exports(void) {
+    char buf[512];
+    char small[4];
+    char marker[4] = "ABC";
+    char top_short[4] = "ZZZ";
+
+    check_size("store_qn_pkg_null", cbm_rs_store_qn_to_package_v1(buf, sizeof(buf), NULL), 0);
+    check_str("store_qn_pkg_null_value", buf, "");
+    check_size("store_qn_pkg_empty", cbm_rs_store_qn_to_package_v1(buf, sizeof(buf), ""), 0);
+    check_str("store_qn_pkg_empty_value", buf, "");
+    check_size("store_qn_pkg_no_dot",
+               cbm_rs_store_qn_to_package_v1(buf, sizeof(buf), "standalone"), 0);
+    check_str("store_qn_pkg_no_dot_value", buf, "");
+    check_size("store_qn_pkg_two",
+               cbm_rs_store_qn_to_package_v1(buf, sizeof(buf), "project.cmd"),
+               strlen("cmd"));
+    check_str("store_qn_pkg_two_value", buf, "cmd");
+    check_size("store_qn_pkg_three",
+               cbm_rs_store_qn_to_package_v1(buf, sizeof(buf), "project.main.foo"),
+               strlen("main"));
+    check_str("store_qn_pkg_three_value", buf, "main");
+    check_size("store_qn_pkg_many",
+               cbm_rs_store_qn_to_package_v1(buf, sizeof(buf),
+                                             "project.internal.store.search.Search"),
+               strlen("store"));
+    check_str("store_qn_pkg_many_value", buf, "store");
+    check_size("store_qn_pkg_len_only",
+               cbm_rs_store_qn_to_package_v1(NULL, 0, "project.internal.store.search.Search"), strlen("store"));
+    check_size("store_qn_pkg_buf_zero",
+               cbm_rs_store_qn_to_package_v1(marker, 0, "project.internal.store.search.Search"), strlen("store"));
+    check_str("store_qn_pkg_buf_zero_value", marker, "ABC");
+    check_size("store_qn_pkg_consecutive",
+               cbm_rs_store_qn_to_package_v1(buf, sizeof(buf), "project.dir..Func"),
+               strlen("dir"));
+    check_str("store_qn_pkg_consecutive_value", buf, "dir");
+    memset(small, 'Z', sizeof(small));
+    check_size("store_qn_pkg_short",
+               cbm_rs_store_qn_to_package_v1(small, sizeof(small),
+                                             "project.internal.store.search.Search"),
+               strlen("store"));
+    check_str("store_qn_pkg_short_value", small, "sto");
+
+    char ok_segment[256];
+    memset(ok_segment, 'a', sizeof(ok_segment) - 1);
+    ok_segment[sizeof(ok_segment) - 1] = '\0';
+    char qn[320];
+    snprintf(qn, sizeof(qn), "project.dir.%s.Func", ok_segment);
+    check_size("store_qn_pkg_255_len", cbm_rs_store_qn_to_package_v1(buf, sizeof(buf), qn), 255);
+    check_size("store_qn_pkg_255_strlen", strlen(buf), 255);
+    for (size_t i = 0; i < 255; i++) {
+        if (buf[i] != 'a') {
+            fail("store_qn_pkg_255_byte", "unexpected byte");
+        }
+    }
+    check_int("store_qn_pkg_255_nul", buf[255], '\0');
+
+    char too_long_segment[257];
+    memset(too_long_segment, 'b', sizeof(too_long_segment) - 1);
+    too_long_segment[sizeof(too_long_segment) - 1] = '\0';
+    snprintf(qn, sizeof(qn), "project.dir.%s.Func", too_long_segment);
+    check_size("store_qn_pkg_256_fallback_len",
+               cbm_rs_store_qn_to_package_v1(buf, sizeof(buf), qn), strlen("dir"));
+    check_str("store_qn_pkg_256_fallback_value", buf, "dir");
+
+    check_size("store_qn_top_null", cbm_rs_store_qn_to_top_package_v1(buf, sizeof(buf), NULL),
+               0);
+    check_str("store_qn_top_null_value", buf, "");
+    check_size("store_qn_top_no_dot",
+               cbm_rs_store_qn_to_top_package_v1(buf, sizeof(buf), "standalone"), 0);
+    check_str("store_qn_top_no_dot_value", buf, "");
+    check_size("store_qn_top_two",
+               cbm_rs_store_qn_to_top_package_v1(buf, sizeof(buf), "project.cmd"),
+               strlen("cmd"));
+    check_str("store_qn_top_two_value", buf, "cmd");
+    check_size("store_qn_top_many",
+               cbm_rs_store_qn_to_top_package_v1(buf, sizeof(buf),
+                                                 "project.internal.store.search.Search"),
+               strlen("internal"));
+    check_str("store_qn_top_many_value", buf, "internal");
+    check_size("store_qn_top_len_only",
+               cbm_rs_store_qn_to_top_package_v1(NULL, 0, "project.internal.store.search.Search"), strlen("internal"));
+    check_size("store_qn_top_short", cbm_rs_store_qn_to_top_package_v1(top_short, sizeof(top_short),
+                                                                   "project.internal.store.search.Search"),
+               strlen("internal"));
+    check_str("store_qn_top_short_value", top_short, "int");
+    snprintf(qn, sizeof(qn), "project.%s.Func", ok_segment);
+    check_size("store_qn_top_255_len", cbm_rs_store_qn_to_top_package_v1(buf, sizeof(buf), qn),
+               255);
+    snprintf(qn, sizeof(qn), "project.%s.Func", too_long_segment);
+    check_size("store_qn_top_256_len", cbm_rs_store_qn_to_top_package_v1(buf, sizeof(buf), qn),
+               0);
+    check_str("store_qn_top_256_value", buf, "");
+
+    check_int("store_test_file_null", cbm_rs_store_is_test_file_path_v1(NULL), 0);
+    check_int("store_test_file_empty", cbm_rs_store_is_test_file_path_v1(""), 0);
+    check_int("store_test_file_prefix", cbm_rs_store_is_test_file_path_v1("test_handler.py"), 1);
+    check_int("store_test_file_dir",
+              cbm_rs_store_is_test_file_path_v1("src/__tests__/handler.js"), 1);
+    check_int("store_test_file_testdata",
+              cbm_rs_store_is_test_file_path_v1("testdata/fixture.json"), 1);
+    check_int("store_test_file_substring", cbm_rs_store_is_test_file_path_v1("contest/file.c"),
+              1);
+    check_int("store_test_file_upper", cbm_rs_store_is_test_file_path_v1("TestOnly.java"), 0);
+    check_int("store_test_file_spec", cbm_rs_store_is_test_file_path_v1("handler.spec.ts"), 0);
+
+    check_int("store_hop_risk_1", cbm_rs_store_hop_to_risk_v1(1), 0);
+    check_int("store_hop_risk_2", cbm_rs_store_hop_to_risk_v1(2), 1);
+    check_int("store_hop_risk_3", cbm_rs_store_hop_to_risk_v1(3), 2);
+    check_int("store_hop_risk_0", cbm_rs_store_hop_to_risk_v1(0), 3);
+    check_int("store_hop_risk_negative", cbm_rs_store_hop_to_risk_v1(-1), 3);
+    check_size("store_risk_label_critical",
+               cbm_rs_store_risk_label_v1(buf, sizeof(buf), 0), strlen("CRITICAL"));
+    check_str("store_risk_label_critical_value", buf, "CRITICAL");
+    check_size("store_risk_label_high", cbm_rs_store_risk_label_v1(buf, sizeof(buf), 1),
+               strlen("HIGH"));
+    check_str("store_risk_label_high_value", buf, "HIGH");
+    check_size("store_risk_label_medium", cbm_rs_store_risk_label_v1(buf, sizeof(buf), 2),
+               strlen("MEDIUM"));
+    check_str("store_risk_label_medium_value", buf, "MEDIUM");
+    check_size("store_risk_label_low", cbm_rs_store_risk_label_v1(buf, sizeof(buf), 3),
+               strlen("LOW"));
+    check_str("store_risk_label_low_value", buf, "LOW");
+    check_size("store_risk_label_unknown", cbm_rs_store_risk_label_v1(buf, sizeof(buf), 99),
+               strlen("LOW"));
+    check_str("store_risk_label_unknown_value", buf, "LOW");
+    memset(small, 'Z', sizeof(small));
+    check_size("store_risk_label_short", cbm_rs_store_risk_label_v1(small, sizeof(small), 0),
+               strlen("CRITICAL"));
+    check_str("store_risk_label_short_value", small, "CRI");
+}
+
+static void test_store_mmap_resolver_exports(void) {
+    check_i64("store_mmap_null", cbm_rs_store_resolve_mmap_size_value_v1(NULL), 67108864);
+    check_i64("store_mmap_empty", cbm_rs_store_resolve_mmap_size_value_v1(""), 67108864);
+    check_i64("store_mmap_garbage", cbm_rs_store_resolve_mmap_size_value_v1("not-a-number"),
+              67108864);
+    check_i64("store_mmap_partial", cbm_rs_store_resolve_mmap_size_value_v1("123abc"), 67108864);
+    check_i64("store_mmap_trailing_space", cbm_rs_store_resolve_mmap_size_value_v1("4096 "),
+              67108864);
+    check_i64("store_mmap_overflow", cbm_rs_store_resolve_mmap_size_value_v1("9223372036854775808"),
+              67108864);
+    check_i64("store_mmap_zero", cbm_rs_store_resolve_mmap_size_value_v1("0"), 0);
+    check_i64("store_mmap_negative", cbm_rs_store_resolve_mmap_size_value_v1("-1"), 0);
+    check_i64("store_mmap_min_negative",
+              cbm_rs_store_resolve_mmap_size_value_v1("-9223372036854775808"), 0);
+    check_i64("store_mmap_explicit", cbm_rs_store_resolve_mmap_size_value_v1("1048576"), 1048576);
+    check_i64("store_mmap_leading_space_plus", cbm_rs_store_resolve_mmap_size_value_v1(" \t+4096"),
+              4096);
+    check_i64("store_mmap_i64_max", cbm_rs_store_resolve_mmap_size_value_v1("9223372036854775807"),
+              INT64_MAX);
+}
+
+static void test_store_schema_manifest_exports(void) {
+    CbmRsStoreSchemaManifestEntryV1 entries[16];
+    CbmRsStoreSchemaManifestEntryV1 short_entries[15];
+
+    check_int("store_schema_entry_count", cbm_rs_store_schema_manifest_entry_count_v1(), 16);
+    check_int("store_schema_user_index_count", cbm_rs_store_schema_manifest_user_index_count_v1(),
+              9);
+    check_int("store_schema_entries_len", cbm_rs_store_schema_manifest_entries_v1(entries, 16), 16);
+    check_int("store_schema_entries_null", cbm_rs_store_schema_manifest_entries_v1(NULL, 16), -1);
+    check_int("store_schema_entries_short",
+              cbm_rs_store_schema_manifest_entries_v1(short_entries, 15), -1);
+    check_int("store_schema_entries_negative", cbm_rs_store_schema_manifest_entries_v1(entries, -1),
+              -1);
+
+    const uint32_t required = CBM_RS_STORE_SCHEMA_FLAG_REQUIRED;
+    check_store_schema_entry(entries, 16, CBM_RS_STORE_SCHEMA_KIND_CORE_TABLE, "projects", "", "",
+                             required);
+    check_store_schema_entry(entries, 16, CBM_RS_STORE_SCHEMA_KIND_CORE_TABLE, "file_hashes", "",
+                             "", required);
+    check_store_schema_entry(entries, 16, CBM_RS_STORE_SCHEMA_KIND_CORE_TABLE, "nodes", "", "",
+                             required);
+    check_store_schema_entry(entries, 16, CBM_RS_STORE_SCHEMA_KIND_CORE_TABLE, "edges", "", "",
+                             required);
+    check_store_schema_entry(entries, 16, CBM_RS_STORE_SCHEMA_KIND_CORE_TABLE, "project_summaries",
+                             "", "", required);
+    check_store_schema_entry(entries, 16, CBM_RS_STORE_SCHEMA_KIND_FTS_TABLE, "nodes_fts", "", "",
+                             required | CBM_RS_STORE_SCHEMA_FLAG_FTS);
+    check_store_schema_entry(entries, 16, CBM_RS_STORE_SCHEMA_KIND_GENERATED_COLUMN,
+                             "edges.url_path_gen", "edges", "url_path_gen",
+                             required | CBM_RS_STORE_SCHEMA_FLAG_GENERATED);
+
+    const uint32_t user_index_flags = required | CBM_RS_STORE_SCHEMA_FLAG_DROPPABLE_USER_INDEX;
+    check_store_schema_entry(entries, 16, CBM_RS_STORE_SCHEMA_KIND_USER_INDEX, "idx_nodes_label",
+                             "nodes", "", user_index_flags);
+    check_store_schema_entry(entries, 16, CBM_RS_STORE_SCHEMA_KIND_USER_INDEX, "idx_nodes_name",
+                             "nodes", "", user_index_flags);
+    check_store_schema_entry(entries, 16, CBM_RS_STORE_SCHEMA_KIND_USER_INDEX, "idx_nodes_file",
+                             "nodes", "", user_index_flags);
+    check_store_schema_entry(entries, 16, CBM_RS_STORE_SCHEMA_KIND_USER_INDEX, "idx_edges_source",
+                             "edges", "", user_index_flags);
+    check_store_schema_entry(entries, 16, CBM_RS_STORE_SCHEMA_KIND_USER_INDEX, "idx_edges_target",
+                             "edges", "", user_index_flags);
+    check_store_schema_entry(entries, 16, CBM_RS_STORE_SCHEMA_KIND_USER_INDEX, "idx_edges_type",
+                             "edges", "", user_index_flags);
+    check_store_schema_entry(entries, 16, CBM_RS_STORE_SCHEMA_KIND_USER_INDEX,
+                             "idx_edges_target_type", "edges", "", user_index_flags);
+    check_store_schema_entry(entries, 16, CBM_RS_STORE_SCHEMA_KIND_USER_INDEX,
+                             "idx_edges_source_type", "edges", "", user_index_flags);
+    check_store_schema_entry(entries, 16, CBM_RS_STORE_SCHEMA_KIND_USER_INDEX, "idx_edges_url_path",
+                             "edges", "", user_index_flags);
+
+    CbmRsStoreSchemaManifestEntryV2 entries_v2[48];
+    CbmRsStoreSchemaManifestEntryV2 short_entries_v2[47];
+    check_int("store_schema_entry_count_v2", cbm_rs_store_schema_manifest_entry_count_v2(), 48);
+    check_int("store_schema_table_column_count_v2",
+              cbm_rs_store_schema_manifest_table_column_count_v2(), 29);
+    check_int("store_schema_fts_shadow_count_v2",
+              cbm_rs_store_schema_manifest_fts_shadow_count_v2(), 4);
+    check_int("store_schema_entries_len_v2",
+              cbm_rs_store_schema_manifest_entries_v2(entries_v2, 48), 48);
+    check_int("store_schema_entries_null_v2", cbm_rs_store_schema_manifest_entries_v2(NULL, 48),
+              -1);
+    check_int("store_schema_entries_short_v2",
+              cbm_rs_store_schema_manifest_entries_v2(short_entries_v2, 47), -1);
+    check_int("store_schema_entries_negative_v2",
+              cbm_rs_store_schema_manifest_entries_v2(entries_v2, -1), -1);
+
+    check_store_schema_entry_v2(entries_v2, 48, CBM_RS_STORE_SCHEMA_KIND_CORE_TABLE, "nodes", "",
+                                "", "", "",
+                                "id,project,label,name,qualified_name,file_path,"
+                                "start_line,end_line,properties",
+                                "UNIQUE(project,qualified_name);FOREIGN KEY(project) REFERENCES "
+                                "projects(name) ON DELETE CASCADE",
+                                -1, 0, required);
+    check_store_schema_entry_v2(entries_v2, 48, CBM_RS_STORE_SCHEMA_KIND_TABLE_COLUMN, "nodes.id",
+                                "nodes", "id", "INTEGER", "", "", "", 0, 0,
+                                required | CBM_RS_STORE_SCHEMA_FLAG_PRIMARY_KEY |
+                                    CBM_RS_STORE_SCHEMA_FLAG_AUTOINCREMENT);
+    check_store_schema_entry_v2(
+        entries_v2, 48, CBM_RS_STORE_SCHEMA_KIND_TABLE_COLUMN, "nodes.qualified_name", "nodes",
+        "qualified_name", "TEXT", "", "", "", 4, 0,
+        required | CBM_RS_STORE_SCHEMA_FLAG_NOT_NULL | CBM_RS_STORE_SCHEMA_FLAG_UNIQUE);
+    check_store_schema_entry_v2(entries_v2, 48, CBM_RS_STORE_SCHEMA_KIND_TABLE_COLUMN,
+                                "nodes.properties", "nodes", "properties", "TEXT", "'{}'", "", "",
+                                8, 0, required);
+    check_store_schema_entry_v2(entries_v2, 48, CBM_RS_STORE_SCHEMA_KIND_GENERATED_COLUMN,
+                                "edges.url_path_gen", "edges", "url_path_gen", "TEXT", "", "",
+                                "json_extract(properties,'$.url_path')", 6, 2,
+                                required | CBM_RS_STORE_SCHEMA_FLAG_GENERATED);
+    check_store_schema_entry_v2(entries_v2, 48, CBM_RS_STORE_SCHEMA_KIND_USER_INDEX,
+                                "idx_edges_url_path", "edges", "", "", "", "project,url_path_gen",
+                                "", -1, 0, user_index_flags);
+    check_store_schema_entry_v2(entries_v2, 48, CBM_RS_STORE_SCHEMA_KIND_FTS_TABLE, "nodes_fts", "",
+                                "", "", "", "name,qualified_name,label,file_path",
+                                "content='';tokenize='unicode61 remove_diacritics 2'", -1, 0,
+                                required | CBM_RS_STORE_SCHEMA_FLAG_FTS);
+    check_store_schema_entry_v2(entries_v2, 48, CBM_RS_STORE_SCHEMA_KIND_FTS_SHADOW_TABLE,
+                                "nodes_fts_idx", "nodes_fts", "", "", "", "", "", -1, 0,
+                                required | CBM_RS_STORE_SCHEMA_FLAG_FTS);
+
+    CbmRsStoreConnectionManifestEntryV1 conn_entries[16];
+    CbmRsStoreConnectionManifestEntryV1 short_conn_entries[15];
+    check_int("store_connection_entry_count", cbm_rs_store_connection_manifest_entry_count_v1(),
+              16);
+    check_int("store_connection_write_pragma_count",
+              cbm_rs_store_connection_manifest_write_pragma_count_v1(), 4);
+    check_int("store_connection_entries_len",
+              cbm_rs_store_connection_manifest_entries_v1(conn_entries, 16), 16);
+    check_int("store_connection_entries_null",
+              cbm_rs_store_connection_manifest_entries_v1(NULL, 16), -1);
+    check_int("store_connection_entries_short",
+              cbm_rs_store_connection_manifest_entries_v1(short_conn_entries, 15), -1);
+    check_int("store_connection_entries_negative",
+              cbm_rs_store_connection_manifest_entries_v1(conn_entries, -1), -1);
+
+    const uint32_t conn_required = CBM_RS_STORE_CONN_FLAG_REQUIRED;
+    check_store_connection_entry(
+        conn_entries, 16, CBM_RS_STORE_CONN_KIND_OPEN_MODE, "open.path_query",
+        conn_required | CBM_RS_STORE_CONN_FLAG_READ_ONLY | CBM_RS_STORE_CONN_FLAG_NO_CREATE,
+        CBM_RS_STORE_CONN_MODE_READ_ONLY, 0, 0, "SQLITE_OPEN_READONLY", "");
+    check_store_connection_entry(
+        conn_entries, 16, CBM_RS_STORE_CONN_KIND_READ_PROBE, "open.path_query.probe",
+        conn_required | CBM_RS_STORE_CONN_FLAG_READ_ONLY, CBM_RS_STORE_CONN_MODE_READ_ONLY, 1, 0,
+        "SELECT 1 FROM sqlite_master LIMIT 1;", "");
+    check_store_connection_entry(conn_entries, 16, CBM_RS_STORE_CONN_KIND_FALLBACK,
+                                 "open.path_query.immutable_fallback",
+                                 conn_required | CBM_RS_STORE_CONN_FLAG_READ_ONLY |
+                                     CBM_RS_STORE_CONN_FLAG_NO_CREATE | CBM_RS_STORE_CONN_FLAG_URI,
+                                 CBM_RS_STORE_CONN_MODE_READ_ONLY, 2, 0,
+                                 "SQLITE_OPEN_READONLY|SQLITE_OPEN_URI;immutable=1", "");
+    check_store_connection_entry(
+        conn_entries, 16, CBM_RS_STORE_CONN_KIND_PRAGMA, "pragma.journal_mode.wal",
+        conn_required | CBM_RS_STORE_CONN_FLAG_WRITES_DB_OR_WAL, CBM_RS_STORE_CONN_MODE_WRITE, 40,
+        0, "PRAGMA journal_mode = WAL;", "");
+    check_store_connection_entry(
+        conn_entries, 16, CBM_RS_STORE_CONN_KIND_PRAGMA, "pragma.wal_checkpoint.passive",
+        conn_required | CBM_RS_STORE_CONN_FLAG_WRITES_DB_OR_WAL |
+            CBM_RS_STORE_CONN_FLAG_BEST_EFFORT,
+        CBM_RS_STORE_CONN_MODE_WRITE, 50, 0, "PRAGMA wal_checkpoint(PASSIVE)", "");
+    check_store_connection_entry(
+        conn_entries, 16, CBM_RS_STORE_CONN_KIND_PRAGMA, "pragma.mmap_size",
+        conn_required | CBM_RS_STORE_CONN_FLAG_ENV_BACKED,
+        CBM_RS_STORE_CONN_MODE_WRITE | CBM_RS_STORE_CONN_MODE_READ_ONLY, 70, 67108864,
+        "PRAGMA mmap_size = <resolved>;", "CBM_SQLITE_MMAP_SIZE");
+    check_store_connection_entry(conn_entries, 16, CBM_RS_STORE_CONN_KIND_PRAGMA,
+                                 "pragma.bulk.cache_size.begin", conn_required,
+                                 CBM_RS_STORE_CONN_MODE_BULK_BEGIN, 80, -65536,
+                                 "PRAGMA cache_size = -65536;", "");
+    check_store_connection_entry(conn_entries, 16, CBM_RS_STORE_CONN_KIND_PRAGMA,
+                                 "pragma.bulk.cache_size.end", conn_required,
+                                 CBM_RS_STORE_CONN_MODE_BULK_END, 90, -2000,
+                                 "PRAGMA cache_size = -2000;", "");
 }
 
 static CbmRsRegistryResolveOut resolve_registry_once(
@@ -1789,8 +3127,544 @@ static void test_hash_table_exports(void) {
     cbm_rs_ht_free(fe);
 }
 
+static void test_yaml_exports(void) {
+    cbm_rs_yaml_free(NULL);
+    check_null("yaml_get_str_null_root", cbm_rs_yaml_get_str(NULL, "key"));
+    check_bool("yaml_has_null_root", cbm_rs_yaml_has(NULL, "key"), false);
+    check_double_near("yaml_get_float_null_root", cbm_rs_yaml_get_float(NULL, "key", 7.5), 7.5);
+    check_bool("yaml_get_bool_null_root", cbm_rs_yaml_get_bool(NULL, "key", true), true);
+    const char *null_items[2] = {0};
+    check_int("yaml_get_list_null_root", cbm_rs_yaml_get_str_list(NULL, "key", null_items, 2), 0);
+
+    CBMRustYamlNode *empty = cbm_rs_yaml_parse(NULL, 42);
+    check_not_null("yaml_parse_null_input", empty);
+    check_bool("yaml_empty_missing", cbm_rs_yaml_has(empty, "anything"), false);
+    cbm_rs_yaml_free(empty);
+
+    const unsigned char partial[] = "key: value\n";
+    CBMRustYamlNode *partial_root = cbm_rs_yaml_parse(partial, 7);
+    check_not_null("yaml_parse_partial", partial_root);
+    check_str("yaml_partial_value", cbm_rs_yaml_get_str(partial_root, "key"), "va");
+    cbm_rs_yaml_free(partial_root);
+
+    const unsigned char yaml[] = "project:\n"
+                                 "  name: myapp # inline comment\n"
+                                 "  tags:\n"
+                                 "    - web\n"
+                                 "    - api\n"
+                                 "  version: 2.0\n"
+                                 "  enabled: TRUE\n"
+                                 "  rate: -3.14\n"
+                                 "channel: #general\n"
+                                 "quoted: \"#ff0000\"\n"
+                                 "key: first\n"
+                                 "key: second\n";
+    CBMRustYamlNode *root = cbm_rs_yaml_parse(yaml, (int)strlen((const char *)yaml));
+    check_not_null("yaml_parse_nested", root);
+    check_str("yaml_get_nested_str", cbm_rs_yaml_get_str(root, "project.name"), "myapp");
+    check_str("yaml_inline_hash_no_space", cbm_rs_yaml_get_str(root, "channel"), "#general");
+    check_str("yaml_quoted_hash", cbm_rs_yaml_get_str(root, "quoted"), "\"#ff0000\"");
+    check_str("yaml_duplicate_first", cbm_rs_yaml_get_str(root, "key"), "first");
+    check_null("yaml_map_not_scalar", cbm_rs_yaml_get_str(root, "project"));
+    check_bool("yaml_has_map_node", cbm_rs_yaml_has(root, "project"), true);
+    check_bool("yaml_missing_nested", cbm_rs_yaml_has(root, "project.missing"), false);
+    check_bool("yaml_bool_true", cbm_rs_yaml_get_bool(root, "project.enabled", false), true);
+    check_bool("yaml_bool_default", cbm_rs_yaml_get_bool(root, "project.unknown", true), true);
+    check_double_near("yaml_float", cbm_rs_yaml_get_float(root, "project.rate", 0.0), -3.14);
+    check_double_near("yaml_float_default", cbm_rs_yaml_get_float(root, "project.name", 99.0),
+                      99.0);
+
+    const char *items[4] = {0};
+    check_int("yaml_list_count", cbm_rs_yaml_get_str_list(root, "project.tags", items, 4), 2);
+    check_str("yaml_list_0", items[0], "web");
+    check_str("yaml_list_1", items[1], "api");
+    const char *limited[1] = {0};
+    check_int("yaml_list_limit", cbm_rs_yaml_get_str_list(root, "project.tags", limited, 1), 1);
+    check_str("yaml_list_limit_0", limited[0], "web");
+
+    char long_path[300];
+    memset(long_path, 'a', 260);
+    long_path[260] = '\0';
+    check_null("yaml_path_segment_overflow", cbm_rs_yaml_get_str(root, long_path));
+    check_bool("yaml_has_path_segment_overflow", cbm_rs_yaml_has(root, long_path), false);
+    check_null("yaml_empty_path", cbm_rs_yaml_get_str(root, ""));
+    check_null("yaml_null_path", cbm_rs_yaml_get_str(root, NULL));
+    cbm_rs_yaml_free(root);
+
+    const unsigned char top_list[] = "colors:\n"
+                                     "- red\n"
+                                     "- green\n";
+    CBMRustYamlNode *top = cbm_rs_yaml_parse(top_list, (int)strlen((const char *)top_list));
+    check_not_null("yaml_top_list_parse", top);
+    const char *colors[3] = {0};
+    check_int("yaml_top_list_count", cbm_rs_yaml_get_str_list(top, "colors", colors, 3), 2);
+    check_str("yaml_top_list_0", colors[0], "red");
+    check_str("yaml_top_list_1", colors[1], "green");
+    cbm_rs_yaml_free(top);
+}
+
+static void test_cypher_lexer_exports(void) {
+    check_int("cypher_lex_count_null", cbm_rs_cypher_lex_token_count_v1(NULL, 0), -1);
+    char invalid_buf[8] = "x";
+    check_size("cypher_lex_summary_null",
+               cbm_rs_cypher_lex_summary_v1(invalid_buf, sizeof(invalid_buf), NULL, 0), SIZE_MAX);
+
+    const unsigned char query[] = "MATCH (f:Function)-[r:CALLS|DEFINES*1..2]->(g) "
+                                  "WHERE f.name =~ \"Al\\npha\" RETURN COUNT(g)";
+    const char *expected = "MATCH@0:MATCH|LPAREN@6:(|IDENT@7:f|COLON@8:\\:|IDENT@9:Function|"
+                           "RPAREN@17:)|DASH@18:-|LBRACKET@19:[|IDENT@20:r|COLON@21:\\:|"
+                           "IDENT@22:CALLS|PIPE@27:\\||IDENT@28:DEFINES|STAR@35:*|NUMBER@36:1|"
+                           "DOTDOT@37:..|NUMBER@39:2|RBRACKET@40:]|DASH@41:-|GT@42:>|"
+                           "LPAREN@43:(|IDENT@44:g|RPAREN@45:)|WHERE@47:WHERE|IDENT@53:f|"
+                           "DOT@54:.|IDENT@55:name|EQTILDE@60:=~|STRING@63:Al\\npha|"
+                           "RETURN@73:RETURN|COUNT@80:COUNT|LPAREN@85:(|IDENT@86:g|"
+                           "RPAREN@87:)|EOF@88:";
+    char summary[1024];
+    size_t summary_len = cbm_rs_cypher_lex_summary_v1(summary, sizeof(summary), query,
+                                                      (int)strlen((const char *)query));
+    check_size("cypher_lex_summary_len", summary_len, strlen(expected));
+    check_str("cypher_lex_summary", summary, expected);
+    char short_buf[12];
+    check_size("cypher_lex_summary_short_len",
+               cbm_rs_cypher_lex_summary_v1(short_buf, sizeof(short_buf), query,
+                                            (int)strlen((const char *)query)),
+               strlen(expected));
+    check_str("cypher_lex_summary_short", short_buf, "MATCH@0:MAT");
+
+    int count = cbm_rs_cypher_lex_token_count_v1(query, (int)strlen((const char *)query));
+    check_int("cypher_lex_token_count", count, 35);
+    CbmRsCypherTokenV1 tokens[40] = {0};
+    check_int("cypher_lex_tokens_null",
+              cbm_rs_cypher_lex_tokens_v1(query, (int)strlen((const char *)query), NULL, 40), -1);
+    check_int("cypher_lex_tokens_short",
+              cbm_rs_cypher_lex_tokens_v1(query, (int)strlen((const char *)query), tokens, 2), -1);
+    check_int("cypher_lex_tokens",
+              cbm_rs_cypher_lex_tokens_v1(query, (int)strlen((const char *)query), tokens, 40), 35);
+    check_int("cypher_tok_match_kind", tokens[0].kind, TOK_MATCH);
+    check_int("cypher_tok_match_pos", tokens[0].pos, 0);
+    check_int("cypher_tok_dotdot_kind", tokens[15].kind, TOK_DOTDOT);
+    check_int("cypher_tok_dotdot_pos", tokens[15].pos, 37);
+    check_int("cypher_tok_string_kind", tokens[28].kind, TOK_STRING);
+    check_int("cypher_tok_string_pos", tokens[28].pos, 63);
+    check_int("cypher_tok_string_len", tokens[28].text_len, 6);
+    check_int("cypher_tok_eof_kind", tokens[34].kind, TOK_EOF);
+    check_int("cypher_tok_eof_pos", tokens[34].pos, 88);
+
+    const unsigned char comments[] = "// one\nMATCH /* block */ (n) -- two\nRETURN 'a\\tb\\'c'";
+    const char *expected_comments =
+        "MATCH@7:MATCH|LPAREN@25:(|IDENT@26:n|RPAREN@27:)|RETURN@36:RETURN|"
+        "STRING@43:a\\tb'c|EOF@52:";
+    check_size("cypher_lex_comments_len",
+               cbm_rs_cypher_lex_summary_v1(summary, sizeof(summary), comments,
+                                            (int)strlen((const char *)comments)),
+               strlen(expected_comments));
+    check_str("cypher_lex_comments", summary, expected_comments);
+}
+
+static void test_cypher_parse_summary_export(void) {
+    char invalid_buf[8] = "keep";
+    check_size("cypher_parse_summary_null",
+               cbm_rs_cypher_parse_summary_v1(invalid_buf, sizeof(invalid_buf), NULL, 0), SIZE_MAX);
+    check_str("cypher_parse_summary_null_buf", invalid_buf, "keep");
+
+    const unsigned char malformed[] = "MATCH (f:Function WHERE f.name = \"x\"";
+    check_size("cypher_parse_summary_malformed",
+               cbm_rs_cypher_parse_summary_v1(invalid_buf, sizeof(invalid_buf), malformed,
+                                              (int)strlen((const char *)malformed)),
+               SIZE_MAX);
+
+    const unsigned char parser_shape[] =
+        "MATCH (n:Function|Module)-[r:CALLS|DEFINES*1..2]->(m:Function) "
+        "WHERE n.name = \"main\" OR n.name = \"Alpha\" AND m.name = \"Beta\" RETURN n.name";
+    const char *expected_parser_shape =
+        "patterns=1;P0=req;nodes=n:Function\\|Module,m:Function;"
+        "rels=r:CALLS|DEFINES:outbound:1..2;"
+        "where=OR(COND(n.name,=,main),AND(COND(n.name,=,Alpha),COND(m.name,=,Beta)));"
+        "with=-;post_where=-;return=n.name";
+    char summary[1024];
+    check_size("cypher_parse_summary_len_only",
+               cbm_rs_cypher_parse_summary_v1(NULL, 0, parser_shape,
+                                              (int)strlen((const char *)parser_shape)),
+               strlen(expected_parser_shape));
+    check_size("cypher_parse_summary_parser_shape_len",
+               cbm_rs_cypher_parse_summary_v1(summary, sizeof(summary), parser_shape,
+                                              (int)strlen((const char *)parser_shape)),
+               strlen(expected_parser_shape));
+    check_str("cypher_parse_summary_parser_shape", summary, expected_parser_shape);
+    char short_buf[12];
+    check_size("cypher_parse_summary_short_len",
+               cbm_rs_cypher_parse_summary_v1(short_buf, sizeof(short_buf), parser_shape,
+                                              (int)strlen((const char *)parser_shape)),
+               strlen(expected_parser_shape));
+    check_str("cypher_parse_summary_short", short_buf, "patterns=1;");
+    check_size("cypher_parse_summary_negative_len",
+               cbm_rs_cypher_parse_summary_v1(summary, sizeof(summary), parser_shape, -1),
+               SIZE_MAX);
+
+    const unsigned char hop_single_number[] =
+        "MATCH (a:Function)-[:CALLS*2]->(b:Function) RETURN b.name";
+    const char *expected_hop_single_number =
+        "patterns=1;P0=req;nodes=a:Function,b:Function;"
+        "rels=:CALLS:outbound:1..2;where=-;with=-;post_where=-;return=b.name";
+    check_size("cypher_parse_summary_hop_single_number_len",
+               cbm_rs_cypher_parse_summary_v1(summary, sizeof(summary), hop_single_number,
+                                              (int)strlen((const char *)hop_single_number)),
+               strlen(expected_hop_single_number));
+    check_str("cypher_parse_summary_hop_single_number", summary, expected_hop_single_number);
+
+    const unsigned char hop_unbounded[] =
+        "MATCH (a:Function)-[:CALLS*]->(b:Function) RETURN b.name";
+    const char *expected_hop_unbounded =
+        "patterns=1;P0=req;nodes=a:Function,b:Function;"
+        "rels=:CALLS:outbound:1..0;where=-;with=-;post_where=-;return=b.name";
+    check_size("cypher_parse_summary_hop_unbounded_len",
+               cbm_rs_cypher_parse_summary_v1(summary, sizeof(summary), hop_unbounded,
+                                              (int)strlen((const char *)hop_unbounded)),
+               strlen(expected_hop_unbounded));
+    check_str("cypher_parse_summary_hop_unbounded", summary, expected_hop_unbounded);
+
+    const unsigned char hop_omitted_min[] =
+        "MATCH (a:Function)-[:CALLS*..3]->(b:Function) RETURN b.name";
+    const char *expected_hop_omitted_min =
+        "patterns=1;P0=req;nodes=a:Function,b:Function;"
+        "rels=:CALLS:outbound:1..3;where=-;with=-;post_where=-;return=b.name";
+    check_size("cypher_parse_summary_hop_omitted_min_len",
+               cbm_rs_cypher_parse_summary_v1(summary, sizeof(summary), hop_omitted_min,
+                                              (int)strlen((const char *)hop_omitted_min)),
+               strlen(expected_hop_omitted_min));
+    check_str("cypher_parse_summary_hop_omitted_min", summary, expected_hop_omitted_min);
+
+    const unsigned char optional_match[] =
+        "MATCH (f:Function) OPTIONAL MATCH (f)-[:CALLS]->(g:Function) RETURN f.name, g.name";
+    const char *expected_optional_match =
+        "patterns=2;P0=req;nodes=f:Function;rels=-;"
+        "P1=optional;nodes=f:,g:Function;rels=:CALLS:outbound:1..1;"
+        "where=-;with=-;post_where=-;return=f.name,g.name";
+    check_size("cypher_parse_summary_optional_len",
+               cbm_rs_cypher_parse_summary_v1(summary, sizeof(summary), optional_match,
+                                              (int)strlen((const char *)optional_match)),
+               strlen(expected_optional_match));
+    check_str("cypher_parse_summary_optional", summary, expected_optional_match);
+
+    const unsigned char union_all[] =
+        "MATCH (f:Function) RETURN f.name UNION ALL MATCH (g:Function) RETURN g.name";
+    const char *expected_union_all = "union=all;left={patterns=1;P0=req;nodes=f:Function;rels=-;"
+                                     "where=-;with=-;post_where=-;return=f.name};"
+                                     "right={patterns=1;P0=req;nodes=g:Function;rels=-;"
+                                     "where=-;with=-;post_where=-;return=g.name}";
+
+    const char *expected_union_distinct =
+        "union=distinct;left={patterns=1;P0=req;nodes=f:Function;rels=-;"
+        "where=-;with=-;post_where=-;return=f.name};"
+        "right={patterns=1;P0=req;nodes=g:Function;rels=-;"
+        "where=-;with=-;post_where=-;return=g.name}";
+    check_size("cypher_parse_summary_union_len",
+               cbm_rs_cypher_parse_summary_v1(summary, sizeof(summary), union_all,
+                                              (int)strlen((const char *)union_all)),
+               strlen(expected_union_all));
+    check_str("cypher_parse_summary_union", summary, expected_union_all);
+
+    const unsigned char union_distinct[] =
+        "MATCH (f:Function) RETURN f.name UNION MATCH (g:Function) RETURN g.name";
+    check_size("cypher_parse_summary_union_distinct_len",
+               cbm_rs_cypher_parse_summary_v1(summary, sizeof(summary), union_distinct,
+                                              (int)strlen((const char *)union_distinct)),
+               strlen(expected_union_distinct));
+    check_str("cypher_parse_summary_union_distinct", summary, expected_union_distinct);
+
+    const unsigned char exists_query[] =
+        "MATCH (f:Function) WHERE NOT EXISTS { (f)<-[:CALLS]-() } RETURN f.name";
+    const char *expected_exists =
+        "patterns=1;P0=req;nodes=f:Function;rels=-;"
+        "where=NOT(EXISTS(f,inbound,CALLS));with=-;post_where=-;return=f.name";
+    check_size("cypher_parse_summary_exists_len",
+               cbm_rs_cypher_parse_summary_v1(summary, sizeof(summary), exists_query,
+                                              (int)strlen((const char *)exists_query)),
+               strlen(expected_exists));
+    check_str("cypher_parse_summary_exists", summary, expected_exists);
+
+    const unsigned char with_post_where[] =
+        "MATCH (f:Function)-[:CALLS]->(g:Function) "
+        "WITH f.name AS caller, COUNT(g) AS cnt WHERE cnt > \"1\" RETURN caller";
+    const char *expected_with =
+        "patterns=1;P0=req;nodes=f:Function,g:Function;rels=:CALLS:outbound:1..1;"
+        "where=-;with=f.name:caller,COUNT(g):cnt;post_where=COND(cnt,>,1);return=caller";
+    check_size("cypher_parse_summary_with_len",
+               cbm_rs_cypher_parse_summary_v1(summary, sizeof(summary), with_post_where,
+                                              (int)strlen((const char *)with_post_where)),
+               strlen(expected_with));
+    check_str("cypher_parse_summary_with", summary, expected_with);
+
+    const unsigned char exists_identifier_query[] =
+        "MATCH (f:Function) WHERE EXISTS (f) RETURN f.name";
+    check_size("cypher_parse_summary_exists_identifier_len",
+               cbm_rs_cypher_parse_summary_v1(summary, sizeof(summary), exists_identifier_query,
+                                              (int)strlen((const char *)exists_identifier_query)),
+               SIZE_MAX);
+    check_size("cypher_parse_summary_exists_identifier_len_only",
+               cbm_rs_cypher_parse_summary_v1(NULL, 0, exists_identifier_query,
+                                              (int)strlen((const char *)exists_identifier_query)),
+               SIZE_MAX);
+
+    const unsigned char with_distinct[] =
+        "MATCH (f:Function) WITH DISTINCT f.name AS caller WHERE caller = \"x\" RETURN caller";
+    const char *expected_with_distinct = "patterns=1;P0=req;nodes=f:Function;rels=-;"
+                                         "where=-;with=DISTINCT f.name:caller;"
+                                         "post_where=COND(caller,=,x);return=caller";
+    check_size("cypher_parse_summary_with_distinct_len",
+               cbm_rs_cypher_parse_summary_v1(summary, sizeof(summary), with_distinct,
+                                              (int)strlen((const char *)with_distinct)),
+               strlen(expected_with_distinct));
+    check_str("cypher_parse_summary_with_distinct", summary, expected_with_distinct);
+
+    const unsigned char return_distinct[] =
+        "MATCH (f:Function) RETURN DISTINCT f.name ORDER BY f.name LIMIT 1 SKIP 0";
+    const char *expected_return_distinct = "patterns=1;P0=req;nodes=f:Function;rels=-;"
+                                           "where=-;with=-;post_where=-;return=DISTINCT f.name";
+    check_size("cypher_parse_summary_return_distinct_len",
+               cbm_rs_cypher_parse_summary_v1(summary, sizeof(summary), return_distinct,
+                                              (int)strlen((const char *)return_distinct)),
+               strlen(expected_return_distinct));
+    check_str("cypher_parse_summary_return_distinct", summary, expected_return_distinct);
+
+    const unsigned char return_distinct_count[] =
+        "MATCH (f:Function) RETURN DISTINCT COUNT(DISTINCT f.name) AS name_count";
+    const char *expected_return_distinct_count =
+        "patterns=1;P0=req;nodes=f:Function;rels=-;"
+        "where=-;with=-;post_where=-;return=DISTINCT COUNT(DISTINCT f.name):name_count";
+    check_size("cypher_parse_summary_return_distinct_count_len",
+               cbm_rs_cypher_parse_summary_v1(summary, sizeof(summary), return_distinct_count,
+                                              (int)strlen((const char *)return_distinct_count)),
+               strlen(expected_return_distinct_count));
+    check_str("cypher_parse_summary_return_distinct_count", summary,
+              expected_return_distinct_count);
+}
+
+static void test_mcp_jsonrpc_summary_export(void) {
+    char invalid_buf[8] = "keep";
+    check_size("mcp_jsonrpc_summary_null",
+               cbm_rs_mcp_jsonrpc_request_summary_v1(invalid_buf, sizeof(invalid_buf), NULL, 0),
+               SIZE_MAX);
+    check_str("mcp_jsonrpc_summary_null_buf", invalid_buf, "keep");
+    check_size("mcp_jsonrpc_summary_negative_len",
+               cbm_rs_mcp_jsonrpc_request_summary_v1(invalid_buf, sizeof(invalid_buf),
+                                                     (const unsigned char *)"{}", -1),
+               SIZE_MAX);
+    check_size("mcp_jsonrpc_summary_not_json",
+               cbm_rs_mcp_jsonrpc_request_summary_v1(invalid_buf, sizeof(invalid_buf),
+                                                     (const unsigned char *)"not json", 8),
+               SIZE_MAX);
+    check_size("mcp_jsonrpc_summary_array_root",
+               cbm_rs_mcp_jsonrpc_request_summary_v1(invalid_buf, sizeof(invalid_buf),
+                                                     (const unsigned char *)"[1,2,3]", 7),
+               SIZE_MAX);
+    check_size("mcp_jsonrpc_summary_missing_method",
+               cbm_rs_mcp_jsonrpc_request_summary_v1(
+                   invalid_buf, sizeof(invalid_buf),
+                   (const unsigned char *)"{\"jsonrpc\":\"2.0\",\"id\":1}", 24),
+               SIZE_MAX);
+
+    const unsigned char initialize[] = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\","
+                                       "\"params\":{\"capabilities\":{}}}";
+    const char *expected_initialize = "jsonrpc=2.0;method=initialize;id=int:1;params=object";
+    char summary[256];
+    check_size("mcp_jsonrpc_summary_initialize_len",
+               cbm_rs_mcp_jsonrpc_request_summary_v1(summary, sizeof(summary), initialize,
+                                                     (int)strlen((const char *)initialize)),
+               strlen(expected_initialize));
+    check_str("mcp_jsonrpc_summary_initialize", summary, expected_initialize);
+    check_size("mcp_jsonrpc_summary_initialize_len_only",
+               cbm_rs_mcp_jsonrpc_request_summary_v1(NULL, 0, initialize,
+                                                     (int)strlen((const char *)initialize)),
+               strlen(expected_initialize));
+    char short_buf[12];
+    check_size("mcp_jsonrpc_summary_short_len",
+               cbm_rs_mcp_jsonrpc_request_summary_v1(short_buf, sizeof(short_buf), initialize,
+                                                     (int)strlen((const char *)initialize)),
+               strlen(expected_initialize));
+    check_str("mcp_jsonrpc_summary_short", short_buf, "jsonrpc=2.0");
+
+    const unsigned char notification[] =
+        "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}";
+    const char *expected_notification =
+        "jsonrpc=2.0;method=notifications/initialized;id=none;params=none";
+    check_size("mcp_jsonrpc_summary_notification_len",
+               cbm_rs_mcp_jsonrpc_request_summary_v1(summary, sizeof(summary), notification,
+                                                     (int)strlen((const char *)notification)),
+               strlen(expected_notification));
+    check_str("mcp_jsonrpc_summary_notification", summary, expected_notification);
+
+    const unsigned char missing_jsonrpc[] = "{\"id\":1,\"method\":\"initialize\",\"params\":{}}";
+    check_size("mcp_jsonrpc_summary_default_jsonrpc_len",
+               cbm_rs_mcp_jsonrpc_request_summary_v1(summary, sizeof(summary), missing_jsonrpc,
+                                                     (int)strlen((const char *)missing_jsonrpc)),
+               strlen(expected_initialize));
+    check_str("mcp_jsonrpc_summary_default_jsonrpc", summary, expected_initialize);
+
+    const unsigned char string_id[] =
+        "  { \"jsonrpc\" : \"2.0\" , \"id\" : \"99\" , \"method\" : \"tools/list\" }  ";
+    const char *expected_string_id = "jsonrpc=2.0;method=tools/list;id=string:99;params=none";
+    check_size("mcp_jsonrpc_summary_string_id_len",
+               cbm_rs_mcp_jsonrpc_request_summary_v1(summary, sizeof(summary), string_id,
+                                                     (int)strlen((const char *)string_id)),
+               strlen(expected_string_id));
+    check_str("mcp_jsonrpc_summary_string_id", summary, expected_string_id);
+
+    const unsigned char tools_call[] =
+        "{\"jsonrpc\":\"2.0\",\"id\":42,\"method\":\"tools/call\","
+        "\"params\":{\"name\":\"search_graph\",\"arguments\":{\"limit\":5}}}";
+    const char *expected_tools_call = "jsonrpc=2.0;method=tools/call;id=int:42;params=object";
+    check_size("mcp_jsonrpc_summary_tools_call_len",
+               cbm_rs_mcp_jsonrpc_request_summary_v1(summary, sizeof(summary), tools_call,
+                                                     (int)strlen((const char *)tools_call)),
+               strlen(expected_tools_call));
+    check_str("mcp_jsonrpc_summary_tools_call", summary, expected_tools_call);
+
+    const unsigned char delimiter_escape[] =
+        "{\"method\":\"weird\\nmethod\",\"id\":\"a;b=c\\\\d\",\"params\":[]}";
+    const char *expected_escape =
+        "jsonrpc=2.0;method=weird\\nmethod;id=string:a\\;b\\=c\\\\d;params=array";
+    check_size("mcp_jsonrpc_summary_escape_len",
+               cbm_rs_mcp_jsonrpc_request_summary_v1(summary, sizeof(summary), delimiter_escape,
+                                                     (int)strlen((const char *)delimiter_escape)),
+               strlen(expected_escape));
+    check_str("mcp_jsonrpc_summary_escape", summary, expected_escape);
+}
+
+static void test_mcp_jsonrpc_parse_export(void) {
+    CbmRsMcpJsonRpcParseOutV1 out = {0};
+    char jsonrpc[16];
+    char method[32];
+    char id_str[16];
+    char params[96];
+
+    const unsigned char request[] = " { \"id\" : \"abc\" , \"method\" : \"tools/call\" , "
+                                    "\"params\" : { \"name\" : \"search_graph\" } } ";
+    check_int("mcp_jsonrpc_parse_len_only_rc",
+              cbm_rs_mcp_jsonrpc_parse_v1(request, (int)strlen((const char *)request), &out, NULL,
+                                          0, NULL, 0, NULL, 0, NULL, 0),
+              0);
+    check_i64("mcp_jsonrpc_parse_len_only_id", out.id, -1);
+    check_int("mcp_jsonrpc_parse_len_only_has_id", out.has_id, 1);
+    check_int("mcp_jsonrpc_parse_len_only_id_kind", out.id_kind, CBM_RS_MCP_ID_STRING);
+    check_int("mcp_jsonrpc_parse_len_only_has_params", out.has_params, 1);
+    check_size("mcp_jsonrpc_parse_len_only_jsonrpc_len", out.jsonrpc_len, strlen("2.0"));
+    check_size("mcp_jsonrpc_parse_len_only_method_len", out.method_len, strlen("tools/call"));
+    check_size("mcp_jsonrpc_parse_len_only_id_str_len", out.id_str_len, strlen("abc"));
+    check_size("mcp_jsonrpc_parse_len_only_params_len", out.params_len,
+               strlen("{ \"name\" : \"search_graph\" }"));
+
+    memset(&out, 0, sizeof(out));
+    check_int("mcp_jsonrpc_parse_write_rc",
+              cbm_rs_mcp_jsonrpc_parse_v1(request, (int)strlen((const char *)request), &out,
+                                          jsonrpc, sizeof(jsonrpc), method, sizeof(method), id_str,
+                                          sizeof(id_str), params, sizeof(params)),
+              0);
+    check_str("mcp_jsonrpc_parse_jsonrpc", jsonrpc, "2.0");
+    check_str("mcp_jsonrpc_parse_method", method, "tools/call");
+    check_str("mcp_jsonrpc_parse_id_str", id_str, "abc");
+    check_str("mcp_jsonrpc_parse_params", params, "{ \"name\" : \"search_graph\" }");
+
+    const unsigned char int_id[] = "{\"jsonrpc\":\"2.0\",\"id\":42,\"method\":\"ping\"}";
+    memset(&out, 0, sizeof(out));
+    check_int("mcp_jsonrpc_parse_int_id_rc",
+              cbm_rs_mcp_jsonrpc_parse_v1(int_id, (int)strlen((const char *)int_id), &out, jsonrpc,
+                                          sizeof(jsonrpc), method, sizeof(method), id_str,
+                                          sizeof(id_str), params, sizeof(params)),
+              0);
+    check_i64("mcp_jsonrpc_parse_int_id", out.id, 42);
+    check_int("mcp_jsonrpc_parse_int_id_kind", out.id_kind, CBM_RS_MCP_ID_INT);
+    check_int("mcp_jsonrpc_parse_int_has_params", out.has_params, 0);
+    check_str("mcp_jsonrpc_parse_int_id_str_empty", id_str, "");
+    check_str("mcp_jsonrpc_parse_int_params_empty", params, "");
+
+    const unsigned char other_id[] = "{\"jsonrpc\":2,\"id\":true,\"method\":\"ping\"}";
+    memset(&out, 0, sizeof(out));
+    check_int("mcp_jsonrpc_parse_other_id_rc",
+              cbm_rs_mcp_jsonrpc_parse_v1(other_id, (int)strlen((const char *)other_id), &out,
+                                          jsonrpc, sizeof(jsonrpc), method, sizeof(method), id_str,
+                                          sizeof(id_str), params, sizeof(params)),
+              0);
+    check_i64("mcp_jsonrpc_parse_other_id", out.id, -1);
+    check_int("mcp_jsonrpc_parse_other_has_id", out.has_id, 1);
+    check_int("mcp_jsonrpc_parse_other_id_kind", out.id_kind, CBM_RS_MCP_ID_OTHER);
+    check_str("mcp_jsonrpc_parse_other_jsonrpc_default", jsonrpc, "2.0");
+
+    const unsigned char notification[] =
+        "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}";
+    memset(&out, 0, sizeof(out));
+    check_int("mcp_jsonrpc_parse_notification_rc",
+              cbm_rs_mcp_jsonrpc_parse_v1(notification, (int)strlen((const char *)notification),
+                                          &out, jsonrpc, sizeof(jsonrpc), method, sizeof(method),
+                                          id_str, sizeof(id_str), params, sizeof(params)),
+              0);
+    check_int("mcp_jsonrpc_parse_notification_has_id", out.has_id, 0);
+    check_int("mcp_jsonrpc_parse_notification_id_kind", out.id_kind, CBM_RS_MCP_ID_NONE);
+    check_str("mcp_jsonrpc_parse_notification_method", method, "notifications/initialized");
+
+    const unsigned char duplicate_keys[] =
+        "{\"method\":\"ping\",\"method\":\"tools/list\",\"id\":1,\"id\":\"late\","
+        "\"params\":{\"a\":1},\"params\":{\"b\":2},\"jsonrpc\":3,\"jsonrpc\":\"late\"}";
+    memset(&out, 0, sizeof(out));
+    check_int("mcp_jsonrpc_parse_duplicate_rc",
+              cbm_rs_mcp_jsonrpc_parse_v1(duplicate_keys, (int)strlen((const char *)duplicate_keys),
+                                          &out, jsonrpc, sizeof(jsonrpc), method, sizeof(method),
+                                          id_str, sizeof(id_str), params, sizeof(params)),
+              0);
+    check_str("mcp_jsonrpc_parse_duplicate_jsonrpc", jsonrpc, "2.0");
+    check_str("mcp_jsonrpc_parse_duplicate_method", method, "ping");
+    check_i64("mcp_jsonrpc_parse_duplicate_id", out.id, 1);
+    check_int("mcp_jsonrpc_parse_duplicate_id_kind", out.id_kind, CBM_RS_MCP_ID_INT);
+    check_str("mcp_jsonrpc_parse_duplicate_params", params, "{\"a\":1}");
+
+    const unsigned char unicode[] =
+        "{\"jsonrpc\":\"2.0\",\"id\":\"\\u4e2d\",\"method\":\"p\\u0069ng\"}";
+    memset(&out, 0, sizeof(out));
+    check_int("mcp_jsonrpc_parse_unicode_rc",
+              cbm_rs_mcp_jsonrpc_parse_v1(unicode, (int)strlen((const char *)unicode), &out,
+                                          jsonrpc, sizeof(jsonrpc), method, sizeof(method), id_str,
+                                          sizeof(id_str), params, sizeof(params)),
+              0);
+    check_str("mcp_jsonrpc_parse_unicode_method", method, "ping");
+    check_str("mcp_jsonrpc_parse_unicode_id", id_str, "中");
+
+    const unsigned char invalid_utf8[] = "{\"jsonrpc\":\"2.0\",\"method\":\"bad\xff\"}";
+    check_int("mcp_jsonrpc_parse_invalid_utf8",
+              cbm_rs_mcp_jsonrpc_parse_v1(invalid_utf8, (int)strlen((const char *)invalid_utf8),
+                                          &out, NULL, 0, NULL, 0, NULL, 0, NULL, 0),
+              -1);
+
+    char short_method[3];
+    memset(&out, 0, sizeof(out));
+    check_int("mcp_jsonrpc_parse_short_rc",
+              cbm_rs_mcp_jsonrpc_parse_v1(int_id, (int)strlen((const char *)int_id), &out, jsonrpc,
+                                          sizeof(jsonrpc), short_method, sizeof(short_method), NULL,
+                                          0, NULL, 0),
+              0);
+    check_size("mcp_jsonrpc_parse_short_method_len", out.method_len, strlen("ping"));
+    check_str("mcp_jsonrpc_parse_short_method", short_method, "pi");
+
+    check_int("mcp_jsonrpc_parse_null_input",
+              cbm_rs_mcp_jsonrpc_parse_v1(NULL, 0, &out, NULL, 0, NULL, 0, NULL, 0, NULL, 0), -1);
+    check_int("mcp_jsonrpc_parse_negative_len",
+              cbm_rs_mcp_jsonrpc_parse_v1((const unsigned char *)"{}", -1, &out, NULL, 0, NULL, 0,
+                                          NULL, 0, NULL, 0),
+              -1);
+    check_int("mcp_jsonrpc_parse_null_out",
+              cbm_rs_mcp_jsonrpc_parse_v1(int_id, (int)strlen((const char *)int_id), NULL, NULL, 0,
+                                          NULL, 0, NULL, 0, NULL, 0),
+              -1);
+    const unsigned char missing_method[] = "{\"jsonrpc\":\"2.0\"}";
+    check_int("mcp_jsonrpc_parse_missing_method",
+              cbm_rs_mcp_jsonrpc_parse_v1(missing_method, (int)strlen((const char *)missing_method),
+                                          &out, NULL, 0, NULL, 0, NULL, 0, NULL, 0),
+              -1);
+}
+
 int main(void) {
+    test_mem_exports();
     test_dump_verify_exports();
+    test_arena_exports();
     test_intern_null_contracts();
     test_intern_dedup_and_pool_lifetime();
     test_intern_embedded_nul_and_empty_pools();
@@ -1803,9 +3677,23 @@ int main(void) {
     test_platform_cgroup_exports();
 #endif
     test_diagnostics_exports();
+    test_compat_exports();
+    test_log_profile_exports();
     test_hash_table_exports();
+    test_yaml_exports();
+    test_cypher_lexer_exports();
+    test_cypher_parse_summary_export();
+    test_mcp_jsonrpc_summary_export();
+    test_mcp_jsonrpc_parse_export();
+    test_pipeline_project_name_exports();
     test_pipeline_plan_exports();
     test_gbuf_mutation_metadata_exports();
+    test_store_camel_split_exports();
+    test_store_immutable_uri_exports();
+    test_store_search_pattern_exports();
+    test_store_arch_helper_exports();
+    test_store_mmap_resolver_exports();
+    test_store_schema_manifest_exports();
     test_registry_import_map_and_bare();
     test_registry_qualified_suffix();
     test_registry_suffix_candidate_selection();

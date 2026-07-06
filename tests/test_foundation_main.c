@@ -15,9 +15,12 @@ extern void suite_hash_table(void);
 extern void suite_dyn_array(void);
 extern void suite_str_intern(void);
 extern void suite_log(void);
+extern void suite_profile(void);
 extern void suite_diagnostics(void);
 extern void suite_str_util(void);
+extern void suite_compat(void);
 extern void suite_platform(void);
+extern void suite_yaml(void);
 extern void suite_dump_verify(void);
 
 int main(void) {
@@ -28,9 +31,12 @@ int main(void) {
     RUN_SUITE(dyn_array);
     RUN_SUITE(str_intern);
     RUN_SUITE(log);
+    RUN_SUITE(profile);
     RUN_SUITE(diagnostics);
     RUN_SUITE(str_util);
+    RUN_SUITE(compat);
     RUN_SUITE(platform);
+    RUN_SUITE(yaml);
     RUN_SUITE(dump_verify);
 
     TEST_SUMMARY();

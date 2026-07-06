@@ -35,5 +35,23 @@ make -f Makefile.cbm rust-pipeline-registry-optin-test
 echo "=== Rust pipeline plan opt-in ==="
 make -f Makefile.cbm rust-pipeline-plan-optin-test
 
+echo "=== Rust store FTS tokenizer opt-in ==="
+make -f Makefile.cbm rust-store-fts-tokenizer-optin-test
+
+echo "=== Rust store mmap resolver opt-in ==="
+make -f Makefile.cbm rust-store-mmap-resolver-optin-test
+
+echo "=== Rust store immutable URI opt-in ==="
+make -f Makefile.cbm rust-store-immutable-uri-optin-test
+
+echo "=== Rust store search pattern opt-in ==="
+make -f Makefile.cbm rust-store-search-pattern-optin-test
+
+echo "=== Rust store architecture helper opt-in ==="
+make -f Makefile.cbm rust-store-arch-helper-optin-test
+
+echo "=== Rust MCP codec opt-in ==="
+make -f Makefile.cbm rust-mcp-codec-optin-test
+
 echo "=== Rust language graph parity ==="
 make -f Makefile.cbm rust-language-graph-parity

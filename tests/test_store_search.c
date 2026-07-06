@@ -7,6 +7,7 @@
 #include "test_framework.h"
 #include "test_helpers.h"
 #include <store/store.h>
+#include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -1310,6 +1311,43 @@ TEST(store_extract_like_hints_escaped_chars) {
     PASS();
 }
 
+TEST(store_extract_like_hints_escaped_pipe_bails) {
+    char *hints[16];
+    int n = cbm_extract_like_hints("foo\\|bar", hints, 16);
+    ASSERT_EQ(n, 0);
+    PASS();
+}
+
+TEST(store_extract_like_hints_escaped_meta_mid_segment) {
+    char *hints[16];
+    int n = cbm_extract_like_hints("foo\\.bar", hints, 16);
+    ASSERT_EQ(n, 1);
+    ASSERT_STR_EQ(hints[0], "foo.bar");
+    free(hints[0]);
+
+    n = cbm_extract_like_hints("foo\\*bar\\?baz", hints, 16);
+    ASSERT_EQ(n, 1);
+    ASSERT_STR_EQ(hints[0], "foo*bar?baz");
+    free(hints[0]);
+    PASS();
+}
+
+TEST(store_extract_like_hints_long_literal_truncates) {
+    char *hints[16];
+    char pattern[301];
+    memset(pattern, 'a', sizeof(pattern) - 1);
+    pattern[sizeof(pattern) - 1] = '\0';
+
+    int n = cbm_extract_like_hints(pattern, hints, 16);
+    ASSERT_EQ(n, 1);
+    ASSERT_EQ(strlen(hints[0]), 255);
+    for (size_t i = 0; i < 255; i++) {
+        ASSERT_EQ(hints[0][i], 'a');
+    }
+    free(hints[0]);
+    PASS();
+}
+
 /* ── Case helper edge cases ────────────────────────────────────── */
 
 TEST(store_ensure_case_insensitive_null) {
@@ -1375,6 +1413,28 @@ TEST(store_qn_to_package_empty) {
     PASS();
 }
 
+TEST(store_qn_to_package_edge_segments) {
+    ASSERT_STR_EQ(cbm_qn_to_package("project.dir..Func"), "dir");
+
+    char segment_255[256];
+    memset(segment_255, 'a', sizeof(segment_255) - 1);
+    segment_255[sizeof(segment_255) - 1] = '\0';
+    char qn[320];
+    snprintf(qn, sizeof(qn), "project.dir.%s.Func", segment_255);
+    const char *got = cbm_qn_to_package(qn);
+    ASSERT_EQ(strlen(got), 255);
+    for (size_t i = 0; i < 255; i++) {
+        ASSERT_EQ(got[i], 'a');
+    }
+
+    char segment_256[257];
+    memset(segment_256, 'b', sizeof(segment_256) - 1);
+    segment_256[sizeof(segment_256) - 1] = '\0';
+    snprintf(qn, sizeof(qn), "project.dir.%s.Func", segment_256);
+    ASSERT_STR_EQ(cbm_qn_to_package(qn), "dir");
+    PASS();
+}
+
 TEST(store_qn_to_top_package_single_segment) {
     ASSERT_STR_EQ(cbm_qn_to_top_package("nodots"), "");
     PASS();
@@ -1397,6 +1457,26 @@ TEST(store_qn_to_top_package_null) {
     PASS();
 }
 
+TEST(store_qn_to_top_package_edge_segments) {
+    char segment_255[256];
+    memset(segment_255, 'a', sizeof(segment_255) - 1);
+    segment_255[sizeof(segment_255) - 1] = '\0';
+    char qn[320];
+    snprintf(qn, sizeof(qn), "project.%s.Func", segment_255);
+    const char *got = cbm_qn_to_top_package(qn);
+    ASSERT_EQ(strlen(got), 255);
+    for (size_t i = 0; i < 255; i++) {
+        ASSERT_EQ(got[i], 'a');
+    }
+
+    char segment_256[257];
+    memset(segment_256, 'b', sizeof(segment_256) - 1);
+    segment_256[sizeof(segment_256) - 1] = '\0';
+    snprintf(qn, sizeof(qn), "project.%s.Func", segment_256);
+    ASSERT_STR_EQ(cbm_qn_to_top_package(qn), "");
+    PASS();
+}
+
 TEST(store_is_test_file_various) {
     /* Positive cases */
     ASSERT_TRUE(cbm_is_test_file_path("test_handler.py"));
@@ -1405,11 +1485,14 @@ TEST(store_is_test_file_various) {
     ASSERT_FALSE(cbm_is_test_file_path("handler.spec.ts")); /* "spec" not "test" — no match */
     ASSERT_TRUE(cbm_is_test_file_path("src/__tests__/handler.js"));
     ASSERT_TRUE(cbm_is_test_file_path("tests/unit/handler.py"));
+    ASSERT_TRUE(cbm_is_test_file_path("testdata/fixture.json"));
+    ASSERT_TRUE(cbm_is_test_file_path("contest/file.c"));
 
     /* Negative cases */
     ASSERT_FALSE(cbm_is_test_file_path("handler.go"));
     ASSERT_FALSE(cbm_is_test_file_path("main.py"));
     ASSERT_FALSE(cbm_is_test_file_path("service.ts"));
+    ASSERT_FALSE(cbm_is_test_file_path("TestOnly.java"));
 
     /* Edge: NULL and empty */
     ASSERT_FALSE(cbm_is_test_file_path(NULL));
@@ -1506,6 +1589,9 @@ SUITE(store_search) {
     RUN_TEST(store_extract_like_hints_complex_multi_segment);
     RUN_TEST(store_extract_like_hints_max_out_limit);
     RUN_TEST(store_extract_like_hints_escaped_chars);
+    RUN_TEST(store_extract_like_hints_escaped_pipe_bails);
+    RUN_TEST(store_extract_like_hints_escaped_meta_mid_segment);
+    RUN_TEST(store_extract_like_hints_long_literal_truncates);
     RUN_TEST(store_ensure_case_insensitive_null);
     RUN_TEST(store_ensure_case_insensitive_already_ci);
     RUN_TEST(store_ensure_case_insensitive_plain);
@@ -1517,10 +1603,12 @@ SUITE(store_search) {
     RUN_TEST(store_qn_to_package_many_segments);
     RUN_TEST(store_qn_to_package_null);
     RUN_TEST(store_qn_to_package_empty);
+    RUN_TEST(store_qn_to_package_edge_segments);
     RUN_TEST(store_qn_to_top_package_single_segment);
     RUN_TEST(store_qn_to_top_package_two_segments);
     RUN_TEST(store_qn_to_top_package_many_segments);
     RUN_TEST(store_qn_to_top_package_null);
+    RUN_TEST(store_qn_to_top_package_edge_segments);
     RUN_TEST(store_is_test_file_various);
     RUN_TEST(store_hop_to_risk_all_levels);
     RUN_TEST(store_risk_label_all_levels);

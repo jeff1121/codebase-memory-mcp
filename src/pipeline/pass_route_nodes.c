@@ -212,7 +212,7 @@ static void route_edge_visitor(const cbm_gbuf_edge_t *edge, void *userdata) {
     }
 
     /* Create or find Route node (deduped by QN) */
-    cbm_gbuf_upsert_node(ctx->gb, "Route", url, route_qn, "", 0, 0, route_props);
+    cbm_gbuf_apply_upsert_node(ctx->gb, "Route", url, route_qn, "", 0, 0, route_props);
     ctx->created++;
 
     /* Note: we do NOT re-target the edge here because modifying edges during
@@ -358,8 +358,8 @@ static int match_one_infra_route(cbm_gbuf_t *gb, const cbm_gbuf_node_t *infra,
             cbm_gbuf_find_edges_by_target_type(gb, handler_route->id, "HANDLES", &fn_handles,
                                                &fn_hcount);
             for (int fh = 0; fh < fn_hcount; fh++) {
-                cbm_gbuf_insert_edge(gb, fn_handles[fh]->source_id, infra->id, "HANDLES",
-                                     "{\"source\":\"infra_match\"}");
+                cbm_gbuf_apply_insert_edge(gb, fn_handles[fh]->source_id, infra->id, "HANDLES",
+                                           "{\"source\":\"infra_match\"}");
             }
             return SKIP_ONE;
         }
@@ -458,8 +458,8 @@ static int ensure_one_decorator_route(cbm_gbuf_t *gb, const cbm_gbuf_node_t *fun
 
     char rprops[CBM_SZ_256];
     snprintf(rprops, sizeof(rprops), "{\"method\":\"%s\",\"source\":\"decorator\"}", method);
-    int64_t route_id = cbm_gbuf_upsert_node(gb, "Route", path, route_qn,
-                                            func->file_path ? func->file_path : "", 0, 0, rprops);
+    int64_t route_id = cbm_gbuf_apply_upsert_node(
+        gb, "Route", path, route_qn, func->file_path ? func->file_path : "", 0, 0, rprops);
 
     if (existing) {
         const cbm_gbuf_edge_t **existing_handles = NULL;
@@ -475,7 +475,7 @@ static int ensure_one_decorator_route(cbm_gbuf_t *gb, const cbm_gbuf_node_t *fun
     char hprops[CBM_SZ_512];
     snprintf(hprops, sizeof(hprops), "{\"handler\":\"%s\"}",
              func->qualified_name ? func->qualified_name : "");
-    cbm_gbuf_insert_edge(gb, func->id, route_id, "HANDLES", hprops);
+    cbm_gbuf_apply_insert_edge(gb, func->id, route_id, "HANDLES", hprops);
     return SKIP_ONE;
 }
 
@@ -530,8 +530,8 @@ static int bridge_funcs_to_prefix(cbm_gbuf_t *gb, const cbm_gbuf_node_t *prefix_
         if (prefix_segs && prefix_segs[0] && !strstr(func->file_path, prefix_segs)) {
             continue;
         }
-        cbm_gbuf_insert_edge(gb, func->id, prefix_route->id, "HANDLES",
-                             "{\"source\":\"prefix_decorator_bridge\"}");
+        cbm_gbuf_apply_insert_edge(gb, func->id, prefix_route->id, "HANDLES",
+                                   "{\"source\":\"prefix_decorator_bridge\"}");
         connected++;
     }
     return connected;
@@ -735,7 +735,7 @@ static int try_create_data_flow(cbm_gbuf_t *gb, int64_t caller_id, int64_t handl
             yyjson_doc_free(vdoc);
         }
     }
-    cbm_gbuf_insert_edge(gb, caller_id, handler_id, "DATA_FLOWS", props);
+    cbm_gbuf_apply_insert_edge(gb, caller_id, handler_id, "DATA_FLOWS", props);
     return SKIP_ONE;
 }
 
@@ -875,9 +875,9 @@ static void create_grpc_routes(cbm_gbuf_t *gb) {
         char props[CBM_SZ_128];
         snprintf(props, sizeof(props), "{\"source\":\"proto\",\"service\":\"%s\"}", svc->name);
 
-        int64_t route_id = cbm_gbuf_upsert_node(gb, "Route", fn->name, route_qn, fn->file_path,
-                                                fn->start_line, fn->end_line, props);
-        cbm_gbuf_insert_edge(gb, fn->id, route_id, "HANDLES", "{\"via\":\"proto_rpc\"}");
+        int64_t route_id = cbm_gbuf_apply_upsert_node(
+            gb, "Route", fn->name, route_qn, fn->file_path, fn->start_line, fn->end_line, props);
+        cbm_gbuf_apply_insert_edge(gb, fn->id, route_id, "HANDLES", "{\"via\":\"proto_rpc\"}");
         grpc_routes++;
     }
     if (grpc_routes > 0) {
@@ -1155,8 +1155,8 @@ static void sveltekit_file_visitor(const cbm_gbuf_node_t *node, void *userdata) 
         char route_props[CBM_SZ_256];
         snprintf(route_props, sizeof(route_props),
                  "{\"method\":\"%s\",\"framework\":\"sveltekit\"}", method);
-        int64_t route_id =
-            cbm_gbuf_upsert_node(ctx->gb, "Route", route_path, route_qn, "", 0, 0, route_props);
+        int64_t route_id = cbm_gbuf_apply_upsert_node(ctx->gb, "Route", route_path, route_qn, "", 0,
+                                                      0, route_props);
         if (route_id == 0) {
             continue;
         }
@@ -1166,7 +1166,7 @@ static void sveltekit_file_visitor(const cbm_gbuf_node_t *node, void *userdata) 
         snprintf(hprops, sizeof(hprops), "{\"handler\":\"%s\",\"framework\":\"sveltekit\"%s}",
                  child->qualified_name ? child->qualified_name : child->name,
                  is_actions ? ",\"via\":\"actions_object\"" : "");
-        cbm_gbuf_insert_edge(ctx->gb, child->id, route_id, "HANDLES", hprops);
+        cbm_gbuf_apply_insert_edge(ctx->gb, child->id, route_id, "HANDLES", hprops);
         ctx->handles_created++;
     }
 }

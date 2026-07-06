@@ -1,8 +1,8 @@
-# Reusable: Rust refactor gates (lint + unit/FFI + opt-in parity matrices).
-# The C product build stays default; these gates protect the opt-in Rust
-# parity modules (foundation + pipeline registry/plan) and the language-graph
-# parity between the default C path and the Rust pipeline opt-in path.
-# Rust dependency audit + dangerous-API allow-list live in _security.yml.
+# 可重用 Rust 重構 gate：lint、unit/FFI 與 opt-in parity matrix。
+# 預設產品 build 仍走 C；此 gate 保護 foundation、pipeline registry/plan、
+# Store FTS tokenizer/mmap resolver/immutable URI/search pattern/arch helper、MCP codec 等
+# Rust opt-in，以及 default C path 與 Rust pipeline opt-in 的 language-graph parity。
+# Rust dependency audit 與 dangerous-API allow-list 位於 _security.yml。
 name: Rust
 
 on:

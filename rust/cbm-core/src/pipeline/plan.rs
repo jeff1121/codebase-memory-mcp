@@ -162,6 +162,11 @@ pub const PLAN_STEP_GATE_SKIP_FAST: u32 = 1 << 0;
 pub const PLAN_STEP_GATE_REQUIRES_RESULT_CACHE: u32 = 1 << 1;
 pub const PLAN_STEP_GATE_NO_CROSS_LSP_PREBUILD: u32 = 1 << 2;
 pub const PLAN_STEP_EFFECT_MUTATES_GRAPH: u32 = 1 << 0;
+pub const PLAN_TOP_GATE_SKIP_FAST: u32 = 1 << 0;
+pub const PLAN_TOP_GATE_MAY_SHORT_CIRCUIT: u32 = 1 << 1;
+pub const PLAN_TOP_EFFECT_MUTATES_GRAPH: u32 = 1 << 0;
+pub const PLAN_TOP_EFFECT_WRITES_STORE_OR_ARTIFACT: u32 = 1 << 1;
+pub const PLAN_TOP_NO_NESTED_PLAN: i32 = -1;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PlanStepV2 {
@@ -171,6 +176,57 @@ pub struct PlanStepV2 {
     pub gate_flags: u32,
     pub requires_mask: u64,
     pub effect_flags: u32,
+}
+
+#[repr(i32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TopStepKind {
+    MacroExtraction = 1,
+    UserconfigLoad = 2,
+    Discover = 3,
+    TryIncrementalOrDeleteDb = 4,
+    Structure = 5,
+    ExtractionDispatch = 6,
+    Tests = 7,
+    Githistory = 8,
+    Predump = 9,
+    Dump = 10,
+    PersistHashes = 11,
+    ArtifactExport = 12,
+}
+
+impl TopStepKind {
+    fn bit(self) -> u64 {
+        1u64 << ((self as u32) - 1)
+    }
+}
+
+#[repr(i32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TopStepPhase {
+    FullPipeline = 5,
+}
+
+#[repr(i32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TopStepPolicy {
+    Required = 0,
+    BestEffort = 2,
+    FullModeOnly = 5,
+    FailOpen = 6,
+    ExistingDbOnly = 7,
+    OptionalPersistence = 8,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TopLevelPlanStep {
+    pub kind: TopStepKind,
+    pub phase: TopStepPhase,
+    pub policy: TopStepPolicy,
+    pub gate_flags: u32,
+    pub requires_mask: u64,
+    pub effect_flags: u32,
+    pub nested_plan_kind: i32,
 }
 
 impl PlanStep {
@@ -485,6 +541,112 @@ fn predump_steps_v2(mode: i32) -> Vec<PlanStepV2> {
     steps
 }
 
+pub fn full_pipeline_top_steps(
+    mode: i32,
+    worker_count: i32,
+    file_count: i32,
+) -> Vec<TopLevelPlanStep> {
+    use TopStepKind::*;
+    use TopStepPolicy::*;
+
+    let extraction_plan = if extraction_choice(worker_count, file_count) == "parallel" {
+        PlanKind::ParallelExtraction as i32
+    } else {
+        PlanKind::Sequential as i32
+    };
+
+    let mut specs = vec![
+        (MacroExtraction, FullModeOnly, 0, 0, PLAN_TOP_NO_NESTED_PLAN),
+        (UserconfigLoad, FailOpen, 0, 0, PLAN_TOP_NO_NESTED_PLAN),
+        (Discover, Required, 0, 0, PLAN_TOP_NO_NESTED_PLAN),
+        (
+            TryIncrementalOrDeleteDb,
+            ExistingDbOnly,
+            PLAN_TOP_GATE_MAY_SHORT_CIRCUIT,
+            PLAN_TOP_EFFECT_WRITES_STORE_OR_ARTIFACT,
+            PLAN_TOP_NO_NESTED_PLAN,
+        ),
+        (
+            Structure,
+            Required,
+            0,
+            PLAN_TOP_EFFECT_MUTATES_GRAPH,
+            PLAN_TOP_NO_NESTED_PLAN,
+        ),
+        (
+            ExtractionDispatch,
+            Required,
+            0,
+            PLAN_TOP_EFFECT_MUTATES_GRAPH,
+            extraction_plan,
+        ),
+        (
+            Tests,
+            Required,
+            0,
+            PLAN_TOP_EFFECT_MUTATES_GRAPH,
+            PLAN_TOP_NO_NESTED_PLAN,
+        ),
+    ];
+
+    if mode != MODE_FAST {
+        specs.push((
+            Githistory,
+            Required,
+            PLAN_TOP_GATE_SKIP_FAST,
+            PLAN_TOP_EFFECT_MUTATES_GRAPH,
+            PLAN_TOP_NO_NESTED_PLAN,
+        ));
+    }
+
+    specs.extend([
+        (
+            Predump,
+            Required,
+            0,
+            PLAN_TOP_EFFECT_MUTATES_GRAPH,
+            PlanKind::Predump as i32,
+        ),
+        (
+            Dump,
+            Required,
+            0,
+            PLAN_TOP_EFFECT_WRITES_STORE_OR_ARTIFACT,
+            PLAN_TOP_NO_NESTED_PLAN,
+        ),
+        (
+            PersistHashes,
+            BestEffort,
+            0,
+            PLAN_TOP_EFFECT_WRITES_STORE_OR_ARTIFACT,
+            PLAN_TOP_NO_NESTED_PLAN,
+        ),
+        (
+            ArtifactExport,
+            OptionalPersistence,
+            0,
+            PLAN_TOP_EFFECT_WRITES_STORE_OR_ARTIFACT,
+            PLAN_TOP_NO_NESTED_PLAN,
+        ),
+    ]);
+
+    let mut seen = 0u64;
+    let mut steps = Vec::with_capacity(specs.len());
+    for (kind, policy, gate_flags, effect_flags, nested_plan_kind) in specs {
+        steps.push(TopLevelPlanStep {
+            kind,
+            phase: TopStepPhase::FullPipeline,
+            policy,
+            gate_flags,
+            requires_mask: seen,
+            effect_flags,
+            nested_plan_kind,
+        });
+        seen |= kind.bit();
+    }
+    steps
+}
+
 fn full_pipeline_plan(mode: i32, worker_count: i32, file_count: i32) -> String {
     let mut passes = vec![
         "macro_extraction:full_mode_only".to_owned(),
@@ -655,6 +817,87 @@ mod tests {
                 | ParallelInfraBindings.bit()
         );
         assert_eq!(steps[6].effect_flags, PLAN_STEP_EFFECT_MUTATES_GRAPH);
+    }
+
+    #[test]
+    fn full_pipeline_top_level_metadata_captures_outer_orchestration() {
+        use TopStepKind::*;
+        use TopStepPhase::FullPipeline;
+        use TopStepPolicy::*;
+
+        let full = full_pipeline_top_steps(MODE_MODERATE, 2, 51);
+        assert_eq!(full.len(), 12);
+        assert_eq!(full[0].kind, MacroExtraction);
+        assert_eq!(full[0].phase, FullPipeline);
+        assert_eq!(full[0].policy, FullModeOnly);
+        assert_eq!(full[0].nested_plan_kind, PLAN_TOP_NO_NESTED_PLAN);
+        assert_eq!(full[1].kind, UserconfigLoad);
+        assert_eq!(full[1].policy, FailOpen);
+        assert_eq!(full[3].kind, TryIncrementalOrDeleteDb);
+        assert_eq!(full[3].policy, ExistingDbOnly);
+        assert_eq!(full[3].gate_flags, PLAN_TOP_GATE_MAY_SHORT_CIRCUIT);
+        assert_eq!(
+            full[3].effect_flags,
+            PLAN_TOP_EFFECT_WRITES_STORE_OR_ARTIFACT
+        );
+        assert_eq!(full[5].kind, ExtractionDispatch);
+        assert_eq!(
+            full[5].requires_mask,
+            MacroExtraction.bit()
+                | UserconfigLoad.bit()
+                | Discover.bit()
+                | TryIncrementalOrDeleteDb.bit()
+                | Structure.bit()
+        );
+        assert_eq!(full[5].effect_flags, PLAN_TOP_EFFECT_MUTATES_GRAPH);
+        assert_eq!(
+            full[5].nested_plan_kind,
+            PlanKind::ParallelExtraction as i32
+        );
+        assert_eq!(full[7].kind, Githistory);
+        assert_eq!(full[7].gate_flags, PLAN_TOP_GATE_SKIP_FAST);
+        assert_eq!(full[8].kind, Predump);
+        assert_eq!(full[8].nested_plan_kind, PlanKind::Predump as i32);
+        assert_eq!(
+            full[8].requires_mask,
+            MacroExtraction.bit()
+                | UserconfigLoad.bit()
+                | Discover.bit()
+                | TryIncrementalOrDeleteDb.bit()
+                | Structure.bit()
+                | ExtractionDispatch.bit()
+                | Tests.bit()
+                | Githistory.bit()
+        );
+        assert_eq!(full[9].kind, Dump);
+        assert_eq!(
+            full[9].effect_flags,
+            PLAN_TOP_EFFECT_WRITES_STORE_OR_ARTIFACT
+        );
+        assert_eq!(full[10].kind, PersistHashes);
+        assert_eq!(full[10].policy, BestEffort);
+        assert_eq!(full[11].kind, ArtifactExport);
+        assert_eq!(full[11].policy, OptionalPersistence);
+
+        let fast = full_pipeline_top_steps(MODE_FAST, 2, 51);
+        assert_eq!(fast.len(), 11);
+        assert!(!fast.iter().any(|step| step.kind == Githistory));
+        assert_eq!(fast[7].kind, Predump);
+        assert_eq!(
+            fast[7].requires_mask,
+            MacroExtraction.bit()
+                | UserconfigLoad.bit()
+                | Discover.bit()
+                | TryIncrementalOrDeleteDb.bit()
+                | Structure.bit()
+                | ExtractionDispatch.bit()
+                | Tests.bit()
+        );
+
+        let sequential = full_pipeline_top_steps(MODE_MODERATE, 1, 99);
+        assert_eq!(sequential[5].kind, ExtractionDispatch);
+        assert_eq!(sequential[5].nested_plan_kind, PlanKind::Sequential as i32);
+        assert!(steps_v2(PlanKind::FullPipeline, MODE_MODERATE, 2, 51).is_none());
     }
 
     #[test]

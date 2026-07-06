@@ -53,9 +53,14 @@ jobs:
       skip_perf: ${{ inputs.skip_perf }}
       broad_platforms: true
 
+  # ── 2b. Rust refactor gates (opt-in parity + static checks) ─────
+  rust:
+    needs: [lint]
+    uses: ./.github/workflows/_rust.yml
+
   # ── 3. Build all platforms ──────────────────────────────────────
   build:
-    needs: [test]
+    needs: [test, rust]
     uses: ./.github/workflows/_build.yml
     with:
       version: ${{ inputs.version }}

@@ -106,6 +106,33 @@ TEST(cypher_contract_parser_ast_shape) {
     PASS();
 }
 
+TEST(cypher_contract_parser_hop_range_shorthand) {
+    struct {
+        const char *query;
+        int min_hops;
+        int max_hops;
+    } cases[] = {
+        {"MATCH (a:Function)-[:CALLS*2]->(b:Function) RETURN b.name", 1, 2},
+        {"MATCH (a:Function)-[:CALLS*]->(b:Function) RETURN b.name", 1, 0},
+        {"MATCH (a:Function)-[:CALLS*..3]->(b:Function) RETURN b.name", 1, 3},
+    };
+
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        cbm_query_t *q = NULL;
+        char *err = NULL;
+        int rc = cbm_cypher_parse(cases[i].query, &q, &err);
+        ASSERT_EQ(rc, 0);
+        ASSERT_NULL(err);
+        ASSERT_NOT_NULL(q);
+        cbm_pattern_t pat = cbm_query_pattern(q);
+        ASSERT_EQ(pat.rel_count, 1);
+        ASSERT_EQ(pat.rels[0].min_hops, cases[i].min_hops);
+        ASSERT_EQ(pat.rels[0].max_hops, cases[i].max_hops);
+        cbm_query_free(q);
+    }
+    PASS();
+}
+
 TEST(cypher_contract_optional_match_ast_shape) {
     cbm_query_t *q = NULL;
     char *err = NULL;
@@ -274,6 +301,133 @@ TEST(cypher_contract_bare_edge_returns_properties_json) {
     PASS();
 }
 
+TEST(cypher_contract_exists_predicate_ast_shape) {
+    cbm_query_t *q = NULL;
+    char *err = NULL;
+    int rc = cbm_cypher_parse(
+        "MATCH (f:Function) WHERE NOT EXISTS { (f)<-[:CALLS]-() } RETURN f.name", &q, &err);
+    ASSERT_EQ(rc, 0);
+    ASSERT_NULL(err);
+    ASSERT_NOT_NULL(q);
+
+    ASSERT_NOT_NULL(q->where);
+    ASSERT_NOT_NULL(q->where->root);
+    ASSERT_EQ(q->where->root->type, EXPR_NOT);
+    ASSERT_NOT_NULL(q->where->root->left);
+    ASSERT_NULL(q->where->root->right);
+    ASSERT_EQ(q->where->root->left->type, EXPR_CONDITION);
+    ASSERT_STR_EQ(q->where->root->left->cond.variable, "f");
+    ASSERT_NULL(q->where->root->left->cond.property);
+    ASSERT_STR_EQ(q->where->root->left->cond.op, "EXISTS");
+    ASSERT_STR_EQ(q->where->root->left->cond.value, "CALLS");
+    ASSERT_FALSE(q->where->root->left->cond.negated);
+    ASSERT_EQ(q->where->root->left->cond.exists_dir, 1);
+
+    cbm_query_free(q);
+    PASS();
+}
+
+TEST(cypher_contract_exists_predicate_filters_by_direction_and_type) {
+    cbm_store_t *s = setup_cypher_contract_store();
+    ASSERT_NOT_NULL(s);
+    cbm_cypher_result_t r = {0};
+
+    int rc = cbm_cypher_execute(s,
+                                "MATCH (f:Function) "
+                                "WHERE EXISTS { (f)-[:CALLS]->() } "
+                                "RETURN f.name ORDER BY f.name ASC",
+                                "contract", 0, &r);
+    ASSERT_EQ(rc, 0);
+    ASSERT_NULL(r.error);
+    ASSERT_EQ(r.row_count, 1);
+    ASSERT_STR_EQ(r.rows[0][0], "Alpha");
+    cbm_cypher_result_free(&r);
+
+    memset(&r, 0, sizeof(r));
+    rc = cbm_cypher_execute(s,
+                            "MATCH (f:Function) "
+                            "WHERE NOT EXISTS { (f)<-[:CALLS]-() } "
+                            "RETURN f.name ORDER BY f.name ASC",
+                            "contract", 0, &r);
+    ASSERT_EQ(rc, 0);
+    ASSERT_NULL(r.error);
+    ASSERT_EQ(r.row_count, 1);
+    ASSERT_STR_EQ(r.rows[0][0], "Alpha");
+
+    cbm_cypher_result_free(&r);
+    cbm_store_close(s);
+    PASS();
+}
+
+TEST(cypher_contract_exists_predicate_any_direction_filters) {
+    cbm_store_t *s = setup_cypher_contract_store();
+    ASSERT_NOT_NULL(s);
+    cbm_cypher_result_t r = {0};
+
+    int rc = cbm_cypher_execute(s,
+                                "MATCH (f:Function) "
+                                "WHERE EXISTS { (f)-[:CALLS]-() } "
+                                "RETURN f.name ORDER BY f.name ASC",
+                                "contract", 0, &r);
+    ASSERT_EQ(rc, 0);
+    ASSERT_NULL(r.error);
+    ASSERT_EQ(r.row_count, 3);
+    ASSERT_STR_EQ(r.rows[0][0], "Alpha");
+    ASSERT_STR_EQ(r.rows[1][0], "Beta");
+    ASSERT_STR_EQ(r.rows[2][0], "Gamma");
+
+    cbm_cypher_result_free(&r);
+    cbm_store_close(s);
+    PASS();
+}
+
+TEST(cypher_contract_aggregation_count_distinct) {
+    cbm_store_t *s = setup_cypher_contract_store();
+    ASSERT_NOT_NULL(s);
+    cbm_cypher_result_t r = {0};
+
+    int rc = cbm_cypher_execute(
+        s,
+        "MATCH (f:Function) "
+        "RETURN COUNT(f.name) AS funcs, COUNT(DISTINCT f.label) AS labels",
+        "contract", 0, &r);
+    ASSERT_EQ(rc, 0);
+    ASSERT_NULL(r.error);
+    ASSERT_EQ(r.col_count, 2);
+    ASSERT_EQ(r.row_count, 1);
+    ASSERT_STR_EQ(contract_col(&r, 0, "funcs"), "3");
+    ASSERT_STR_EQ(contract_col(&r, 0, "labels"), "1");
+
+    cbm_cypher_result_free(&r);
+    cbm_store_close(s);
+    PASS();
+}
+
+TEST(cypher_contract_aggregation_edge_properties_numeric) {
+    cbm_store_t *s = setup_cypher_contract_store();
+    ASSERT_NOT_NULL(s);
+    cbm_cypher_result_t r = {0};
+
+    int rc = cbm_cypher_execute(s,
+                                "MATCH ()-[r:CALLS]->() "
+                                "RETURN SUM(r.confidence) AS sum_conf, "
+                                "AVG(r.confidence) AS avg_conf, MIN(r.confidence) AS min_conf, "
+                                "MAX(r.confidence) AS max_conf",
+                                "contract", 0, &r);
+    ASSERT_EQ(rc, 0);
+    ASSERT_NULL(r.error);
+    ASSERT_EQ(r.col_count, 4);
+    ASSERT_EQ(r.row_count, 1);
+    ASSERT_STR_EQ(contract_col(&r, 0, "sum_conf"), "1.7");
+    ASSERT_STR_EQ(contract_col(&r, 0, "avg_conf"), "0.85");
+    ASSERT_STR_EQ(contract_col(&r, 0, "min_conf"), "0.75");
+    ASSERT_STR_EQ(contract_col(&r, 0, "max_conf"), "0.95");
+
+    cbm_cypher_result_free(&r);
+    cbm_store_close(s);
+    PASS();
+}
+
 TEST(cypher_contract_with_post_where_ast_shape) {
     cbm_query_t *q = NULL;
     char *err = NULL;
@@ -358,6 +512,32 @@ TEST(cypher_contract_exact_create_error) {
     PASS();
 }
 
+TEST(cypher_contract_exact_call_error) {
+    cbm_query_t *q = NULL;
+    char *err = NULL;
+    int rc = cbm_cypher_parse("CALL db.labels()", &q, &err);
+    ASSERT_NEQ(rc, 0);
+    ASSERT_NULL(q);
+    ASSERT_NOT_NULL(err);
+    ASSERT_STR_EQ(err, "unsupported Cypher feature: CALL clause (stored procedures not supported)");
+
+    free(err);
+    PASS();
+}
+
+TEST(cypher_contract_exact_exists_brace_error) {
+    cbm_query_t *q = NULL;
+    char *err = NULL;
+    int rc = cbm_cypher_parse("MATCH (f:Function) WHERE EXISTS (f) RETURN f.name", &q, &err);
+    ASSERT_NEQ(rc, 0);
+    ASSERT_NULL(q);
+    ASSERT_NOT_NULL(err);
+    ASSERT_STR_EQ(err, "expected '{' after EXISTS at pos 32");
+
+    free(err);
+    PASS();
+}
+
 TEST(cypher_contract_exact_list_indexing_error) {
     cbm_query_t *q = NULL;
     char *err = NULL;
@@ -373,6 +553,7 @@ TEST(cypher_contract_exact_list_indexing_error) {
 
 SUITE(cypher_contract) {
     RUN_TEST(cypher_contract_parser_ast_shape);
+    RUN_TEST(cypher_contract_parser_hop_range_shorthand);
     RUN_TEST(cypher_contract_optional_match_ast_shape);
     RUN_TEST(cypher_contract_union_ast_shape);
     RUN_TEST(cypher_contract_ordered_rows);
@@ -380,9 +561,16 @@ SUITE(cypher_contract) {
     RUN_TEST(cypher_contract_union_dedupes_and_union_all_keeps_duplicates);
     RUN_TEST(cypher_contract_edge_properties_are_projected_and_filtered);
     RUN_TEST(cypher_contract_bare_edge_returns_properties_json);
+    RUN_TEST(cypher_contract_exists_predicate_ast_shape);
+    RUN_TEST(cypher_contract_exists_predicate_filters_by_direction_and_type);
+    RUN_TEST(cypher_contract_exists_predicate_any_direction_filters);
+    RUN_TEST(cypher_contract_aggregation_count_distinct);
+    RUN_TEST(cypher_contract_aggregation_edge_properties_numeric);
     RUN_TEST(cypher_contract_with_post_where_ast_shape);
     RUN_TEST(cypher_contract_limit_zero_keeps_columns);
     RUN_TEST(cypher_contract_exact_unknown_function_error);
     RUN_TEST(cypher_contract_exact_create_error);
+    RUN_TEST(cypher_contract_exact_call_error);
+    RUN_TEST(cypher_contract_exact_exists_brace_error);
     RUN_TEST(cypher_contract_exact_list_indexing_error);
 }

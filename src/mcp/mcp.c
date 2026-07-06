@@ -76,6 +76,7 @@ enum {
 #include <sys/stat.h>
 #include <time.h>
 #include <errno.h>
+#include <limits.h>
 
 /* ── Constants ────────────────────────────────────────────────── */
 
@@ -107,6 +108,20 @@ static char *heap_strdup(const char *s) {
     return d;
 }
 
+#ifdef CBM_USE_RUST_MCP_CODEC
+static char *heap_dup_nul(const char *s, size_t len) {
+    char *d = malloc(len + SKIP_ONE);
+    if (!d) {
+        return NULL;
+    }
+    if (len > 0 && s) {
+        memcpy(d, s, len);
+    }
+    d[len] = '\0';
+    return d;
+}
+#endif
+
 /* Write yyjson_mut_doc to heap-allocated JSON string.
  * ALLOW_INVALID_UNICODE: some database strings may contain non-UTF-8 bytes
  * from older indexing runs — don't fail serialization over it. */
@@ -120,10 +135,99 @@ static char *yy_doc_to_str(yyjson_mut_doc *doc) {
  *  JSON-RPC PARSING
  * ══════════════════════════════════════════════════════════════════ */
 
+#ifdef CBM_USE_RUST_MCP_CODEC
+enum {
+    CBM_RS_MCP_ID_NONE = 0,
+    CBM_RS_MCP_ID_INT = 1,
+    CBM_RS_MCP_ID_STRING = 2,
+    CBM_RS_MCP_ID_OTHER = 3,
+};
+
+typedef struct {
+    int64_t id;
+    int has_id;
+    int id_kind;
+    int has_params;
+    size_t jsonrpc_len;
+    size_t method_len;
+    size_t id_str_len;
+    size_t params_len;
+} CbmRsMcpJsonRpcParseOutV1;
+
+extern int cbm_rs_mcp_jsonrpc_parse_v1(const unsigned char *input, int len,
+                                       CbmRsMcpJsonRpcParseOutV1 *out, char *jsonrpc_buf,
+                                       size_t jsonrpc_bufsize, char *method_buf,
+                                       size_t method_bufsize, char *id_str_buf,
+                                       size_t id_str_bufsize, char *params_buf,
+                                       size_t params_bufsize);
+#endif
+
 int cbm_jsonrpc_parse(const char *line, cbm_jsonrpc_request_t *out) {
     memset(out, 0, sizeof(*out));
     out->id = CBM_NOT_FOUND;
 
+#ifdef CBM_USE_RUST_MCP_CODEC
+    size_t line_len = strlen(line);
+    if (line_len > (size_t)INT_MAX) {
+        return CBM_NOT_FOUND;
+    }
+
+    CbmRsMcpJsonRpcParseOutV1 parsed = {0};
+    if (cbm_rs_mcp_jsonrpc_parse_v1((const unsigned char *)line, (int)line_len, &parsed, NULL, 0,
+                                    NULL, 0, NULL, 0, NULL, 0) != 0) {
+        return CBM_NOT_FOUND;
+    }
+
+    char *jsonrpc = heap_dup_nul(NULL, parsed.jsonrpc_len);
+    char *method = heap_dup_nul(NULL, parsed.method_len);
+    char *id_str = NULL;
+    char *params = NULL;
+    if (!jsonrpc || !method) {
+        free(jsonrpc);
+        free(method);
+        return CBM_NOT_FOUND;
+    }
+    if (parsed.id_kind == CBM_RS_MCP_ID_STRING) {
+        id_str = heap_dup_nul(NULL, parsed.id_str_len);
+        if (!id_str) {
+            free(jsonrpc);
+            free(method);
+            return CBM_NOT_FOUND;
+        }
+    }
+    if (parsed.has_params) {
+        params = heap_dup_nul(NULL, parsed.params_len);
+        if (!params) {
+            free(jsonrpc);
+            free(method);
+            free(id_str);
+            return CBM_NOT_FOUND;
+        }
+    }
+
+    CbmRsMcpJsonRpcParseOutV1 written = {0};
+    if (cbm_rs_mcp_jsonrpc_parse_v1(
+            (const unsigned char *)line, (int)line_len, &written, jsonrpc,
+            parsed.jsonrpc_len + SKIP_ONE, method, parsed.method_len + SKIP_ONE, id_str,
+            parsed.id_str_len + SKIP_ONE, params, parsed.params_len + SKIP_ONE) != 0) {
+        free(jsonrpc);
+        free(method);
+        free(id_str);
+        free(params);
+        return CBM_NOT_FOUND;
+    }
+
+    out->jsonrpc = jsonrpc;
+    out->method = method;
+    out->has_id = written.has_id != 0;
+    out->id = written.id;
+    out->id_str = id_str;
+    out->params_raw = params;
+    (void)CBM_RS_MCP_ID_NONE;
+    (void)CBM_RS_MCP_ID_INT;
+    (void)CBM_RS_MCP_ID_OTHER;
+    return 0;
+#else
     yyjson_doc *doc = yyjson_read(line, strlen(line), 0);
     if (!doc) {
         return CBM_NOT_FOUND;
@@ -166,6 +270,7 @@ int cbm_jsonrpc_parse(const char *line, cbm_jsonrpc_request_t *out) {
 
     yyjson_doc_free(doc);
     return 0;
+#endif
 }
 
 void cbm_jsonrpc_request_free(cbm_jsonrpc_request_t *r) {

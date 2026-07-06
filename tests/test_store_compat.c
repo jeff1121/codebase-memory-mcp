@@ -15,6 +15,76 @@ static const char *USER_INDEXES[] = {
     "idx_edges_url_path",    NULL,
 };
 
+typedef struct {
+    const char *table;
+    const char *column;
+    const char *type;
+    const char *default_sql;
+    int ordinal;
+    int not_null;
+    int pk;
+    int hidden;
+} expected_column_t;
+
+typedef struct {
+    const char *name;
+    const char *table;
+    const char *columns_csv;
+} expected_index_t;
+
+static const expected_column_t STORE_COLUMNS[] = {
+    {"projects", "name", "TEXT", "", 0, 0, 1, 0},
+    {"projects", "indexed_at", "TEXT", "", 1, 1, 0, 0},
+    {"projects", "root_path", "TEXT", "", 2, 1, 0, 0},
+    {"file_hashes", "project", "TEXT", "", 0, 1, 1, 0},
+    {"file_hashes", "rel_path", "TEXT", "", 1, 1, 2, 0},
+    {"file_hashes", "sha256", "TEXT", "", 2, 1, 0, 0},
+    {"file_hashes", "mtime_ns", "INTEGER", "0", 3, 1, 0, 0},
+    {"file_hashes", "size", "INTEGER", "0", 4, 1, 0, 0},
+    {"nodes", "id", "INTEGER", "", 0, 0, 1, 0},
+    {"nodes", "project", "TEXT", "", 1, 1, 0, 0},
+    {"nodes", "label", "TEXT", "", 2, 1, 0, 0},
+    {"nodes", "name", "TEXT", "", 3, 1, 0, 0},
+    {"nodes", "qualified_name", "TEXT", "", 4, 1, 0, 0},
+    {"nodes", "file_path", "TEXT", "''", 5, 0, 0, 0},
+    {"nodes", "start_line", "INTEGER", "0", 6, 0, 0, 0},
+    {"nodes", "end_line", "INTEGER", "0", 7, 0, 0, 0},
+    {"nodes", "properties", "TEXT", "'{}'", 8, 0, 0, 0},
+    {"edges", "id", "INTEGER", "", 0, 0, 1, 0},
+    {"edges", "project", "TEXT", "", 1, 1, 0, 0},
+    {"edges", "source_id", "INTEGER", "", 2, 1, 0, 0},
+    {"edges", "target_id", "INTEGER", "", 3, 1, 0, 0},
+    {"edges", "type", "TEXT", "", 4, 1, 0, 0},
+    {"edges", "properties", "TEXT", "'{}'", 5, 0, 0, 0},
+    {"edges", "url_path_gen", "TEXT", "", 6, 0, 0, 2},
+    {"project_summaries", "project", "TEXT", "", 0, 0, 1, 0},
+    {"project_summaries", "summary", "TEXT", "", 1, 1, 0, 0},
+    {"project_summaries", "source_hash", "TEXT", "", 2, 1, 0, 0},
+    {"project_summaries", "created_at", "TEXT", "", 3, 1, 0, 0},
+    {"project_summaries", "updated_at", "TEXT", "", 4, 1, 0, 0},
+};
+
+static const expected_column_t FTS_COLUMNS[] = {
+    {"nodes_fts", "name", "", "", 0, 0, 0, 0},
+    {"nodes_fts", "qualified_name", "", "", 1, 0, 0, 0},
+    {"nodes_fts", "label", "", "", 2, 0, 0, 0},
+    {"nodes_fts", "file_path", "", "", 3, 0, 0, 0},
+    {"nodes_fts", "nodes_fts", "", "", 4, 0, 0, 1},
+    {"nodes_fts", "rank", "", "", 5, 0, 0, 1},
+};
+
+static const expected_index_t USER_INDEX_LAYOUTS[] = {
+    {"idx_nodes_label", "nodes", "project,label"},
+    {"idx_nodes_name", "nodes", "project,name"},
+    {"idx_nodes_file", "nodes", "project,file_path"},
+    {"idx_edges_source", "edges", "source_id,type"},
+    {"idx_edges_target", "edges", "target_id,type"},
+    {"idx_edges_type", "edges", "project,type"},
+    {"idx_edges_target_type", "edges", "project,target_id,type"},
+    {"idx_edges_source_type", "edges", "project,source_id,type"},
+    {"idx_edges_url_path", "edges", "project,url_path_gen"},
+};
+
 static int schema_object_exists(sqlite3 *db, const char *type, const char *name) {
     sqlite3_stmt *stmt = NULL;
     int exists = -1;
@@ -29,6 +99,102 @@ static int schema_object_exists(sqlite3 *db, const char *type, const char *name)
     }
     sqlite3_finalize(stmt);
     return exists;
+}
+
+static int schema_sql_contains(sqlite3 *db, const char *type, const char *name,
+                               const char *needle) {
+    sqlite3_stmt *stmt = NULL;
+    const char *sql = "SELECT sql FROM sqlite_schema WHERE type = ?1 AND name = ?2;";
+    int found = 0;
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+        return -1;
+    }
+    sqlite3_bind_text(stmt, 1, type, -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, name, -1, SQLITE_STATIC);
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        const unsigned char *value = sqlite3_column_text(stmt, 0);
+        found = value && strstr((const char *)value, needle) ? 1 : 0;
+    }
+    sqlite3_finalize(stmt);
+    return found;
+}
+
+static int table_xinfo_column_matches(sqlite3 *db, const expected_column_t *expected) {
+    sqlite3_stmt *stmt = NULL;
+    const char *sql =
+        "SELECT cid, type, \"notnull\", coalesce(dflt_value, ''), pk, hidden "
+        "FROM pragma_table_xinfo(?1) WHERE name = ?2;";
+    int ok = 0;
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+        return -1;
+    }
+    sqlite3_bind_text(stmt, 1, expected->table, -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, expected->column, -1, SQLITE_STATIC);
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        const unsigned char *type = sqlite3_column_text(stmt, 1);
+        const unsigned char *default_sql = sqlite3_column_text(stmt, 3);
+        ok = sqlite3_column_int(stmt, 0) == expected->ordinal &&
+             type && strcmp((const char *)type, expected->type) == 0 &&
+             sqlite3_column_int(stmt, 2) == expected->not_null && default_sql &&
+             strcmp((const char *)default_sql, expected->default_sql) == 0 &&
+             sqlite3_column_int(stmt, 4) == expected->pk &&
+             sqlite3_column_int(stmt, 5) == expected->hidden;
+        if (!ok) {
+            fprintf(stderr,
+                    "table_xinfo mismatch: %s.%s got cid=%d type=%s notnull=%d default=%s "
+                    "pk=%d hidden=%d\n",
+                    expected->table, expected->column, sqlite3_column_int(stmt, 0),
+                    type ? (const char *)type : "(null)", sqlite3_column_int(stmt, 2),
+                    default_sql ? (const char *)default_sql : "(null)",
+                    sqlite3_column_int(stmt, 4), sqlite3_column_int(stmt, 5));
+        }
+    }
+    sqlite3_finalize(stmt);
+    return ok;
+}
+
+static int index_xinfo_key_columns_match(sqlite3 *db, const expected_index_t *expected) {
+    sqlite3_stmt *stmt = NULL;
+    char actual[256] = "";
+    const char *table_sql = "SELECT tbl_name FROM sqlite_schema WHERE type = 'index' AND name = ?1;";
+    if (sqlite3_prepare_v2(db, table_sql, -1, &stmt, NULL) != SQLITE_OK) {
+        return -1;
+    }
+    sqlite3_bind_text(stmt, 1, expected->name, -1, SQLITE_STATIC);
+    if (sqlite3_step(stmt) != SQLITE_ROW) {
+        sqlite3_finalize(stmt);
+        return 0;
+    }
+    const unsigned char *table = sqlite3_column_text(stmt, 0);
+    int table_ok = table && strcmp((const char *)table, expected->table) == 0;
+    sqlite3_finalize(stmt);
+    if (!table_ok) {
+        return 0;
+    }
+
+    const char *index_sql =
+        "SELECT name FROM pragma_index_xinfo(?1) WHERE \"key\" = 1 ORDER BY seqno;";
+    if (sqlite3_prepare_v2(db, index_sql, -1, &stmt, NULL) != SQLITE_OK) {
+        return -1;
+    }
+    sqlite3_bind_text(stmt, 1, expected->name, -1, SQLITE_STATIC);
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        const unsigned char *name = sqlite3_column_text(stmt, 0);
+        if (!name) {
+            continue;
+        }
+        if (actual[0] != '\0') {
+            strncat(actual, ",", sizeof(actual) - strlen(actual) - 1);
+        }
+        strncat(actual, (const char *)name, sizeof(actual) - strlen(actual) - 1);
+    }
+    sqlite3_finalize(stmt);
+    if (strcmp(actual, expected->columns_csv) != 0) {
+        fprintf(stderr, "index_xinfo mismatch: %s got %s expected %s\n", expected->name, actual,
+                expected->columns_csv);
+        return 0;
+    }
+    return 1;
 }
 
 static int table_column_exists(sqlite3 *db, const char *table, const char *column) {
@@ -72,6 +238,23 @@ static int sql_scalar_text(sqlite3 *db, const char *sql, char *buf, size_t n) {
     if (sqlite3_step(stmt) == SQLITE_ROW) {
         const unsigned char *value = sqlite3_column_text(stmt, 0);
         snprintf(buf, n, "%s", value ? (const char *)value : "");
+        ok = 0;
+    }
+    sqlite3_finalize(stmt);
+    return ok;
+}
+
+static int sql_scalar_text_bound(sqlite3 *db, const char *sql, const char *value, char *buf,
+                                 size_t n) {
+    sqlite3_stmt *stmt = NULL;
+    if (!buf || n == 0 || sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+        return -1;
+    }
+    sqlite3_bind_text(stmt, 1, value, -1, SQLITE_STATIC);
+    int ok = -1;
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        const unsigned char *text = sqlite3_column_text(stmt, 0);
+        snprintf(buf, n, "%s", text ? (const char *)text : "");
         ok = 0;
     }
     sqlite3_finalize(stmt);
@@ -126,6 +309,24 @@ TEST(store_compat_schema_manifest) {
     PASS();
 }
 
+TEST(store_compat_table_column_layout_manifest) {
+    cbm_store_t *s = cbm_store_open_memory();
+    ASSERT_NOT_NULL(s);
+    sqlite3 *db = cbm_store_get_db(s);
+    ASSERT_NOT_NULL(db);
+
+    for (size_t i = 0; i < sizeof(STORE_COLUMNS) / sizeof(STORE_COLUMNS[0]); i++) {
+        ASSERT_EQ(table_xinfo_column_matches(db, &STORE_COLUMNS[i]), 1);
+    }
+    ASSERT_EQ(schema_sql_contains(db, "table", "edges",
+                                  "url_path_gen TEXT GENERATED ALWAYS AS "
+                                  "(json_extract(properties,'$.url_path'))"),
+              1);
+
+    cbm_store_close(s);
+    PASS();
+}
+
 TEST(store_compat_user_index_manifest_and_drop_symmetry) {
     cbm_store_t *s = cbm_store_open_memory();
     ASSERT_NOT_NULL(s);
@@ -134,6 +335,9 @@ TEST(store_compat_user_index_manifest_and_drop_symmetry) {
 
     for (int i = 0; USER_INDEXES[i]; i++) {
         ASSERT_EQ(schema_object_exists(db, "index", USER_INDEXES[i]), 1);
+    }
+    for (size_t i = 0; i < sizeof(USER_INDEX_LAYOUTS) / sizeof(USER_INDEX_LAYOUTS[0]); i++) {
+        ASSERT_EQ(index_xinfo_key_columns_match(db, &USER_INDEX_LAYOUTS[i]), 1);
     }
 
     ASSERT_EQ(cbm_store_drop_indexes(s), CBM_STORE_OK);
@@ -145,6 +349,35 @@ TEST(store_compat_user_index_manifest_and_drop_symmetry) {
     for (int i = 0; USER_INDEXES[i]; i++) {
         ASSERT_EQ(schema_object_exists(db, "index", USER_INDEXES[i]), 1);
     }
+    for (size_t i = 0; i < sizeof(USER_INDEX_LAYOUTS) / sizeof(USER_INDEX_LAYOUTS[0]); i++) {
+        ASSERT_EQ(index_xinfo_key_columns_match(db, &USER_INDEX_LAYOUTS[i]), 1);
+    }
+
+    cbm_store_close(s);
+    PASS();
+}
+
+TEST(store_compat_fts_metadata_manifest) {
+    cbm_store_t *s = cbm_store_open_memory();
+    ASSERT_NOT_NULL(s);
+    sqlite3 *db = cbm_store_get_db(s);
+    ASSERT_NOT_NULL(db);
+
+    for (size_t i = 0; i < sizeof(FTS_COLUMNS) / sizeof(FTS_COLUMNS[0]); i++) {
+        ASSERT_EQ(table_xinfo_column_matches(db, &FTS_COLUMNS[i]), 1);
+    }
+    ASSERT_EQ(schema_sql_contains(db, "table", "nodes_fts", "USING fts5"), 1);
+    ASSERT_EQ(schema_sql_contains(db, "table", "nodes_fts",
+                                  "name, qualified_name, label, file_path"),
+              1);
+    ASSERT_EQ(schema_sql_contains(db, "table", "nodes_fts", "content=''"), 1);
+    ASSERT_EQ(schema_sql_contains(db, "table", "nodes_fts",
+                                  "tokenize='unicode61 remove_diacritics 2'"),
+              1);
+    ASSERT_EQ(schema_object_exists(db, "table", "nodes_fts_config"), 1);
+    ASSERT_EQ(schema_object_exists(db, "table", "nodes_fts_data"), 1);
+    ASSERT_EQ(schema_object_exists(db, "table", "nodes_fts_docsize"), 1);
+    ASSERT_EQ(schema_object_exists(db, "table", "nodes_fts_idx"), 1);
 
     cbm_store_close(s);
     PASS();
@@ -237,6 +470,37 @@ TEST(store_compat_query_open_reads_existing_wal_and_rejects_write) {
 
     cbm_store_close(reader);
     cbm_store_close(writer);
+    cleanup_store_files(db_path);
+    PASS();
+}
+
+TEST(store_compat_bulk_pragmas_preserve_wal_contract) {
+    char db_path[512];
+    make_temp_store_path(db_path, sizeof(db_path), "bulk_pragmas");
+    cleanup_store_files(db_path);
+
+    cbm_store_t *s = cbm_store_open_path(db_path);
+    ASSERT_NOT_NULL(s);
+    sqlite3 *db = cbm_store_get_db(s);
+    ASSERT_NOT_NULL(db);
+
+    char mode[32];
+    ASSERT_EQ(sql_scalar_text(db, "PRAGMA journal_mode;", mode, sizeof(mode)), 0);
+    ASSERT_STR_EQ(mode, "wal");
+
+    ASSERT_EQ(cbm_store_begin_bulk(s), CBM_STORE_OK);
+    ASSERT_EQ(sql_scalar_int(db, "PRAGMA synchronous;"), 0);
+    ASSERT_EQ(sql_scalar_int(db, "PRAGMA cache_size;"), -65536);
+    ASSERT_EQ(sql_scalar_text(db, "PRAGMA journal_mode;", mode, sizeof(mode)), 0);
+    ASSERT_STR_EQ(mode, "wal");
+
+    ASSERT_EQ(cbm_store_end_bulk(s), CBM_STORE_OK);
+    ASSERT_EQ(sql_scalar_int(db, "PRAGMA synchronous;"), 1);
+    ASSERT_EQ(sql_scalar_int(db, "PRAGMA cache_size;"), -2000);
+    ASSERT_EQ(sql_scalar_text(db, "PRAGMA journal_mode;", mode, sizeof(mode)), 0);
+    ASSERT_STR_EQ(mode, "wal");
+
+    cbm_store_close(s);
     cleanup_store_files(db_path);
     PASS();
 }
@@ -359,6 +623,51 @@ TEST(store_compat_url_path_generated_column_index_plan) {
     PASS();
 }
 
+TEST(store_compat_camel_split_exact_contract) {
+    cbm_store_t *s = cbm_store_open_memory();
+    ASSERT_NOT_NULL(s);
+    sqlite3 *db = cbm_store_get_db(s);
+    ASSERT_NOT_NULL(db);
+
+    char out[4096];
+    ASSERT_EQ(sql_scalar_text(db, "SELECT cbm_camel_split(NULL);", out, sizeof(out)), 0);
+    ASSERT_STR_EQ(out, "");
+    ASSERT_EQ(sql_scalar_text(db, "SELECT cbm_camel_split('');", out, sizeof(out)), 0);
+    ASSERT_STR_EQ(out, "");
+    ASSERT_EQ(sql_scalar_text(db, "SELECT cbm_camel_split('updateCloudClient');", out,
+                              sizeof(out)),
+              0);
+    ASSERT_STR_EQ(out, "updateCloudClient update Cloud Client");
+    ASSERT_EQ(sql_scalar_text(db, "SELECT cbm_camel_split('XMLParser');", out, sizeof(out)), 0);
+    ASSERT_STR_EQ(out, "XMLParser XML Parser");
+    ASSERT_EQ(sql_scalar_text(db, "SELECT cbm_camel_split('snake_case');", out, sizeof(out)), 0);
+    ASSERT_STR_EQ(out, "snake_case snake_case");
+    ASSERT_EQ(sql_scalar_text_bound(db, "SELECT cbm_camel_split(?1);", "caf\303\251HTTP", out,
+                                    sizeof(out)),
+              0);
+    ASSERT_STR_EQ(out, "caf\303\251HTTP caf\303\251HTTP");
+
+    char fallback[2048];
+    memset(fallback, 'a', sizeof(fallback) - 1);
+    fallback[sizeof(fallback) - 1] = '\0';
+    ASSERT_EQ(sql_scalar_text_bound(db, "SELECT cbm_camel_split(?1);", fallback, out, sizeof(out)),
+              0);
+    ASSERT_STR_EQ(out, fallback);
+
+    char near_limit[2047];
+    memset(near_limit, 'a', sizeof(near_limit) - 1);
+    near_limit[sizeof(near_limit) - 1] = '\0';
+    ASSERT_EQ(
+        sql_scalar_text_bound(db, "SELECT cbm_camel_split(?1);", near_limit, out, sizeof(out)),
+        0);
+    ASSERT_EQ(strlen(out), sizeof(near_limit));
+    ASSERT_EQ(out[sizeof(near_limit) - 1], ' ');
+    ASSERT_EQ(out[sizeof(near_limit)], '\0');
+
+    cbm_store_close(s);
+    PASS();
+}
+
 TEST(store_compat_fts_manual_rebuild_and_camel_split) {
     cbm_store_t *s = cbm_store_open_memory();
     ASSERT_NOT_NULL(s);
@@ -408,11 +717,15 @@ TEST(store_compat_fts_manual_rebuild_and_camel_split) {
 
 SUITE(store_compat) {
     RUN_TEST(store_compat_schema_manifest);
+    RUN_TEST(store_compat_table_column_layout_manifest);
     RUN_TEST(store_compat_user_index_manifest_and_drop_symmetry);
+    RUN_TEST(store_compat_fts_metadata_manifest);
     RUN_TEST(store_compat_query_open_is_readonly_and_no_create);
     RUN_TEST(store_compat_path_open_uses_wal_journal_mode);
     RUN_TEST(store_compat_query_open_reads_existing_wal_and_rejects_write);
+    RUN_TEST(store_compat_bulk_pragmas_preserve_wal_contract);
     RUN_TEST(store_compat_url_path_project_scoped_substring);
     RUN_TEST(store_compat_url_path_generated_column_index_plan);
+    RUN_TEST(store_compat_camel_split_exact_contract);
     RUN_TEST(store_compat_fts_manual_rebuild_and_camel_split);
 }

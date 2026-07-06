@@ -240,11 +240,38 @@ TEST(gbuf_mutation_apply_validation_contract) {
     PASS();
 }
 
+TEST(gbuf_mutation_apply_insert_edge_no_endpoint_lookup) {
+    cbm_gbuf_t *gb = cbm_gbuf_new("test", "/tmp");
+    int64_t route = cbm_gbuf_apply_upsert_node(gb, "Route", "/health", "__route__GET__/health", "",
+                                               0, 0, "{\"method\":\"GET\"}");
+    ASSERT_GT(route, 0);
+
+    int64_t external_source_id = route + 1000;
+    int64_t edge = cbm_gbuf_apply_insert_edge(gb, external_source_id, route, "HTTP_CALLS",
+                                              "{\"via\":\"test\"}");
+    ASSERT_GT(edge, 0);
+    ASSERT_EQ(cbm_gbuf_edge_count(gb), 1);
+
+    const cbm_gbuf_edge_t **edges = NULL;
+    int edge_count = 0;
+    ASSERT_EQ(cbm_gbuf_find_edges_by_source_type(gb, external_source_id, "HTTP_CALLS", &edges,
+                                                 &edge_count),
+              0);
+    ASSERT_EQ(edge_count, 1);
+    ASSERT_EQ(edges[0]->target_id, route);
+
+    cbm_gbuf_free(gb);
+    PASS();
+}
+
 TEST(gbuf_mutation_adapter_callpoint_static_guard) {
     const char *edge_files[] = {
         "src/pipeline/pass_tests.c",          "src/pipeline/pass_usages.c",
         "src/pipeline/pass_configlink.c",     "src/pipeline/pass_similarity.c",
-        "src/pipeline/pass_semantic_edges.c",
+        "src/pipeline/pass_semantic_edges.c", "src/pipeline/pass_k8s.c",
+        "src/pipeline/pass_route_nodes.c",    "src/pipeline/pass_definitions.c",
+        "src/pipeline/pass_calls.c",          "src/pipeline/pass_semantic.c",
+        "src/pipeline/pass_parallel.c",
     };
     for (size_t i = 0; i < sizeof(edge_files) / sizeof(edge_files[0]); i++) {
         ASSERT_TRUE(source_file_contains(edge_files[i], "cbm_gbuf_apply_insert_edge("));
@@ -279,6 +306,58 @@ TEST(gbuf_mutation_adapter_callpoint_static_guard) {
         source_file_contains("src/pipeline/pass_githistory.c", "cbm_gbuf_apply_insert_edge("));
     ASSERT_FALSE(source_file_contains("src/pipeline/pass_githistory.c", "cbm_gbuf_upsert_node("));
     ASSERT_FALSE(source_file_contains("src/pipeline/pass_githistory.c", "cbm_gbuf_insert_edge("));
+
+    ASSERT_TRUE(source_file_contains("src/pipeline/pass_k8s.c", "cbm_gbuf_apply_upsert_node("));
+    ASSERT_FALSE(source_file_contains("src/pipeline/pass_k8s.c", "cbm_gbuf_upsert_node("));
+
+    ASSERT_TRUE(
+        source_file_contains("src/pipeline/pass_route_nodes.c", "cbm_gbuf_apply_upsert_node("));
+    ASSERT_FALSE(source_file_contains("src/pipeline/pass_route_nodes.c", "cbm_gbuf_upsert_node("));
+
+    ASSERT_TRUE(
+        source_file_contains("src/pipeline/pass_definitions.c", "cbm_gbuf_apply_upsert_node("));
+    ASSERT_FALSE(source_file_contains("src/pipeline/pass_definitions.c", "cbm_gbuf_upsert_node("));
+
+    ASSERT_TRUE(source_file_contains("src/pipeline/pass_calls.c", "cbm_gbuf_apply_upsert_node("));
+    ASSERT_FALSE(source_file_contains("src/pipeline/pass_calls.c", "cbm_gbuf_upsert_node("));
+
+    ASSERT_TRUE(
+        source_file_contains("src/pipeline/pass_semantic.c", "cbm_gbuf_apply_upsert_node("));
+    ASSERT_FALSE(source_file_contains("src/pipeline/pass_semantic.c", "cbm_gbuf_upsert_node("));
+
+    ASSERT_TRUE(source_file_contains("src/pipeline/pass_parallel.c",
+                                     "cbm_gbuf_apply_upsert_node(ctx->gbuf"));
+    ASSERT_TRUE(source_file_contains("src/pipeline/pass_parallel.c",
+                                     "cbm_gbuf_apply_insert_edge(ctx->gbuf"));
+    ASSERT_FALSE(
+        source_file_contains("src/pipeline/pass_parallel.c", "cbm_gbuf_upsert_node(ctx->gbuf"));
+    ASSERT_FALSE(
+        source_file_contains("src/pipeline/pass_parallel.c", "cbm_gbuf_insert_edge(ctx->gbuf"));
+    ASSERT_TRUE(source_file_contains("src/pipeline/pass_parallel.c", "ws->local_gbuf, def->label"));
+    ASSERT_TRUE(source_file_contains("src/pipeline/pass_parallel.c", "ws->local_gbuf, \"Route\""));
+    ASSERT_TRUE(source_file_contains("src/pipeline/pass_parallel.c",
+                                     "cbm_gbuf_apply_insert_edge(ws->local_gbuf"));
+    ASSERT_FALSE(source_file_contains("src/pipeline/pass_parallel.c",
+                                      "cbm_gbuf_upsert_node(ws->local_gbuf"));
+    ASSERT_FALSE(source_file_contains("src/pipeline/pass_parallel.c",
+                                      "cbm_gbuf_insert_edge(ws->local_gbuf"));
+    ASSERT_TRUE(source_file_contains("src/pipeline/pass_parallel.c",
+                                     "cbm_gbuf_apply_upsert_node(ws->local_edge_buf"));
+    ASSERT_TRUE(source_file_contains("src/pipeline/pass_parallel.c",
+                                     "cbm_gbuf_apply_insert_edge(ws->local_edge_buf"));
+    ASSERT_FALSE(source_file_contains("src/pipeline/pass_parallel.c",
+                                      "cbm_gbuf_upsert_node(ws->local_edge_buf"));
+    ASSERT_FALSE(source_file_contains("src/pipeline/pass_parallel.c",
+                                      "cbm_gbuf_insert_edge(ws->local_edge_buf"));
+    ASSERT_FALSE(source_file_contains("src/pipeline/pass_parallel.c", "cbm_gbuf_upsert_node("));
+    ASSERT_FALSE(source_file_contains("src/pipeline/pipeline.c",
+                                      "cbm_rs_pipeline_full_plan_steps_v1"));
+    ASSERT_FALSE(source_file_contains("src/pipeline/pipeline.c",
+                                      "cbm_rs_pipeline_full_plan_step_count_v1"));
+    ASSERT_FALSE(source_file_contains("src/pipeline/pipeline_incremental.c",
+                                      "cbm_rs_pipeline_full_plan_steps_v1"));
+    ASSERT_FALSE(source_file_contains("src/pipeline/pipeline_incremental.c",
+                                      "cbm_rs_pipeline_full_plan_step_count_v1"));
     PASS();
 }
 
@@ -1071,6 +1150,7 @@ SUITE(graph_buffer) {
     RUN_TEST(gbuf_insert_edge);
     RUN_TEST(gbuf_mutation_apply_upsert_edge_delete);
     RUN_TEST(gbuf_mutation_apply_validation_contract);
+    RUN_TEST(gbuf_mutation_apply_insert_edge_no_endpoint_lookup);
     RUN_TEST(gbuf_mutation_adapter_callpoint_static_guard);
     RUN_TEST(gbuf_edge_dedup);
     RUN_TEST(gbuf_find_edges_by_source_type);

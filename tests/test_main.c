@@ -41,7 +41,10 @@ extern void suite_hash_table(void);
 extern void suite_dyn_array(void);
 extern void suite_str_intern(void);
 extern void suite_log(void);
+extern void suite_profile(void);
+extern void suite_diagnostics(void);
 extern void suite_str_util(void);
+extern void suite_compat(void);
 extern void suite_platform(void);
 extern void suite_extraction(void);
 extern void suite_extraction_inheritance(void);
@@ -143,7 +146,10 @@ int main(int argc, char **argv) {
     RUN_SELECTED_SUITE(dyn_array);
     RUN_SELECTED_SUITE(str_intern);
     RUN_SELECTED_SUITE(log);
+    RUN_SELECTED_SUITE(profile);
+    RUN_SELECTED_SUITE(diagnostics);
     RUN_SELECTED_SUITE(str_util);
+    RUN_SELECTED_SUITE(compat);
     RUN_SELECTED_SUITE(platform);
     RUN_SELECTED_SUITE(dump_verify);
 

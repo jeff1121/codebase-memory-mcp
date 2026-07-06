@@ -16,7 +16,7 @@
 
 目前 `tests/test_store_compat.c` 已覆蓋 minimal schema/index existence、`edges.url_path_gen` generated column、user index manifest、drop/create symmetry、`open_path_query` missing DB no-create/read-only/write rejection、WAL journal mode、readonly WAL read/write rejection、generated column query plan、URL path API project-scoped substring 行為，以及 `nodes_fts` manual rebuild/camelCase tokenization；並以此修正 `idx_edges_url_path` 未被 `cbm_store_drop_indexes()` drop 的不對稱。後續仍可補完整 `sqlite_schema` golden、checkpoint/bulk side effect 與 artifact import/export fixture。
 
-先不要遷移 `sqlite_writer`、`graph_buffer` direct writer、readonly fallback、vector tables 或整個 FTS/BM25 stack。這些應各自有 fixture 後再切。
+`CBM_USE_RUST_STORE_FTS_TOKENIZER=1` 是允許的窄切例外：它只把 `cbm_camel_split` scalar UDF callback 內的 token 字串計算委派給 Rust，SQL 名稱、arity、UDF registration、`sqlite3_result_text`、FTS5 runtime、CRUD/search/BM25、readonly/WAL 與所有 SQLite ownership 仍留在 C。先不要遷移 `sqlite_writer`、`graph_buffer` direct writer、readonly fallback、vector tables 或整個 FTS/BM25 stack。這些應各自有 fixture 後再切。
 
 ## Cypher：AST 與 Result Golden
 

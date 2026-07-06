@@ -2,7 +2,7 @@
 
 Contributions are welcome. This guide covers setup, testing, and PR guidelines.
 
-> **Important**: The default product binary is still C (rewritten from Go in v0.5.0). Rust contributions are accepted only for the opt-in slices under `rust/` and `CBM_USE_RUST_*`; Go PRs may be ported but cannot be merged directly.
+> **Important**: The default product binary remains C-first (with explicit Rust opt-in slices behind `CBM_USE_RUST_*`). Rust contributions are accepted for incremental, opt-in migration work under `rust/`; Go PRs may be ported but cannot be merged directly.
 
 ## Build from Source
 
@@ -48,13 +48,15 @@ make -f Makefile.cbm security
 
 Runs the local security target: static allow-list audit, binary string scan, UI audit, install audit, network egress test, MCP robustness fuzzing, vendored dependency integrity, and Rust source/dependency security gates. Full release/smoke verification includes the additional binary smoke hardening layer before publishing.
 
+Release packaging workflows also run the dedicated Rust gates (`.github/workflows/_rust.yml`) as part of the non-optional pre-build path.
+
 ## Rust Core (experimental, opt-in)
 
-The default product binary is still **pure C with zero dependencies** — this is
-unchanged. A Rust workspace lives under `rust/` and is being introduced
-incrementally under the plan in [`Rust-Refactor.md`](Rust-Refactor.md) (progress
-tracked in [`Tasks.md`](Tasks.md)). It is **never linked into the default build**;
-it only participates through explicit `CBM_USE_RUST_*` opt-in flags.
+The default product binary is still **C-first** — this is unchanged. A Rust
+workspace lives under `rust/` and is being introduced incrementally under the
+plan in [`Rust-Refactor.md`](Rust-Refactor.md) (progress tracked in
+[`Tasks.md`](Tasks.md)). It is **never linked into the default build**; it only
+participates through explicit `CBM_USE_RUST_*` opt-in flags.
 
 ```bash
 scripts/rust-check.sh                       # fmt + clippy + workspace tests + FFI + opt-in/parity gates
@@ -73,6 +75,10 @@ The C/Rust FFI ownership and error rules are documented in
 [`rust/CBM_FFI.md`](rust/CBM_FFI.md). Any new `unsafe`, process, network, or
 filesystem call on the Rust side must be added to
 `scripts/rust-security-allowlist.txt`.
+
+Release switching policy is documented in [`Rust-Refactor.md`](Rust-Refactor.md):
+Rust slices are validated behind opt-in flags first, then progressively moved
+toward default usage only after a release-candidate parity window.
 
 ## Project Structure
 

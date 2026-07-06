@@ -203,8 +203,8 @@ static void handle_route_registration(cbm_pipeline_ctx_t *ctx, const CBMCall *ca
              cbm_route_canon_path(call->first_string_arg, cpath, sizeof(cpath)));
     char route_props[CBM_SZ_256];
     snprintf(route_props, sizeof(route_props), "{\"method\":\"%s\"}", method ? method : "ANY");
-    int64_t route_id = cbm_gbuf_upsert_node(ctx->gbuf, "Route", call->first_string_arg, route_qn,
-                                            "", 0, 0, route_props);
+    int64_t route_id = cbm_gbuf_apply_upsert_node(ctx->gbuf, "Route", call->first_string_arg,
+                                                  route_qn, "", 0, 0, route_props);
     char esc_cn[CBM_SZ_256]; /* sliced source text: escape quotes/newlines */
     char esc_fa[CBM_SZ_256];
     cbm_json_escape(esc_cn, sizeof(esc_cn), call->callee_name);
@@ -213,7 +213,7 @@ static void handle_route_registration(cbm_pipeline_ctx_t *ctx, const CBMCall *ca
     snprintf(props, sizeof(props),
              "{\"callee\":\"%s\",\"url_path\":\"%s\",\"via\":\"route_registration\"}", esc_cn,
              esc_fa);
-    cbm_gbuf_insert_edge(ctx->gbuf, source_node->id, route_id, "CALLS", props);
+    cbm_gbuf_apply_insert_edge(ctx->gbuf, source_node->id, route_id, "CALLS", props);
     if (call->second_arg_name != NULL && call->second_arg_name[0] != '\0') {
         cbm_resolution_t hres = cbm_registry_resolve(ctx->registry, call->second_arg_name,
                                                      module_qn, imp_keys, imp_vals, imp_count);
@@ -225,7 +225,7 @@ static void handle_route_registration(cbm_pipeline_ctx_t *ctx, const CBMCall *ca
                 char esc_h[CBM_SZ_512];
                 cbm_json_escape(esc_h, sizeof(esc_h), hres.qualified_name);
                 snprintf(hprops, sizeof(hprops), "{\"handler\":\"%s\"}", esc_h);
-                cbm_gbuf_insert_edge(ctx->gbuf, handler->id, route_id, "HANDLES", hprops);
+                cbm_gbuf_apply_insert_edge(ctx->gbuf, handler->id, route_id, "HANDLES", hprops);
             }
         }
     }
@@ -252,7 +252,7 @@ static int64_t create_svc_route_node(cbm_pipeline_ctx_t *ctx, const char *url, c
     } else {
         rp = broker ? broker : "{}";
     }
-    return cbm_gbuf_upsert_node(ctx->gbuf, "Route", url, route_qn, "", 0, 0, rp);
+    return cbm_gbuf_apply_upsert_node(ctx->gbuf, "Route", url, route_qn, "", 0, 0, rp);
 }
 
 /* Insert an edge, splicing the call-site line (,"line":N) in before the closing
@@ -320,7 +320,7 @@ static void calls_emit_edge(cbm_gbuf_t *gbuf, int64_t src, int64_t tgt, const ch
     if (call && strcmp(type, "CALLS") == 0) {
         calls_append_args(props, cap, call);
     }
-    cbm_gbuf_insert_edge(gbuf, src, tgt, type, props);
+    cbm_gbuf_apply_insert_edge(gbuf, src, tgt, type, props);
 }
 
 static void emit_http_async_edge(cbm_pipeline_ctx_t *ctx, const CBMCall *call,
@@ -691,8 +691,9 @@ static int scan_depends_in_sig(cbm_pipeline_ctx_t *ctx, const cbm_regex_t *re, c
             const cbm_gbuf_node_t *sn = cbm_gbuf_find_by_qn(ctx->gbuf, def->qualified_name);
             const cbm_gbuf_node_t *tn = cbm_gbuf_find_by_qn(ctx->gbuf, res.qualified_name);
             if (sn && tn && sn->id != tn->id) {
-                cbm_gbuf_insert_edge(ctx->gbuf, sn->id, tn->id, "CALLS",
-                                     "{\"confidence\":0.95,\"strategy\":\"fastapi_depends\"}");
+                cbm_gbuf_apply_insert_edge(
+                    ctx->gbuf, sn->id, tn->id, "CALLS",
+                    "{\"confidence\":0.95,\"strategy\":\"fastapi_depends\"}");
                 count++;
             }
         }

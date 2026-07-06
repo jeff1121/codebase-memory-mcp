@@ -261,11 +261,12 @@ int cbm_store_checkpoint(cbm_store_t *s);
 
 /* Resolve the mmap_size pragma value applied to on-disk stores from the
  * CBM_SQLITE_MMAP_SIZE environment variable. Defaults to 67108864 (64 MB)
- * when the variable is unset, malformed, or partially numeric. Negative
- * values clamp to 0 (which disables mmap and reverts to read()/pread()
- * I/O — recoverable SQLITE_IOERR instead of SIGBUS when concurrent
- * processes truncate the DB file under live mappings). Exposed for
- * testability. */
+ * when the variable is unset, empty, malformed, partially numeric, or
+ * overflowing. Leading strtoll-style whitespace and '+' are accepted; trailing
+ * bytes are not. Valid negative values clamp to 0 (which disables mmap and
+ * reverts to read()/pread() I/O — recoverable SQLITE_IOERR instead of SIGBUS
+ * when concurrent processes truncate the DB file under live mappings). Exposed
+ * for testability. */
 int64_t cbm_store_resolve_mmap_size(void);
 
 /* ── Dump / Restore ─────────────────────────────────────────────── */

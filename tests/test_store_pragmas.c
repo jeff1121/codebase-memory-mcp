@@ -61,6 +61,34 @@ TEST(mmap_size_partial_garbage_falls_back_to_default) {
     PASS();
 }
 
+TEST(mmap_size_empty_falls_back_to_default) {
+    cbm_setenv("CBM_SQLITE_MMAP_SIZE", "", 1);
+    ASSERT_EQ(cbm_store_resolve_mmap_size(), 67108864LL);
+    clear_mmap_env();
+    PASS();
+}
+
+TEST(mmap_size_overflow_falls_back_to_default) {
+    cbm_setenv("CBM_SQLITE_MMAP_SIZE", "9223372036854775808", 1);
+    ASSERT_EQ(cbm_store_resolve_mmap_size(), 67108864LL);
+    clear_mmap_env();
+    PASS();
+}
+
+TEST(mmap_size_leading_space_and_plus_are_accepted) {
+    cbm_setenv("CBM_SQLITE_MMAP_SIZE", " \t+4096", 1);
+    ASSERT_EQ(cbm_store_resolve_mmap_size(), 4096LL);
+    clear_mmap_env();
+    PASS();
+}
+
+TEST(mmap_size_trailing_space_falls_back_to_default) {
+    cbm_setenv("CBM_SQLITE_MMAP_SIZE", "4096 ", 1);
+    ASSERT_EQ(cbm_store_resolve_mmap_size(), 67108864LL);
+    clear_mmap_env();
+    PASS();
+}
+
 /* Integration smoke: opening a file-backed store with mmap_size=0 must
  * succeed. Proves the resolver is wired through configure_pragmas(). */
 TEST(store_open_with_mmap_disabled) {
@@ -93,5 +121,9 @@ SUITE(store_pragmas) {
     RUN_TEST(mmap_size_negative_clamped_to_zero);
     RUN_TEST(mmap_size_garbage_falls_back_to_default);
     RUN_TEST(mmap_size_partial_garbage_falls_back_to_default);
+    RUN_TEST(mmap_size_empty_falls_back_to_default);
+    RUN_TEST(mmap_size_overflow_falls_back_to_default);
+    RUN_TEST(mmap_size_leading_space_and_plus_are_accepted);
+    RUN_TEST(mmap_size_trailing_space_falls_back_to_default);
     RUN_TEST(store_open_with_mmap_disabled);
 }

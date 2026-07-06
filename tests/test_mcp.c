@@ -2233,6 +2233,59 @@ TEST(jsonrpc_parse_string_id) {
     PASS();
 }
 
+TEST(jsonrpc_parse_other_id_keeps_notification_distinct) {
+    const char *line = "{\"jsonrpc\":\"2.0\",\"id\":true,\"method\":\"ping\"}";
+    cbm_jsonrpc_request_t req = {0};
+    int rc = cbm_jsonrpc_parse(line, &req);
+    ASSERT_EQ(rc, 0);
+    ASSERT_TRUE(req.has_id);
+    ASSERT_EQ(req.id, -1);
+    ASSERT_NULL(req.id_str);
+    ASSERT_STR_EQ(req.method, "ping");
+    cbm_jsonrpc_request_free(&req);
+    PASS();
+}
+
+TEST(jsonrpc_parse_duplicate_keys_first_wins) {
+    const char *line = "{\"method\":\"ping\",\"method\":\"tools/list\",\"id\":1,\"id\":\"late\","
+                       "\"params\":{\"a\":1},\"params\":{\"b\":2},\"jsonrpc\":3,"
+                       "\"jsonrpc\":\"late\"}";
+    cbm_jsonrpc_request_t req = {0};
+    int rc = cbm_jsonrpc_parse(line, &req);
+    ASSERT_EQ(rc, 0);
+    ASSERT_STR_EQ(req.jsonrpc, "2.0");
+    ASSERT_STR_EQ(req.method, "ping");
+    ASSERT_TRUE(req.has_id);
+    ASSERT_EQ(req.id, 1);
+    ASSERT_NULL(req.id_str);
+    ASSERT_NOT_NULL(req.params_raw);
+    ASSERT_NOT_NULL(strstr(req.params_raw, "\"a\""));
+    ASSERT_NULL(strstr(req.params_raw, "\"b\""));
+    cbm_jsonrpc_request_free(&req);
+    PASS();
+}
+
+TEST(jsonrpc_parse_unicode_escape_method_and_id) {
+    const char *line = "{\"jsonrpc\":\"2.0\",\"id\":\"\\u4e2d\",\"method\":\"p\\u0069ng\"}";
+    cbm_jsonrpc_request_t req = {0};
+    int rc = cbm_jsonrpc_parse(line, &req);
+    ASSERT_EQ(rc, 0);
+    ASSERT_STR_EQ(req.method, "ping");
+    ASSERT_NOT_NULL(req.id_str);
+    ASSERT_STR_EQ(req.id_str, "中");
+    cbm_jsonrpc_request_free(&req);
+    PASS();
+}
+
+TEST(jsonrpc_parse_invalid_utf8_rejected) {
+    const char line[] = "{\"jsonrpc\":\"2.0\",\"method\":\"bad\xff\"}";
+    cbm_jsonrpc_request_t req = {0};
+    int rc = cbm_jsonrpc_parse(line, &req);
+    ASSERT_EQ(rc, -1);
+    cbm_jsonrpc_request_free(&req);
+    PASS();
+}
+
 TEST(jsonrpc_parse_no_params) {
     /* Request with no params field — params_raw should be NULL */
     const char *line = "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/list\"}";
@@ -3055,6 +3108,10 @@ SUITE(mcp) {
     RUN_TEST(jsonrpc_parse_missing_jsonrpc_field);
     RUN_TEST(jsonrpc_parse_missing_method);
     RUN_TEST(jsonrpc_parse_string_id);
+    RUN_TEST(jsonrpc_parse_other_id_keeps_notification_distinct);
+    RUN_TEST(jsonrpc_parse_duplicate_keys_first_wins);
+    RUN_TEST(jsonrpc_parse_unicode_escape_method_and_id);
+    RUN_TEST(jsonrpc_parse_invalid_utf8_rejected);
     RUN_TEST(jsonrpc_parse_no_params);
     RUN_TEST(jsonrpc_parse_extra_whitespace);
     RUN_TEST(jsonrpc_parse_array_not_object);

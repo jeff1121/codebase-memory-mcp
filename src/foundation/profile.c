@@ -19,11 +19,21 @@ enum {
 
 bool cbm_profile_active = false;
 
+#ifdef CBM_USE_RUST_PROFILE_ENV
+extern bool cbm_rs_profile_env_enabled(const char *value);
+#endif
+
 void cbm_profile_init(void) {
     const char *env = getenv("CBM_PROFILE");
+#ifdef CBM_USE_RUST_PROFILE_ENV
+    if (cbm_rs_profile_env_enabled(env)) {
+        cbm_profile_active = true;
+    }
+#else
     if (env && env[0] != '\0' && env[0] != '0') {
         cbm_profile_active = true;
     }
+#endif
 }
 
 void cbm_profile_enable(void) {
