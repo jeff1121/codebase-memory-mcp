@@ -102,12 +102,98 @@ fn bounded_segment(qn: &[u8], start: usize, end: usize) -> Option<&[u8]> {
     }
 }
 
+/// `src/store/store.c` `arch_path_prepare` 的 norm_out 正規化 parity。
+///
+/// 對應 C 行為：跳過前導空白（space/tab/\n/\r）、去一次前導 `./`、去前導 `/`，
+/// 以 `cap - 1` 上限截斷（對齊 C `strncpy(norm_out, path, norm_sz - 1)`），再去尾端
+/// ` `/`\t`/`/` 並折疊重複 `/`。path 未設定（null/全空白）或正規化後為空時回傳
+/// `None`（對應 C 回傳 false）。截斷刻意先於 strip/collapse，以完全對齊 C。
+#[must_use]
+pub fn normalize_arch_path(path: Option<&[u8]>, cap: usize) -> Option<Vec<u8>> {
+    let path = path?;
+    if cap == 0 {
+        return None;
+    }
+    let is_ws = |b: u8| matches!(b, b' ' | b'\t' | b'\n' | b'\r');
+
+    let mut start = 0;
+    while start < path.len() && is_ws(path[start]) {
+        start += 1;
+    }
+    if start >= path.len() {
+        return None;
+    }
+    let mut rest = &path[start..];
+    if rest.starts_with(b"./") {
+        rest = &rest[2..];
+    }
+    let mut lead = 0;
+    while lead < rest.len() && rest[lead] == b'/' {
+        lead += 1;
+    }
+    rest = &rest[lead..];
+    if rest.is_empty() {
+        return None;
+    }
+
+    let limit = cap - 1;
+    let mut buf: Vec<u8> = rest.iter().take(limit).copied().collect();
+
+    while matches!(buf.last(), Some(b' ' | b'\t' | b'/')) {
+        buf.pop();
+    }
+
+    let mut out: Vec<u8> = Vec::with_capacity(buf.len());
+    for &b in &buf {
+        if b == b'/' && out.last() == Some(&b'/') {
+            continue;
+        }
+        out.push(b);
+    }
+    if out.is_empty() {
+        return None;
+    }
+    Some(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn text(bytes: &[u8]) -> &str {
         std::str::from_utf8(bytes).unwrap()
+    }
+
+    #[test]
+    fn normalize_arch_path_matches_c_contract() {
+        let n = |p: &[u8]| normalize_arch_path(Some(p), 512);
+        assert_eq!(n(b"apps/foo"), Some(b"apps/foo".to_vec()));
+        assert_eq!(n(b"./apps/foo"), Some(b"apps/foo".to_vec()));
+        assert_eq!(n(b"/apps/foo"), Some(b"apps/foo".to_vec()));
+        assert_eq!(n(b".//apps"), Some(b"apps".to_vec()));
+        assert_eq!(n(b"  \tapps/foo"), Some(b"apps/foo".to_vec()));
+        assert_eq!(n(b"apps/foo/"), Some(b"apps/foo".to_vec()));
+        assert_eq!(n(b"apps/foo  "), Some(b"apps/foo".to_vec()));
+        assert_eq!(n(b"apps/foo\t/"), Some(b"apps/foo".to_vec()));
+        assert_eq!(n(b"apps//foo"), Some(b"apps/foo".to_vec()));
+        assert_eq!(n(b"apps///foo//bar"), Some(b"apps/foo/bar".to_vec()));
+        assert_eq!(normalize_arch_path(None, 512), None);
+        assert_eq!(n(b""), None);
+        assert_eq!(n(b"   "), None);
+        assert_eq!(n(b"./"), None);
+        assert_eq!(n(b"///"), None);
+        assert_eq!(n(b"./ "), None);
+        // 截斷先於 strip/collapse
+        assert_eq!(
+            normalize_arch_path(Some(b"abcdef"), 5),
+            Some(b"abcd".to_vec())
+        );
+        assert_eq!(
+            normalize_arch_path(Some(b"abc/def"), 5),
+            Some(b"abc".to_vec())
+        );
+        assert_eq!(normalize_arch_path(Some(b"abc"), 0), None);
+        assert_eq!(normalize_arch_path(Some(b"abc"), 1), None);
     }
 
     #[test]

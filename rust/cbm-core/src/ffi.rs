@@ -1243,6 +1243,36 @@ pub unsafe extern "C" fn cbm_rs_store_build_immutable_uri_v1(
 #[no_mangle]
 /// # Safety
 ///
+/// `norm_out` 必須是 null，或指向 `norm_sz` bytes 的可寫記憶體；`path` 必須是
+/// null，或指向 NUL-terminated C string。回傳寫入的正規化路徑長度（不含 NUL），
+/// 或 `usize::MAX` 表示 path 未設定或正規化後為空（對應 C `arch_path_prepare`
+/// 回傳 false）。截斷點對齊 C `strncpy(norm_out, path, norm_sz - 1)`：先截斷再去尾端
+/// 與折疊 slash。只做 byte-level 路徑正規化，不碰 SQLite。
+pub unsafe extern "C" fn cbm_rs_store_normalize_arch_path_v1(
+    norm_out: *mut c_char,
+    norm_sz: usize,
+    path: *const c_char,
+) -> usize {
+    if norm_out.is_null() || norm_sz == 0 {
+        return usize::MAX;
+    }
+    let Some(output) = store_arch_helpers::normalize_arch_path(unsafe { c_bytes(path) }, norm_sz)
+    else {
+        return usize::MAX;
+    };
+    let n = output.len();
+    unsafe {
+        if n > 0 {
+            ptr::copy_nonoverlapping(output.as_ptr().cast::<c_char>(), norm_out, n);
+        }
+        *norm_out.add(n) = 0;
+    }
+    n
+}
+
+#[no_mangle]
+/// # Safety
+///
 /// `buf` 必須是 null，或指向 `bufsize` bytes 的可寫記憶體；`pattern` 必須是
 /// null，或指向 NUL-terminated C string。此 API 只執行 glob 到 SQL LIKE
 /// pattern 的 byte-level 轉換，不碰 SQLite。

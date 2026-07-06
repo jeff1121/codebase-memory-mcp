@@ -443,6 +443,7 @@ extern size_t cbm_rs_store_like_hint_v1(char *buf, size_t bufsize, const char *p
                                         int max_out, int index);
 extern size_t cbm_rs_store_qn_to_package_v1(char *buf, size_t bufsize, const char *qn);
 extern size_t cbm_rs_store_qn_to_top_package_v1(char *buf, size_t bufsize, const char *qn);
+extern size_t cbm_rs_store_normalize_arch_path_v1(char *norm_out, size_t norm_sz, const char *path);
 extern int cbm_rs_store_is_test_file_path_v1(const char *path);
 extern int cbm_rs_store_hop_to_risk_v1(int hop);
 extern size_t cbm_rs_store_risk_label_v1(char *buf, size_t bufsize, int level);
@@ -2450,6 +2451,71 @@ static void test_store_search_pattern_exports(void) {
     check_int("store_like_long_nul", buf[255], '\0');
 }
 
+static void test_store_arch_path_scope_exports(void) {
+    char buf[512];
+
+    check_size("store_arch_path_basic",
+               cbm_rs_store_normalize_arch_path_v1(buf, sizeof(buf), "apps/foo"),
+               strlen("apps/foo"));
+    check_str("store_arch_path_basic_val", buf, "apps/foo");
+
+    check_size("store_arch_path_dotslash",
+               cbm_rs_store_normalize_arch_path_v1(buf, sizeof(buf), "./apps/foo"),
+               strlen("apps/foo"));
+    check_str("store_arch_path_dotslash_val", buf, "apps/foo");
+
+    check_size("store_arch_path_leadslash",
+               cbm_rs_store_normalize_arch_path_v1(buf, sizeof(buf), "/apps/foo"),
+               strlen("apps/foo"));
+    check_str("store_arch_path_leadslash_val", buf, "apps/foo");
+
+    check_size("store_arch_path_ws",
+               cbm_rs_store_normalize_arch_path_v1(buf, sizeof(buf), "  \tapps/foo"),
+               strlen("apps/foo"));
+    check_str("store_arch_path_ws_val", buf, "apps/foo");
+
+    check_size("store_arch_path_trailing",
+               cbm_rs_store_normalize_arch_path_v1(buf, sizeof(buf), "apps/foo/ "),
+               strlen("apps/foo"));
+    check_str("store_arch_path_trailing_val", buf, "apps/foo");
+
+    check_size("store_arch_path_collapse",
+               cbm_rs_store_normalize_arch_path_v1(buf, sizeof(buf), "apps///foo//bar"),
+               strlen("apps/foo/bar"));
+    check_str("store_arch_path_collapse_val", buf, "apps/foo/bar");
+
+    /* 未設定 / 正規化後為空 → SIZE_MAX（對應 C arch_path_prepare 回傳 false）*/
+    check_size("store_arch_path_null",
+               cbm_rs_store_normalize_arch_path_v1(buf, sizeof(buf), NULL), SIZE_MAX);
+    check_size("store_arch_path_empty",
+               cbm_rs_store_normalize_arch_path_v1(buf, sizeof(buf), ""), SIZE_MAX);
+    check_size("store_arch_path_ws_only",
+               cbm_rs_store_normalize_arch_path_v1(buf, sizeof(buf), "   "), SIZE_MAX);
+    check_size("store_arch_path_dotslash_only",
+               cbm_rs_store_normalize_arch_path_v1(buf, sizeof(buf), "./"), SIZE_MAX);
+    check_size("store_arch_path_slashes_only",
+               cbm_rs_store_normalize_arch_path_v1(buf, sizeof(buf), "///"), SIZE_MAX);
+
+    /* norm_sz==0 / NULL out → SIZE_MAX */
+    check_size("store_arch_path_zero_sz",
+               cbm_rs_store_normalize_arch_path_v1(buf, 0, "apps/foo"), SIZE_MAX);
+    check_size("store_arch_path_null_out",
+               cbm_rs_store_normalize_arch_path_v1(NULL, sizeof(buf), "apps/foo"), SIZE_MAX);
+
+    /* 截斷先於 strip/collapse（對齊 C strncpy）*/
+    char small[5];
+    memset(small, 'Z', sizeof(small));
+    check_size("store_arch_path_trunc",
+               cbm_rs_store_normalize_arch_path_v1(small, sizeof(small), "abcdef"),
+               strlen("abcd"));
+    check_str("store_arch_path_trunc_val", small, "abcd");
+    memset(small, 'Z', sizeof(small));
+    check_size("store_arch_path_trunc_slash",
+               cbm_rs_store_normalize_arch_path_v1(small, sizeof(small), "abc/def"),
+               strlen("abc"));
+    check_str("store_arch_path_trunc_slash_val", small, "abc");
+}
+
 static void test_store_arch_helper_exports(void) {
     char buf[512];
     char small[4];
@@ -3692,6 +3758,7 @@ int main(void) {
     test_store_immutable_uri_exports();
     test_store_search_pattern_exports();
     test_store_arch_helper_exports();
+    test_store_arch_path_scope_exports();
     test_store_mmap_resolver_exports();
     test_store_schema_manifest_exports();
     test_registry_import_map_and_bare();

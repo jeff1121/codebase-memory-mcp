@@ -93,6 +93,9 @@ extern int cbm_rs_store_is_test_file_path_v1(const char *path);
 extern int cbm_rs_store_hop_to_risk_v1(int hop);
 extern size_t cbm_rs_store_risk_label_v1(char *buf, size_t bufsize, int level);
 #endif
+#ifdef CBM_USE_RUST_STORE_ARCH_PATH_SCOPE
+extern size_t cbm_rs_store_normalize_arch_path_v1(char *norm_out, size_t norm_sz, const char *path);
+#endif
 
 #define XXH_INLINE_ALL
 #include "xxhash/xxhash.h"
@@ -3158,6 +3161,7 @@ static void schema_discover_props(sqlite3 *db, const char *sql, const char *proj
 }
 
 /* Path scoping for architecture / schema (shared). */
+#ifndef CBM_USE_RUST_STORE_ARCH_PATH_SCOPE
 static bool arch_path_is_set(const char *path) {
     if (!path) {
         return false;
@@ -3167,9 +3171,18 @@ static bool arch_path_is_set(const char *path) {
     }
     return path[0] != '\0';
 }
+#endif
 
 static bool arch_path_prepare(const char *path, char *norm_out, size_t norm_sz, char *like_out,
                               size_t like_sz) {
+#ifdef CBM_USE_RUST_STORE_ARCH_PATH_SCOPE
+    size_t rust_len = cbm_rs_store_normalize_arch_path_v1(norm_out, norm_sz, path);
+    if (rust_len == SIZE_MAX) {
+        return false;
+    }
+    snprintf(like_out, like_sz, "%s/%%", norm_out);
+    return true;
+#else
     if (!arch_path_is_set(path)) {
         return false;
     }
@@ -3209,6 +3222,7 @@ static bool arch_path_prepare(const char *path, char *norm_out, size_t norm_sz, 
     }
     snprintf(like_out, like_sz, "%s/%%", norm_out);
     return true;
+#endif
 }
 
 static const char *arch_path_scope_sql(void) {

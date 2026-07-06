@@ -50,6 +50,9 @@ make -f Makefile.cbm rust-store-search-pattern-optin-test
 echo "=== Rust store architecture helper opt-in ==="
 make -f Makefile.cbm rust-store-arch-helper-optin-test
 
+echo "=== Rust store architecture path scope opt-in ==="
+make -f Makefile.cbm rust-store-arch-path-scope-optin-test
+
 echo "=== Rust MCP codec opt-in ==="
 make -f Makefile.cbm rust-mcp-codec-optin-test
 
