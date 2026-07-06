@@ -43,6 +43,13 @@
 - 驗證（2026-07-05 Foundation mem pressure parity）：新增 `foundation::mem` Rust test-only helper 與 `cbm_rs_mem_*` FFI smoke，固定 `CBM_MEM_BUDGET_MB` override、`worker_budget`、`over_budget`、`peak_rss` 與 `collect` contract；不接產品 opt-in，僅作為 C path 的行為觀測對照。通過 `cargo test -p cbm-core foundation::mem --locked`（4 passed）、`make -f Makefile.cbm rust-ffi-test`、`cargo fmt --all -- --check`、`cargo clippy -p cbm-core --all-targets --all-features --locked -- -D warnings` 與 `git diff --check`。
 - 驗證（2026-07-06 本機 final gate 補強）：本輪重跑 `scripts/build.sh`、`scripts/build.sh --with-ui`、`scripts/smoke-test.sh build/c/codebase-memory-mcp`、`scripts/smoke-invariants.sh build/c/codebase-memory-mcp`（30 passed / 0 failed）、`scripts/lint.sh --ci`、`make -f Makefile.cbm security` 與完整 `scripts/test.sh`。`scripts/test.sh` 最終 `=== All tests passed ===`，包含 Rust unit 86 passed、registry opt-in 53 passed、pipeline plan opt-in 217 passed、Store FTS tokenizer opt-in 的 `store_compat mcp` 131 passed；`security` 含 security-fuzz 23/23、vendored integrity、Rust allowlist 與 cargo-audit 掃描均通過。此 gate 證明本機 build/test/lint/smoke/security 狀態，但尚不代表跨平台、package wrappers、release packaging、效能門檻、預設 Rust-backed 切換或 C fallback release cycle 已完成。
 
+## 本次工作階段（2026-07-06 Phase 3 MCP tools/list cursor offset opt-in）
+
+- 新增 `rust/cbm-core/src/mcp/mod.rs` 的 `tools_cursor_offset(params_json, tool_count)`，重用既有 JSON parser 驗證整份 params（含尾端殘留檢查，對齊 yyjson_read），擷取首個 `cursor` 字串，並以 `strtol_full_nonneg` 鏡像 C `strtol` 搭配 `*endptr=='\0' && errno==0 && parsed>=0` 語意（前導空白、正負號、完整消耗、i64 溢位、非負、`-0` 視為 0），最後 clamp 到 tool_count。
+- 新增 `cbm_rs_mcp_tools_cursor_offset_v1(params_json, tool_count)` FFI，並在 `CBM_USE_RUST_MCP_CODEC=1` 下讓 `src/mcp/mcp.c` `mcp_tools_cursor_offset()` 委派 Rust（傳入 `TOOL_COUNT`）；response serialization、Content-Length framing、tool schema 與 14 handlers 仍留 C。
+- 凍結 contract：`tests/test_mcp.c` 新增 `server_handle_tools_list_cursor_edge_cases`（cursor="0" 等同第一頁；無效字串與負數 cursor → offset=TOOL_COUNT 空頁），於預設 C 與 opt-in 皆執行以確保 end-to-end 平價；`tests/test_rust_ffi.c` 新增 27 項 FFI ABI smoke。
+- 驗證通過：`cargo fmt --all -- --check`、`cargo test -p cbm-core mcp --locked`（7 passed）、`cargo clippy -p cbm-core --all-targets --all-features --locked -- -D warnings`、`make -f Makefile.cbm rust-ffi-test`、預設 `build/c/test-runner mcp`（124 passed）、`make -f Makefile.cbm rust-mcp-codec-optin-test`（124 passed）、`make -f Makefile.cbm lint-format` 與 `git diff --check`。
+
 ## 本次工作階段（2026-07-06 Phase 3 Store arch path scope opt-in）
 
 - 新增 `rust/cbm-core/src/store/arch_helpers.rs` 的 `normalize_arch_path(path, cap)` 純 helper，對齊 `src/store/store.c` `arch_path_prepare` 的 norm_out 正規化：跳過前導空白、去一次 `./`、去前導 `/`、以 `cap-1` 截斷（對齊 C `strncpy`），再去尾端 ` `/`\t`/`/` 並折疊重複 `/`；path 未設定或正規化後為空回傳 `None`。截斷刻意先於 strip/collapse，完全對齊 C。

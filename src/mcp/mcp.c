@@ -160,6 +160,7 @@ extern int cbm_rs_mcp_jsonrpc_parse_v1(const unsigned char *input, int len,
                                        size_t method_bufsize, char *id_str_buf,
                                        size_t id_str_bufsize, char *params_buf,
                                        size_t params_bufsize);
+extern int cbm_rs_mcp_tools_cursor_offset_v1(const char *params_json, int tool_count);
 #endif
 
 int cbm_jsonrpc_parse(const char *line, cbm_jsonrpc_request_t *out) {
@@ -687,6 +688,9 @@ const char *cbm_mcp_tool_input_schema(const char *tool_name) {
 }
 
 static int mcp_tools_cursor_offset(const char *params_json) {
+#ifdef CBM_USE_RUST_MCP_CODEC
+    return cbm_rs_mcp_tools_cursor_offset_v1(params_json, TOOL_COUNT);
+#else
     if (!params_json) {
         return 0;
     }
@@ -716,6 +720,7 @@ static int mcp_tools_cursor_offset(const char *params_json) {
 
     yyjson_doc_free(doc);
     return offset;
+#endif
 }
 
 static char *cbm_mcp_tools_list_page(const char *params_json) {

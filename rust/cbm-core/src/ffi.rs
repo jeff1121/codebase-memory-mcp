@@ -1031,6 +1031,20 @@ pub unsafe extern "C" fn cbm_rs_mcp_jsonrpc_parse_v1(
 }
 
 #[no_mangle]
+/// # Safety
+///
+/// `params_json` 必須是 null，或指向 NUL-terminated C string。回傳 tools/list 分頁
+/// 的 cursor offset，對齊 C `mcp_tools_cursor_offset`（詳見 `mcp::tools_cursor_offset`）；
+/// `tool_count` 由呼叫端傳入 C 的 `TOOL_COUNT`。
+pub unsafe extern "C" fn cbm_rs_mcp_tools_cursor_offset_v1(
+    params_json: *const c_char,
+    tool_count: c_int,
+) -> c_int {
+    let bytes = unsafe { c_bytes(params_json) };
+    mcp::tools_cursor_offset(bytes, i64::from(tool_count)) as c_int
+}
+
+#[no_mangle]
 pub extern "C" fn cbm_rs_pipeline_incremental_post_step_count(mode: c_int) -> c_int {
     plan::incremental_post_steps(mode).len() as c_int
 }

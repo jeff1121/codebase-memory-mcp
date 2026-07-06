@@ -422,6 +422,7 @@ extern int cbm_rs_mcp_jsonrpc_parse_v1(const unsigned char *input, int len,
                                        size_t method_bufsize, char *id_str_buf,
                                        size_t id_str_bufsize, char *params_buf,
                                        size_t params_bufsize);
+extern int cbm_rs_mcp_tools_cursor_offset_v1(const char *params_json, int tool_count);
 extern int cbm_rs_gbuf_mutation_command_count_v1(void);
 extern int cbm_rs_gbuf_mutation_commands_v1(CbmRsGbufMutationMetaV1 *out, int cap);
 extern int cbm_rs_gbuf_mutation_validate_v1(const CbmRsGbufMutationCmdV1 *cmd,
@@ -3506,6 +3507,46 @@ static void test_cypher_parse_summary_export(void) {
               expected_return_distinct_count);
 }
 
+static void test_mcp_tools_cursor_offset_exports(void) {
+    const int tc = 14;
+    /* null / malformed JSON / 尾端殘留 → 0 */
+    check_int("mcp_cursor_null", cbm_rs_mcp_tools_cursor_offset_v1(NULL, tc), 0);
+    check_int("mcp_cursor_empty", cbm_rs_mcp_tools_cursor_offset_v1("", tc), 0);
+    check_int("mcp_cursor_open_brace", cbm_rs_mcp_tools_cursor_offset_v1("{", tc), 0);
+    check_int("mcp_cursor_bad_value", cbm_rs_mcp_tools_cursor_offset_v1("{\"cursor\":}", tc), 0);
+    check_int("mcp_cursor_not_json", cbm_rs_mcp_tools_cursor_offset_v1("not json", tc), 0);
+    check_int("mcp_cursor_trailing", cbm_rs_mcp_tools_cursor_offset_v1("{} trailing", tc), 0);
+    /* 合法 JSON 但 root 非物件或無 cursor → 0 */
+    check_int("mcp_cursor_empty_obj", cbm_rs_mcp_tools_cursor_offset_v1("{}", tc), 0);
+    check_int("mcp_cursor_no_cursor", cbm_rs_mcp_tools_cursor_offset_v1("{\"limit\":5}", tc), 0);
+    check_int("mcp_cursor_array", cbm_rs_mcp_tools_cursor_offset_v1("[]", tc), 0);
+    check_int("mcp_cursor_number_root", cbm_rs_mcp_tools_cursor_offset_v1("5", tc), 0);
+    /* cursor 存在但非有效非負整數字串 → tool_count */
+    check_int("mcp_cursor_empty_str", cbm_rs_mcp_tools_cursor_offset_v1("{\"cursor\":\"\"}", tc),
+              tc);
+    check_int("mcp_cursor_abc", cbm_rs_mcp_tools_cursor_offset_v1("{\"cursor\":\"abc\"}", tc), tc);
+    check_int("mcp_cursor_number", cbm_rs_mcp_tools_cursor_offset_v1("{\"cursor\":5}", tc), tc);
+    check_int("mcp_cursor_null_val", cbm_rs_mcp_tools_cursor_offset_v1("{\"cursor\":null}", tc), tc);
+    check_int("mcp_cursor_negative", cbm_rs_mcp_tools_cursor_offset_v1("{\"cursor\":\"-1\"}", tc),
+              tc);
+    check_int("mcp_cursor_trailing_space",
+              cbm_rs_mcp_tools_cursor_offset_v1("{\"cursor\":\"5 \"}", tc), tc);
+    check_int("mcp_cursor_hex", cbm_rs_mcp_tools_cursor_offset_v1("{\"cursor\":\"0x5\"}", tc), tc);
+    check_int("mcp_cursor_overflow",
+              cbm_rs_mcp_tools_cursor_offset_v1("{\"cursor\":\"99999999999999999999\"}", tc), tc);
+    /* 有效 cursor → clamp 到 tool_count */
+    check_int("mcp_cursor_zero", cbm_rs_mcp_tools_cursor_offset_v1("{\"cursor\":\"0\"}", tc), 0);
+    check_int("mcp_cursor_three", cbm_rs_mcp_tools_cursor_offset_v1("{\"cursor\":\"3\"}", tc), 3);
+    check_int("mcp_cursor_lead_space", cbm_rs_mcp_tools_cursor_offset_v1("{\"cursor\":\" 4\"}", tc),
+              4);
+    check_int("mcp_cursor_plus", cbm_rs_mcp_tools_cursor_offset_v1("{\"cursor\":\"+6\"}", tc), 6);
+    check_int("mcp_cursor_neg_zero", cbm_rs_mcp_tools_cursor_offset_v1("{\"cursor\":\"-0\"}", tc),
+              0);
+    check_int("mcp_cursor_clamp", cbm_rs_mcp_tools_cursor_offset_v1("{\"cursor\":\"100\"}", tc), tc);
+    check_int("mcp_cursor_dup_first",
+              cbm_rs_mcp_tools_cursor_offset_v1("{\"cursor\":\"2\",\"cursor\":\"9\"}", tc), 2);
+}
+
 static void test_mcp_jsonrpc_summary_export(void) {
     char invalid_buf[8] = "keep";
     check_size("mcp_jsonrpc_summary_null",
@@ -3751,6 +3792,7 @@ int main(void) {
     test_cypher_parse_summary_export();
     test_mcp_jsonrpc_summary_export();
     test_mcp_jsonrpc_parse_export();
+    test_mcp_tools_cursor_offset_exports();
     test_pipeline_project_name_exports();
     test_pipeline_plan_exports();
     test_gbuf_mutation_metadata_exports();

@@ -84,6 +84,71 @@ pub fn jsonrpc_request_summary(input: &[u8]) -> Option<Vec<u8>> {
     Some(render_summary(&summary))
 }
 
+/// tools/list 分頁 cursor offset，對齊 `src/mcp/mcp.c` `mcp_tools_cursor_offset`。
+///
+/// `params_json` 為 tools/list 請求的 params 物件字串（可為 null）。回傳語意：
+/// - params_json 為 null，或非合法 JSON（對齊 yyjson_read 失敗，含尾端殘留）→ 0。
+/// - 合法 JSON 但 root 非物件、或物件無 `cursor` 鍵 → 0。
+/// - 有 `cursor` 鍵：baseline 為 `tool_count`；僅當 cursor 為非空字串且以 base-10
+///   `strtol` 完整解析為非負整數（無尾端字元、無溢位）時，clamp 到 `tool_count`。
+#[must_use]
+pub fn tools_cursor_offset(params_json: Option<&[u8]>, tool_count: i64) -> i64 {
+    let Some(bytes) = params_json else {
+        return 0;
+    };
+    let mut parser = Parser::new(bytes);
+    let Some(cursor) = parser.parse_root_cursor() else {
+        return 0;
+    };
+    match cursor {
+        Some(JsonValue::String(value)) if !value.is_empty() => match strtol_full_nonneg(&value) {
+            Some(parsed) => parsed.min(tool_count),
+            None => tool_count,
+        },
+        Some(_) => tool_count,
+        None => 0,
+    }
+}
+
+/// 對齊 C `strtol(s, &endptr, 10)` 搭配 `*endptr == '\0' && errno == 0 && parsed >= 0`
+/// 的驗證：跳過前導空白（C locale isspace）、可選正負號、至少一位 base-10 數字、
+/// 整串消耗完（無尾端）、無溢位、結果非負。符合時回傳非負值，否則回傳 None。
+fn strtol_full_nonneg(s: &[u8]) -> Option<i64> {
+    let mut i = 0;
+    while i < s.len() && matches!(s[i], b' ' | b'\t' | b'\n' | 0x0b | 0x0c | b'\r') {
+        i += 1;
+    }
+    let negative = match s.get(i) {
+        Some(b'-') => {
+            i += 1;
+            true
+        }
+        Some(b'+') => {
+            i += 1;
+            false
+        }
+        _ => false,
+    };
+    let digits_start = i;
+    let mut value: i64 = 0;
+    let mut overflow = false;
+    while i < s.len() && s[i].is_ascii_digit() {
+        let digit = i64::from(s[i] - b'0');
+        match value.checked_mul(10).and_then(|v| v.checked_add(digit)) {
+            Some(v) => value = v,
+            None => overflow = true,
+        }
+        i += 1;
+    }
+    if i == digits_start || i != s.len() || overflow {
+        return None;
+    }
+    if negative && value != 0 {
+        return None;
+    }
+    Some(value)
+}
+
 fn render_summary(summary: &RequestSummary) -> Vec<u8> {
     let mut out = Vec::new();
     out.extend_from_slice(b"jsonrpc=");
@@ -327,6 +392,52 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn parse_root_cursor(&mut self) -> Option<Option<JsonValue>> {
+        self.skip_ws();
+        let cursor = if self.peek() == Some(b'{') {
+            self.parse_object_capture_cursor()?
+        } else {
+            self.parse_value()?;
+            None
+        };
+        self.skip_ws();
+        if !self.is_eof() {
+            return None;
+        }
+        Some(cursor)
+    }
+
+    fn parse_object_capture_cursor(&mut self) -> Option<Option<JsonValue>> {
+        if !self.consume(b'{') {
+            return None;
+        }
+        self.skip_ws();
+        if self.consume(b'}') {
+            return Some(None);
+        }
+        let mut cursor = None;
+        loop {
+            self.skip_ws();
+            let key = self.parse_string()?;
+            self.skip_ws();
+            if !self.consume(b':') {
+                return None;
+            }
+            let value = self.parse_value()?;
+            if key.as_slice() == b"cursor" && cursor.is_none() {
+                cursor = Some(value);
+            }
+            self.skip_ws();
+            if self.consume(b'}') {
+                break;
+            }
+            if !self.consume(b',') {
+                return None;
+            }
+        }
+        Some(cursor)
+    }
+
     fn parse_array_skip(&mut self) -> Option<()> {
         if !self.consume(b'[') {
             return None;
@@ -484,10 +595,47 @@ fn hex_value(b: u8) -> Option<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::jsonrpc_request_summary;
+    use super::{jsonrpc_request_summary, tools_cursor_offset};
 
     fn summary(input: &[u8]) -> String {
         String::from_utf8(jsonrpc_request_summary(input).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn tools_cursor_offset_matches_c_contract() {
+        const TC: i64 = 14;
+        let f = |s: &str| tools_cursor_offset(Some(s.as_bytes()), TC);
+        // null / malformed JSON / 尾端殘留 → 0
+        assert_eq!(tools_cursor_offset(None, TC), 0);
+        assert_eq!(f(""), 0);
+        assert_eq!(f("{"), 0);
+        assert_eq!(f("{\"cursor\":}"), 0);
+        assert_eq!(f("not json"), 0);
+        assert_eq!(f("{} trailing"), 0);
+        // 合法 JSON 但 root 非物件或無 cursor → 0
+        assert_eq!(f("{}"), 0);
+        assert_eq!(f("{\"limit\":5}"), 0);
+        assert_eq!(f("[]"), 0);
+        assert_eq!(f("5"), 0);
+        // cursor 存在但非有效非負整數字串 → tool_count
+        assert_eq!(f("{\"cursor\":\"\"}"), TC);
+        assert_eq!(f("{\"cursor\":\"abc\"}"), TC);
+        assert_eq!(f("{\"cursor\":5}"), TC);
+        assert_eq!(f("{\"cursor\":null}"), TC);
+        assert_eq!(f("{\"cursor\":\"-1\"}"), TC);
+        assert_eq!(f("{\"cursor\":\"5 \"}"), TC);
+        assert_eq!(f("{\"cursor\":\"0x5\"}"), TC);
+        assert_eq!(f("{\"cursor\":\"99999999999999999999\"}"), TC);
+        // 有效 cursor → clamp 到 tool_count
+        assert_eq!(f("{\"cursor\":\"0\"}"), 0);
+        assert_eq!(f("{\"cursor\":\"3\"}"), 3);
+        assert_eq!(f("{\"cursor\":\" 4\"}"), 4);
+        assert_eq!(f("{\"cursor\":\"+6\"}"), 6);
+        assert_eq!(f("{\"cursor\":\"-0\"}"), 0);
+        assert_eq!(f("{\"cursor\":\"100\"}"), TC);
+        assert_eq!(f("{\"cursor\":\"9223372036854775807\"}"), TC);
+        // 首個 cursor 勝出（重複鍵）
+        assert_eq!(f("{\"cursor\":\"2\",\"cursor\":\"9\"}"), 2);
     }
 
     #[test]

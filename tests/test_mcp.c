@@ -399,6 +399,40 @@ TEST(server_handle_tools_list) {
     PASS();
 }
 
+TEST(server_handle_tools_list_cursor_edge_cases) {
+    cbm_mcp_server_t *srv = cbm_mcp_server_new(NULL);
+
+    /* cursor="0"：有效，等同第一頁 */
+    char *resp = cbm_mcp_server_handle(
+        srv,
+        "{\"jsonrpc\":\"2.0\",\"id\":220,\"method\":\"tools/list\",\"params\":{\"cursor\":\"0\"}}");
+    ASSERT_NOT_NULL(resp);
+    ASSERT_NOT_NULL(strstr(resp, "\"nextCursor\":\"8\""));
+    ASSERT_NOT_NULL(strstr(resp, "index_repository"));
+    ASSERT_NULL(strstr(resp, "manage_adr"));
+    free(resp);
+
+    /* 無效字串 cursor → offset=TOOL_COUNT → 空頁、無 nextCursor */
+    resp = cbm_mcp_server_handle(srv, "{\"jsonrpc\":\"2.0\",\"id\":221,\"method\":\"tools/list\","
+                                      "\"params\":{\"cursor\":\"abc\"}}");
+    ASSERT_NOT_NULL(resp);
+    ASSERT_NULL(strstr(resp, "\"nextCursor\""));
+    ASSERT_NULL(strstr(resp, "index_repository"));
+    ASSERT_NULL(strstr(resp, "manage_adr"));
+    free(resp);
+
+    /* 負數 cursor 亦視為無效 → offset=TOOL_COUNT → 空頁 */
+    resp = cbm_mcp_server_handle(srv, "{\"jsonrpc\":\"2.0\",\"id\":222,\"method\":\"tools/list\","
+                                      "\"params\":{\"cursor\":\"-1\"}}");
+    ASSERT_NOT_NULL(resp);
+    ASSERT_NULL(strstr(resp, "\"nextCursor\""));
+    ASSERT_NULL(strstr(resp, "index_repository"));
+    free(resp);
+
+    cbm_mcp_server_free(srv);
+    PASS();
+}
+
 TEST(server_handle_tools_list_paginates) {
     cbm_mcp_server_t *srv = cbm_mcp_server_new(NULL);
 
@@ -3158,6 +3192,7 @@ SUITE(mcp) {
     RUN_TEST(server_handle_initialized_notification);
     RUN_TEST(server_handle_tools_list);
     RUN_TEST(server_handle_tools_list_paginates);
+    RUN_TEST(server_handle_tools_list_cursor_edge_cases);
     RUN_TEST(server_handle_logs_request_without_params);
     RUN_TEST(server_handle_unknown_method);
 
