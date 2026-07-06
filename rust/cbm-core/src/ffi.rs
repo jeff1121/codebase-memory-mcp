@@ -1300,6 +1300,34 @@ pub unsafe extern "C" fn cbm_rs_store_normalize_arch_path_v1(
 #[no_mangle]
 /// # Safety
 ///
+/// `buf` 必須是 null，或指向 `bufsize` bytes 的可寫記憶體；`path` 必須是 null，或
+/// 指向 NUL-terminated C string。將 path 最後一個 `.` 起的副檔名（含 `.`）以 ASCII
+/// 小寫寫入 `buf`，回傳長度；無 `.`、副檔名長度 >= `bufsize`（對齊 C `file_ext` 的
+/// `len >= sizeof(buf)`）、`buf` 為 null 或 `bufsize == 0` 時回傳 `usize::MAX`。
+pub unsafe extern "C" fn cbm_rs_store_file_ext_lower_v1(
+    buf: *mut c_char,
+    bufsize: usize,
+    path: *const c_char,
+) -> usize {
+    if buf.is_null() || bufsize == 0 {
+        return usize::MAX;
+    }
+    let Some(output) = store_arch_helpers::file_ext_lower(unsafe { c_bytes(path) }, bufsize) else {
+        return usize::MAX;
+    };
+    let n = output.len();
+    unsafe {
+        if n > 0 {
+            ptr::copy_nonoverlapping(output.as_ptr().cast::<c_char>(), buf, n);
+        }
+        *buf.add(n) = 0;
+    }
+    n
+}
+
+#[no_mangle]
+/// # Safety
+///
 /// `buf` 必須是 null，或指向 `bufsize` bytes 的可寫記憶體；`pattern` 必須是
 /// null，或指向 NUL-terminated C string。此 API 只執行 glob 到 SQL LIKE
 /// pattern 的 byte-level 轉換，不碰 SQLite。

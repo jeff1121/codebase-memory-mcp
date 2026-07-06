@@ -43,6 +43,13 @@
 - 驗證（2026-07-05 Foundation mem pressure parity）：新增 `foundation::mem` Rust test-only helper 與 `cbm_rs_mem_*` FFI smoke，固定 `CBM_MEM_BUDGET_MB` override、`worker_budget`、`over_budget`、`peak_rss` 與 `collect` contract；不接產品 opt-in，僅作為 C path 的行為觀測對照。通過 `cargo test -p cbm-core foundation::mem --locked`（4 passed）、`make -f Makefile.cbm rust-ffi-test`、`cargo fmt --all -- --check`、`cargo clippy -p cbm-core --all-targets --all-features --locked -- -D warnings` 與 `git diff --check`。
 - 驗證（2026-07-06 本機 final gate 補強）：本輪重跑 `scripts/build.sh`、`scripts/build.sh --with-ui`、`scripts/smoke-test.sh build/c/codebase-memory-mcp`、`scripts/smoke-invariants.sh build/c/codebase-memory-mcp`（30 passed / 0 failed）、`scripts/lint.sh --ci`、`make -f Makefile.cbm security` 與完整 `scripts/test.sh`。`scripts/test.sh` 最終 `=== All tests passed ===`，包含 Rust unit 86 passed、registry opt-in 53 passed、pipeline plan opt-in 217 passed、Store FTS tokenizer opt-in 的 `store_compat mcp` 131 passed；`security` 含 security-fuzz 23/23、vendored integrity、Rust allowlist 與 cargo-audit 掃描均通過。此 gate 證明本機 build/test/lint/smoke/security 狀態，但尚不代表跨平台、package wrappers、release packaging、效能門檻、預設 Rust-backed 切換或 C fallback release cycle 已完成。
 
+## 本次工作階段（2026-07-06 Phase 3 Store file_ext opt-in）
+
+- 新增 `rust/cbm-core/src/store/arch_helpers.rs` 的 `file_ext_lower(path, cap)`，對齊 `src/store/store.c` `file_ext`：取 path 最後一個 `.` 起的副檔名（含 `.`），ASCII 小寫；無 `.` 或副檔名長度 >= `cap`（對齊 C `len >= sizeof(buf)`，拒絕而非截斷）時回傳 `None`。
+- 新增 `cbm_rs_store_file_ext_lower_v1(buf, bufsize, path)` caller-buffer FFI（回傳長度或 `usize::MAX`），並以 `CBM_USE_RUST_STORE_FILE_EXT=1` 讓 `file_ext()` 將純轉換委派 Rust 後仍回傳 C 的 `CBM_TLS` buffer；`strrchr`、TLS buffer 生命週期與 `ext_to_lang` 的 44 項表查找仍留 C。
+- 新增 `tests/test_rust_ffi.c` `test_store_file_ext_lower_exports`（14 項：基本/大小寫/最後一個 `.`/dotfile/只有 `.`、無 `.`、null/null out/bufsize==0、長度 >= buffer 拒絕與剛好放得下）。opt-in matrix target `rust-store-file-ext-optin-test` 已接入 `.PHONY`/`rust-ci`/`rust-ci-tests`/`scripts/rust-check.sh`/`scripts/test.sh`。
+- 驗證通過：`cargo fmt --all -- --check`、`cargo test -p cbm-core store::arch_helpers --locked`（6 passed）、`cargo clippy -p cbm-core --all-targets --all-features --locked -- -D warnings`、`make -f Makefile.cbm rust-ffi-test`、預設 `build/c/test-runner store_arch`（52 passed）、`make -f Makefile.cbm rust-store-file-ext-optin-test`（52 passed）、`make -f Makefile.cbm lint-format` 與 `git diff --check`。
+
 ## 本次工作階段（2026-07-06 Phase 3 Cypher scalar func canonical opt-in）
 
 - 新增 `rust/cbm-core/src/cypher/mod.rs` 的 `scalar_func_index(input)`，以 ASCII 大小寫不敏感（對齊 C `cyp_ci_eq`）比對 `SCALAR_FUNC_NAMES`（labels/type/id/keys/properties/toInteger/toFloat/toBoolean/size/length/trim/ltrim/rtrim/reverse），回傳符合的索引或 `None`。

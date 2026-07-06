@@ -96,6 +96,9 @@ extern size_t cbm_rs_store_risk_label_v1(char *buf, size_t bufsize, int level);
 #ifdef CBM_USE_RUST_STORE_ARCH_PATH_SCOPE
 extern size_t cbm_rs_store_normalize_arch_path_v1(char *norm_out, size_t norm_sz, const char *path);
 #endif
+#ifdef CBM_USE_RUST_STORE_FILE_EXT
+extern size_t cbm_rs_store_file_ext_lower_v1(char *buf, size_t bufsize, const char *path);
+#endif
 
 #define XXH_INLINE_ALL
 #include "xxhash/xxhash.h"
@@ -3742,6 +3745,11 @@ static const char *ext_to_lang(const char *ext) {
 
 /* Get lowercase file extension from path */
 static const char *file_ext(const char *path) {
+#ifdef CBM_USE_RUST_STORE_FILE_EXT
+    static CBM_TLS char buf[CBM_SZ_16];
+    size_t len = cbm_rs_store_file_ext_lower_v1(buf, sizeof(buf), path);
+    return len == SIZE_MAX ? NULL : buf;
+#else
     if (!path) {
         return NULL;
     }
@@ -3759,6 +3767,7 @@ static const char *file_ext(const char *path) {
     }
     buf[len] = '\0';
     return buf;
+#endif
 }
 
 /* ── Architecture aspect implementations ───────────────────────── */

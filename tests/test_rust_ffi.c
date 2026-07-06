@@ -446,6 +446,7 @@ extern size_t cbm_rs_store_like_hint_v1(char *buf, size_t bufsize, const char *p
 extern size_t cbm_rs_store_qn_to_package_v1(char *buf, size_t bufsize, const char *qn);
 extern size_t cbm_rs_store_qn_to_top_package_v1(char *buf, size_t bufsize, const char *qn);
 extern size_t cbm_rs_store_normalize_arch_path_v1(char *norm_out, size_t norm_sz, const char *path);
+extern size_t cbm_rs_store_file_ext_lower_v1(char *buf, size_t bufsize, const char *path);
 extern int cbm_rs_store_is_test_file_path_v1(const char *path);
 extern int cbm_rs_store_hop_to_risk_v1(int hop);
 extern size_t cbm_rs_store_risk_label_v1(char *buf, size_t bufsize, int level);
@@ -2453,6 +2454,39 @@ static void test_store_search_pattern_exports(void) {
     check_int("store_like_long_nul", buf[255], '\0');
 }
 
+static void test_store_file_ext_lower_exports(void) {
+    char buf[16];
+    check_size("store_ext_py", cbm_rs_store_file_ext_lower_v1(buf, sizeof(buf), "main.py"),
+               strlen(".py"));
+    check_str("store_ext_py_val", buf, ".py");
+    check_size("store_ext_upper", cbm_rs_store_file_ext_lower_v1(buf, sizeof(buf), "App.JAVA"),
+               strlen(".java"));
+    check_str("store_ext_upper_val", buf, ".java");
+    check_size("store_ext_last_dot", cbm_rs_store_file_ext_lower_v1(buf, sizeof(buf), "a.TAR.GZ"),
+               strlen(".gz"));
+    check_str("store_ext_last_dot_val", buf, ".gz");
+    check_size("store_ext_dotfile", cbm_rs_store_file_ext_lower_v1(buf, sizeof(buf), ".gitignore"),
+               strlen(".gitignore"));
+    check_str("store_ext_dotfile_val", buf, ".gitignore");
+    check_size("store_ext_trailing_dot", cbm_rs_store_file_ext_lower_v1(buf, sizeof(buf), "noext."),
+               strlen("."));
+    check_str("store_ext_trailing_dot_val", buf, ".");
+    /* 無 . / null / null out / bufsize==0 → SIZE_MAX */
+    check_size("store_ext_none", cbm_rs_store_file_ext_lower_v1(buf, sizeof(buf), "Makefile"),
+               SIZE_MAX);
+    check_size("store_ext_null", cbm_rs_store_file_ext_lower_v1(buf, sizeof(buf), NULL), SIZE_MAX);
+    check_size("store_ext_null_out", cbm_rs_store_file_ext_lower_v1(NULL, sizeof(buf), "a.py"),
+               SIZE_MAX);
+    check_size("store_ext_zero_sz", cbm_rs_store_file_ext_lower_v1(buf, 0, "a.py"), SIZE_MAX);
+    /* 副檔名長度 >= bufsize 拒絕（對齊 C len >= sizeof(buf)）*/
+    check_size("store_ext_too_long",
+               cbm_rs_store_file_ext_lower_v1(buf, sizeof(buf), "a.abcdefghijklmno"), SIZE_MAX);
+    check_size("store_ext_fits",
+               cbm_rs_store_file_ext_lower_v1(buf, sizeof(buf), "a.abcdefghijklmn"),
+               strlen(".abcdefghijklmn"));
+    check_str("store_ext_fits_val", buf, ".abcdefghijklmn");
+}
+
 static void test_store_arch_path_scope_exports(void) {
     char buf[512];
 
@@ -3822,6 +3856,7 @@ int main(void) {
     test_store_search_pattern_exports();
     test_store_arch_helper_exports();
     test_store_arch_path_scope_exports();
+    test_store_file_ext_lower_exports();
     test_store_mmap_resolver_exports();
     test_store_schema_manifest_exports();
     test_registry_import_map_and_bare();

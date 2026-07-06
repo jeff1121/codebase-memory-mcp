@@ -156,6 +156,20 @@ pub fn normalize_arch_path(path: Option<&[u8]>, cap: usize) -> Option<Vec<u8>> {
     Some(out)
 }
 
+/// `src/store/store.c` `file_ext` 的 parity：取 path 最後一個 `.` 起的副檔名
+/// （含 `.`），轉小寫（ASCII）。無 `.`、或副檔名長度 >= `cap`（對齊 C 的
+/// `len >= sizeof(buf)`，非截斷而是拒絕）時回傳 `None`。
+#[must_use]
+pub fn file_ext_lower(path: Option<&[u8]>, cap: usize) -> Option<Vec<u8>> {
+    let path = path?;
+    let dot = path.iter().rposition(|&b| b == b'.')?;
+    let ext = &path[dot..];
+    if ext.len() >= cap {
+        return None;
+    }
+    Some(ext.iter().map(|&b| b.to_ascii_lowercase()).collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -194,6 +208,24 @@ mod tests {
         );
         assert_eq!(normalize_arch_path(Some(b"abc"), 0), None);
         assert_eq!(normalize_arch_path(Some(b"abc"), 1), None);
+    }
+
+    #[test]
+    fn file_ext_lower_matches_c_contract() {
+        let f = |p: &[u8]| file_ext_lower(Some(p), 16);
+        assert_eq!(f(b"main.py"), Some(b".py".to_vec()));
+        assert_eq!(f(b"App.JAVA"), Some(b".java".to_vec()));
+        assert_eq!(f(b"a.TAR.GZ"), Some(b".gz".to_vec()));
+        assert_eq!(f(b"Makefile"), None);
+        assert_eq!(file_ext_lower(None, 16), None);
+        assert_eq!(f(b".gitignore"), Some(b".gitignore".to_vec()));
+        assert_eq!(f(b"noext."), Some(b".".to_vec()));
+        // 長度 >= cap 拒絕（對齊 C `len >= sizeof(buf)`）
+        assert_eq!(file_ext_lower(Some(b"a.abcdefghijklmno"), 16), None);
+        assert_eq!(
+            file_ext_lower(Some(b"a.abcdefghijklmn"), 16),
+            Some(b".abcdefghijklmn".to_vec())
+        );
     }
 
     #[test]

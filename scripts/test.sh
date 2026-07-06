@@ -84,7 +84,7 @@ bash "$ROOT/tests/test_security_strings_allowlist.sh"
 if [ -f "$ROOT/Cargo.toml" ] && [ "${CBM_SKIP_RUST:-0}" != "1" ]; then
     if command -v cargo >/dev/null 2>&1; then
         echo "=== Step 7: Rust refactor parity tests ==="
-        make -f Makefile.cbm rust-test rust-ffi-test rust-foundation-optin-test rust-pipeline-registry-optin-test rust-pipeline-plan-optin-test rust-store-fts-tokenizer-optin-test rust-store-mmap-resolver-optin-test rust-store-immutable-uri-optin-test rust-store-search-pattern-optin-test rust-store-arch-helper-optin-test rust-store-arch-path-scope-optin-test rust-mcp-codec-optin-test rust-cypher-scalar-func-optin-test $MAKE_ARGS
+        make -f Makefile.cbm rust-test rust-ffi-test rust-foundation-optin-test rust-pipeline-registry-optin-test rust-pipeline-plan-optin-test rust-store-fts-tokenizer-optin-test rust-store-mmap-resolver-optin-test rust-store-immutable-uri-optin-test rust-store-search-pattern-optin-test rust-store-arch-helper-optin-test rust-store-arch-path-scope-optin-test rust-store-file-ext-optin-test rust-mcp-codec-optin-test rust-cypher-scalar-func-optin-test $MAKE_ARGS
     else
         echo "=== Step 7: Rust refactor parity tests skipped (cargo not found) ==="
     fi

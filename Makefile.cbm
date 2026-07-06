@@ -547,7 +547,7 @@ PP_OBJ_TEST = $(BUILD_DIR)/preprocessor.o
 # ── Targets ──────────────────────────────────────────────────────
 
 .PHONY: test test-repro test-foundation test-tsan cbm cbm-with-ui frontend embed clean-c \
-        rust-fmt rust-clippy rust-test rust-ffi-test rust-foundation-optin-test rust-pipeline-registry-optin-test rust-pipeline-plan-optin-test rust-store-fts-tokenizer-optin-test rust-store-mmap-resolver-optin-test rust-store-immutable-uri-optin-test rust-store-search-pattern-optin-test rust-store-arch-helper-optin-test rust-store-arch-path-scope-optin-test rust-mcp-codec-optin-test rust-cypher-scalar-func-optin-test rust-language-graph-parity rust-language-graph-parity-update rust-baseline-fixtures rust-self-index-baseline rust-self-index-baseline-update rust-large-performance-baseline rust-large-performance-baseline-update rust-lint rust-dangerous-api rust-audit rust-security rust-ci rust-ci-tests \
+        rust-fmt rust-clippy rust-test rust-ffi-test rust-foundation-optin-test rust-pipeline-registry-optin-test rust-pipeline-plan-optin-test rust-store-fts-tokenizer-optin-test rust-store-mmap-resolver-optin-test rust-store-immutable-uri-optin-test rust-store-search-pattern-optin-test rust-store-arch-helper-optin-test rust-store-arch-path-scope-optin-test rust-store-file-ext-optin-test rust-mcp-codec-optin-test rust-cypher-scalar-func-optin-test rust-language-graph-parity rust-language-graph-parity-update rust-baseline-fixtures rust-self-index-baseline rust-self-index-baseline-update rust-large-performance-baseline rust-large-performance-baseline-update rust-lint rust-dangerous-api rust-audit rust-security rust-ci rust-ci-tests \
         lint lint-tidy lint-cppcheck lint-format lint-no-suppress lint-ci security
 
 $(BUILD_DIR):
@@ -830,6 +830,11 @@ rust-store-arch-path-scope-optin-test:
 	$(MAKE) -f Makefile.cbm CBM_USE_RUST_STORE_ARCH_PATH_SCOPE=1 $(BUILD_DIR)/test-runner
 	cd $(CURDIR) && $(BUILD_DIR)/test-runner store_arch store_search mcp
 
+rust-store-file-ext-optin-test:
+	$(MAKE) -f Makefile.cbm clean-c
+	$(MAKE) -f Makefile.cbm CBM_USE_RUST_STORE_FILE_EXT=1 $(BUILD_DIR)/test-runner
+	cd $(CURDIR) && $(BUILD_DIR)/test-runner store_arch
+
 rust-mcp-codec-optin-test:
 	$(MAKE) -f Makefile.cbm clean-c
 	$(MAKE) -f Makefile.cbm CBM_USE_RUST_MCP_CODEC=1 $(BUILD_DIR)/test-runner
@@ -899,12 +904,12 @@ rust-audit:
 rust-security: rust-dangerous-api rust-audit
 	@echo "=== Rust source security checks passed; cargo-audit is enforced when RUST_AUDIT_REQUIRED=1 ==="
 
-rust-ci: rust-lint rust-test rust-ffi-test rust-foundation-optin-test rust-pipeline-registry-optin-test rust-pipeline-plan-optin-test rust-store-fts-tokenizer-optin-test rust-store-mmap-resolver-optin-test rust-store-immutable-uri-optin-test rust-store-search-pattern-optin-test rust-store-arch-helper-optin-test rust-store-arch-path-scope-optin-test rust-mcp-codec-optin-test rust-cypher-scalar-func-optin-test rust-language-graph-parity rust-dangerous-api rust-audit
+rust-ci: rust-lint rust-test rust-ffi-test rust-foundation-optin-test rust-pipeline-registry-optin-test rust-pipeline-plan-optin-test rust-store-fts-tokenizer-optin-test rust-store-mmap-resolver-optin-test rust-store-immutable-uri-optin-test rust-store-search-pattern-optin-test rust-store-arch-helper-optin-test rust-store-arch-path-scope-optin-test rust-store-file-ext-optin-test rust-mcp-codec-optin-test rust-cypher-scalar-func-optin-test rust-language-graph-parity rust-dangerous-api rust-audit
 	@echo "=== Rust checks passed ==="
 
 # Test/parity subset of rust-ci for CI (dependency audit + dangerous-API
 # allow-list run in the separate security gate, so they are omitted here).
-rust-ci-tests: rust-lint rust-test rust-ffi-test rust-foundation-optin-test rust-pipeline-registry-optin-test rust-pipeline-plan-optin-test rust-store-fts-tokenizer-optin-test rust-store-mmap-resolver-optin-test rust-store-immutable-uri-optin-test rust-store-search-pattern-optin-test rust-store-arch-helper-optin-test rust-store-arch-path-scope-optin-test rust-mcp-codec-optin-test rust-cypher-scalar-func-optin-test rust-language-graph-parity
+rust-ci-tests: rust-lint rust-test rust-ffi-test rust-foundation-optin-test rust-pipeline-registry-optin-test rust-pipeline-plan-optin-test rust-store-fts-tokenizer-optin-test rust-store-mmap-resolver-optin-test rust-store-immutable-uri-optin-test rust-store-search-pattern-optin-test rust-store-arch-helper-optin-test rust-store-arch-path-scope-optin-test rust-store-file-ext-optin-test rust-mcp-codec-optin-test rust-cypher-scalar-func-optin-test rust-language-graph-parity
 	@echo "=== Rust test/parity gates passed ==="
 
 # ── Linting ─────────────────────────────────────────────────────
