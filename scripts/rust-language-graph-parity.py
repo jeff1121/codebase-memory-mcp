@@ -390,6 +390,48 @@ def create_repo(root: Path) -> Path:
         ),
     )
     write(
+        repo / "js" / "service.js",
+        "\n".join(
+            [
+                "class JsWorker {",
+                "  run() {",
+                "    return jsHelper();",
+                "  }",
+                "}",
+                "",
+                "function jsHelper() {",
+                "  return 'ok';",
+                "}",
+                "",
+                "module.exports = { JsWorker, jsHelper };",
+                "",
+            ]
+        ),
+    )
+    write(
+        repo / "js" / "server.js",
+        "\n".join(
+            [
+                "const express = require('express');",
+                "const { JsWorker } = require('./service');",
+                "",
+                "const app = express();",
+                "",
+                "app.get('/tasks/:id', (_req, res) => {",
+                "  const worker = new JsWorker();",
+                "  res.send(worker.run());",
+                "});",
+                "",
+                "function jsStart() {",
+                "  return app;",
+                "}",
+                "",
+                "module.exports = { jsStart };",
+                "",
+            ]
+        ),
+    )
+    write(
         repo / "config" / "deploy.yaml",
         "\n".join(
             [
@@ -485,6 +527,9 @@ def summarize_db(db_path: Path) -> dict[str, Any]:
             "cppName",
             "cppHelper",
             "cppEntry",
+            "JsWorker",
+            "jsHelper",
+            "jsStart",
         )
         placeholders = ",".join("?" for _ in interesting)
         relevant_edges = (

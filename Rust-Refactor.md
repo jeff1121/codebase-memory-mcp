@@ -43,6 +43,12 @@
 - 驗證（2026-07-05 Foundation mem pressure parity）：新增 `foundation::mem` Rust test-only helper 與 `cbm_rs_mem_*` FFI smoke，固定 `CBM_MEM_BUDGET_MB` override、`worker_budget`、`over_budget`、`peak_rss` 與 `collect` contract；不接產品 opt-in，僅作為 C path 的行為觀測對照。通過 `cargo test -p cbm-core foundation::mem --locked`（4 passed）、`make -f Makefile.cbm rust-ffi-test`、`cargo fmt --all -- --check`、`cargo clippy -p cbm-core --all-targets --all-features --locked -- -D warnings` 與 `git diff --check`。
 - 驗證（2026-07-06 本機 final gate 補強）：本輪重跑 `scripts/build.sh`、`scripts/build.sh --with-ui`、`scripts/smoke-test.sh build/c/codebase-memory-mcp`、`scripts/smoke-invariants.sh build/c/codebase-memory-mcp`（30 passed / 0 failed）、`scripts/lint.sh --ci`、`make -f Makefile.cbm security` 與完整 `scripts/test.sh`。`scripts/test.sh` 最終 `=== All tests passed ===`，包含 Rust unit 86 passed、registry opt-in 53 passed、pipeline plan opt-in 217 passed、Store FTS tokenizer opt-in 的 `store_compat mcp` 131 passed；`security` 含 security-fuzz 23/23、vendored integrity、Rust allowlist 與 cargo-audit 掃描均通過。此 gate 證明本機 build/test/lint/smoke/security 狀態，但尚不代表跨平台、package wrappers、release packaging、效能門檻、預設 Rust-backed 切換或 C fallback release cycle 已完成。
 
+## 本次工作階段（2026-07-06 Phase 4 language graph parity JavaScript 擴充）
+
+- 於 `scripts/rust-language-graph-parity.py` 的 `create_repo` 新增 JavaScript 小型 fixture（`js/service.js`、`js/server.js`），涵蓋 class 方法呼叫、`function` 定義、CommonJS `require`/`module.exports` import 與 express `/tasks/:id` route；並將 `JsWorker`、`jsHelper`、`jsStart` 納入 `interesting` 觀測名單。此為 roadmap 第 6 節（internal/cbm）「先覆蓋高流量語言」的前置 gate 切片：JavaScript 為計畫明列高流量語言中尚未覆蓋者（py/ts/go/rust/java/cpp 與 K8s YAML 已覆蓋）。
+- 僅動 parity harness fixture 與 golden，未變更任何產品原始碼、`ffi.rs`、`Makefile.cbm` 或 opt-in 旗標；預設 C 路徑與 Rust pipeline opt-in 路徑（`CBM_USE_RUST_PIPELINE_REGISTRY=1 CBM_USE_RUST_PIPELINE_PLAN=1 CBM_USE_RUST_STORE_FTS_TOKENIZER=1`）的 graph 完全一致。
+- 驗證通過：`make -f Makefile.cbm rust-language-graph-parity-update` 重生 golden（内含 default==rust 精確比對，且 harness 檢查無本機/暫存路徑外洩），`python3 scripts/rust-language-graph-parity.py target/rust-parity/cbm-default target/rust-parity/cbm-rust-pipeline` 非 update 決定性驗證，`python3 -m py_compile scripts/rust-language-graph-parity.py` 與 `git diff --check`。
+
 ## 本次工作階段（2026-07-05 Foundation mem pressure parity）
 
 - 新增 `rust/cbm-core/src/foundation/mem.rs`，提供純值 helper 對齊 `src/foundation/mem.c` 的 budget/pressure contract。

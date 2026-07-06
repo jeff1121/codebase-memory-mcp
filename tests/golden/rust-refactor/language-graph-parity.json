@@ -15,19 +15,19 @@
         "semantic": true
       },
       "edge_type_histogram": {
-        "CALLS": 24,
-        "CONTAINS_FILE": 66,
-        "CONTAINS_FOLDER": 8,
+        "CALLS": 30,
+        "CONTAINS_FILE": 68,
+        "CONTAINS_FOLDER": 9,
         "DECORATES": 2,
-        "DEFINES": 874,
-        "DEFINES_METHOD": 16,
+        "DEFINES": 883,
+        "DEFINES_METHOD": 17,
         "HANDLES": 2,
         "HAS_BRANCH": 1,
         "IMPLEMENTS": 2,
-        "IMPORTS": 2,
+        "IMPORTS": 3,
         "INHERITS": 2,
         "OVERRIDE": 1,
-        "USAGE": 21,
+        "USAGE": 22,
         "WRITES": 2
       },
       "interesting_edges": [
@@ -150,6 +150,50 @@
           "javaName",
           "java/App.java",
           "lsp_type_dispatch",
+          ""
+        ],
+        [
+          "CALLS",
+          "Module",
+          "js/server.js",
+          "js/server.js",
+          "Route",
+          "/tasks/:id",
+          "",
+          "",
+          "/tasks/:id"
+        ],
+        [
+          "CALLS",
+          "Module",
+          "js/server.js",
+          "js/server.js",
+          "Variable",
+          "JsWorker",
+          "js/server.js",
+          "same_module",
+          ""
+        ],
+        [
+          "CALLS",
+          "Module",
+          "js/server.js",
+          "js/server.js",
+          "Method",
+          "run",
+          "ts/service.ts",
+          "field_type_hint",
+          ""
+        ],
+        [
+          "CALLS",
+          "Method",
+          "run",
+          "js/service.js",
+          "Function",
+          "jsHelper",
+          "js/service.js",
+          "lsp_ts_local",
           ""
         ],
         [
@@ -584,6 +628,61 @@
         [
           "DEFINES",
           "File",
+          "server.js",
+          "js/server.js",
+          "Variable",
+          "JsWorker",
+          "js/server.js",
+          "",
+          ""
+        ],
+        [
+          "DEFINES",
+          "File",
+          "server.js",
+          "js/server.js",
+          "Function",
+          "jsStart",
+          "js/server.js",
+          "",
+          ""
+        ],
+        [
+          "DEFINES",
+          "File",
+          "service.js",
+          "js/service.js",
+          "Class",
+          "JsWorker",
+          "js/service.js",
+          "",
+          ""
+        ],
+        [
+          "DEFINES",
+          "File",
+          "service.js",
+          "js/service.js",
+          "Function",
+          "jsHelper",
+          "js/service.js",
+          "",
+          ""
+        ],
+        [
+          "DEFINES",
+          "File",
+          "service.js",
+          "js/service.js",
+          "Method",
+          "run",
+          "js/service.js",
+          "",
+          ""
+        ],
+        [
+          "DEFINES",
+          "File",
           "app.py",
           "py/app.py",
           "Function",
@@ -903,6 +1002,17 @@
         [
           "DEFINES_METHOD",
           "Class",
+          "JsWorker",
+          "js/service.js",
+          "Method",
+          "run",
+          "js/service.js",
+          "",
+          ""
+        ],
+        [
+          "DEFINES_METHOD",
+          "Class",
           "Greeter",
           "py/greeter.py",
           "Method",
@@ -1013,6 +1123,17 @@
         [
           "IMPORTS",
           "File",
+          "server.js",
+          "js/server.js",
+          "Module",
+          "js/service.js",
+          "js/service.js",
+          "",
+          ""
+        ],
+        [
+          "IMPORTS",
+          "File",
           "app.py",
           "py/app.py",
           "Module",
@@ -1094,6 +1215,11 @@
         ],
         [
           "Class",
+          "JsWorker",
+          "js/service.js"
+        ],
+        [
+          "Class",
           "Worker",
           "ts/service.ts"
         ],
@@ -1156,6 +1282,16 @@
           "Function",
           "javaName",
           "java/App.java"
+        ],
+        [
+          "Function",
+          "jsHelper",
+          "js/service.js"
+        ],
+        [
+          "Function",
+          "jsStart",
+          "js/server.js"
         ],
         [
           "Function",
@@ -1255,6 +1391,11 @@
         [
           "Method",
           "run",
+          "js/service.js"
+        ],
+        [
+          "Method",
+          "run",
           "rs/lib.rs"
         ],
         [
@@ -1281,28 +1422,33 @@
           "Struct",
           "RustWorker",
           "rs/lib.rs"
+        ],
+        [
+          "Variable",
+          "JsWorker",
+          "js/server.js"
         ]
       ],
       "node_label_histogram": {
         "Branch": 1,
-        "Class": 12,
+        "Class": 13,
         "Field": 2,
-        "File": 66,
-        "Folder": 6,
-        "Function": 76,
+        "File": 68,
+        "Folder": 7,
+        "Function": 78,
         "Interface": 3,
-        "Method": 21,
-        "Module": 65,
+        "Method": 22,
+        "Module": 67,
         "Project": 1,
         "Resource": 1,
-        "Route": 3,
+        "Route": 4,
         "Struct": 2,
-        "Variable": 7
+        "Variable": 10
       }
     },
     "index": {
-      "edges": 1023,
-      "nodes": 266,
+      "edges": 1044,
+      "nodes": 279,
       "project": "rust_refactor_language_parity",
       "status": "indexed"
     }
