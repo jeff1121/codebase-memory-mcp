@@ -32,6 +32,13 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef CBM_USE_RUST_PIPELINE_SEMANTIC_JSON
+extern int cbm_rs_pipeline_semantic_json_str_value_v1(const char *json, const char *key, char *buf,
+                                                      int bufsize);
+extern int cbm_rs_pipeline_semantic_json_str_array_v1(const char *json, const char *key, char **out,
+                                                      int max_out);
+#endif
+
 /* ── Helpers ─────────────────────────────────────────────────────── */
 
 enum {
@@ -300,6 +307,9 @@ static const char *file_ext(const char *path) {
 
 /* Extract a JSON string value by key (simple strstr-based, no full parse). */
 static const char *json_str_value(const char *json, const char *key, char *buf, int bufsize) {
+#ifdef CBM_USE_RUST_PIPELINE_SEMANTIC_JSON
+    return cbm_rs_pipeline_semantic_json_str_value_v1(json, key, buf, bufsize) != 0 ? buf : NULL;
+#else
     if (!json || !key) {
         return NULL;
     }
@@ -321,10 +331,14 @@ static const char *json_str_value(const char *json, const char *key, char *buf, 
     memcpy(buf, start, (size_t)len);
     buf[len] = '\0';
     return buf;
+#endif
 }
 
 /* Extract a JSON array of strings by key. Returns count. */
 static int json_str_array(const char *json, const char *key, char **out, int max_out) {
+#ifdef CBM_USE_RUST_PIPELINE_SEMANTIC_JSON
+    return cbm_rs_pipeline_semantic_json_str_array_v1(json, key, out, max_out);
+#else
     if (!json || !key) {
         return 0;
     }
@@ -354,6 +368,7 @@ static int json_str_array(const char *json, const char *key, char **out, int max
         }
     }
     return count;
+#endif
 }
 
 /* ── Tokenize node metadata ──────────────────────────────────────── */

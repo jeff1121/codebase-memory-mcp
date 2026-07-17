@@ -104,9 +104,17 @@ TEST(jsonrpc_format_response_string_id_issue253) {
     };
     char *json = cbm_jsonrpc_format_response(&resp);
     ASSERT_NOT_NULL(json);
-    ASSERT_NOT_NULL(strstr(json, "\"id\":\"init-abc\""));
+    ASSERT_STR_EQ(json, "{\"jsonrpc\":\"2.0\",\"id\":\"init-abc\",\"result\":{\"ok\":true}}");
     /* Must NOT have coerced to a numeric id. */
     ASSERT_NULL(strstr(json, "\"id\":0"));
+    free(json);
+
+    cbm_jsonrpc_response_t escaped = {
+        .id_str = "a\"b\\c",
+    };
+    json = cbm_jsonrpc_format_response(&escaped);
+    ASSERT_NOT_NULL(json);
+    ASSERT_STR_EQ(json, "{\"jsonrpc\":\"2.0\",\"id\":\"a\\\"b\\\\c\",\"result\":null}");
     free(json);
     PASS();
 }
@@ -122,10 +130,38 @@ TEST(jsonrpc_format_response) {
     };
     char *json = cbm_jsonrpc_format_response(&resp);
     ASSERT_NOT_NULL(json);
-    /* Should contain jsonrpc, id, and result */
-    ASSERT_NOT_NULL(strstr(json, "\"jsonrpc\":\"2.0\""));
-    ASSERT_NOT_NULL(strstr(json, "\"id\":1"));
-    ASSERT_NOT_NULL(strstr(json, "\"result\""));
+    ASSERT_STR_EQ(json,
+                  "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{"
+                  "\"name\":\"codebase-memory-mcp\"}}");
+    free(json);
+
+    cbm_jsonrpc_response_t err_resp = {
+        .id = 5,
+        .result_json = "{\"ignored\":true}",
+        .error_json = "{\"code\":-32600,\"message\":\"bad\"}",
+    };
+    json = cbm_jsonrpc_format_response(&err_resp);
+    ASSERT_NOT_NULL(json);
+    ASSERT_STR_EQ(json,
+                  "{\"jsonrpc\":\"2.0\",\"id\":5,\"error\":{\"code\":-32600,"
+                  "\"message\":\"bad\"}}");
+    free(json);
+
+    cbm_jsonrpc_response_t invalid_result = {
+        .id = 9,
+        .result_json = "not json",
+    };
+    json = cbm_jsonrpc_format_response(&invalid_result);
+    ASSERT_NOT_NULL(json);
+    ASSERT_STR_EQ(json, "{\"jsonrpc\":\"2.0\",\"id\":9}");
+    free(json);
+
+    cbm_jsonrpc_response_t null_result = {
+        .id = 10,
+    };
+    json = cbm_jsonrpc_format_response(&null_result);
+    ASSERT_NOT_NULL(json);
+    ASSERT_STR_EQ(json, "{\"jsonrpc\":\"2.0\",\"id\":10,\"result\":null}");
     free(json);
     PASS();
 }
@@ -133,10 +169,16 @@ TEST(jsonrpc_format_response) {
 TEST(jsonrpc_format_error) {
     char *json = cbm_jsonrpc_format_error(5, -32600, "Invalid Request");
     ASSERT_NOT_NULL(json);
-    ASSERT_NOT_NULL(strstr(json, "\"id\":5"));
-    ASSERT_NOT_NULL(strstr(json, "\"error\""));
-    ASSERT_NOT_NULL(strstr(json, "-32600"));
-    ASSERT_NOT_NULL(strstr(json, "Invalid Request"));
+    ASSERT_STR_EQ(json,
+                  "{\"jsonrpc\":\"2.0\",\"id\":5,\"error\":{\"code\":-32600,"
+                  "\"message\":\"Invalid Request\"}}");
+    free(json);
+
+    json = cbm_jsonrpc_format_error(-1, -32700, "bad \"json\" \\ input\n");
+    ASSERT_NOT_NULL(json);
+    ASSERT_STR_EQ(json,
+                  "{\"jsonrpc\":\"2.0\",\"id\":-1,\"error\":{\"code\":-32700,"
+                  "\"message\":\"bad \\\"json\\\" \\\\ input\\n\"}}");
     free(json);
     PASS();
 }
@@ -167,8 +209,40 @@ TEST(mcp_initialize_response) {
     ASSERT_NOT_NULL(strstr(json, "2025-06-18"));
     free(json);
 
+    json = cbm_mcp_initialize_response("{\"protocolVersion\":\"2025-03-26\"}");
+    ASSERT_NOT_NULL(json);
+    ASSERT_NOT_NULL(strstr(json, "2025-03-26"));
+    free(json);
+
     /* Client requests unknown version: server returns its latest */
     json = cbm_mcp_initialize_response("{\"protocolVersion\":\"9999-01-01\"}");
+    ASSERT_NOT_NULL(json);
+    ASSERT_NOT_NULL(strstr(json, "2025-11-25"));
+    free(json);
+
+    json = cbm_mcp_initialize_response("{\"capabilities\":{}}");
+    ASSERT_NOT_NULL(json);
+    ASSERT_NOT_NULL(strstr(json, "2025-11-25"));
+    free(json);
+
+    json = cbm_mcp_initialize_response("{\"protocolVersion\":20250618}");
+    ASSERT_NOT_NULL(json);
+    ASSERT_NOT_NULL(strstr(json, "2025-11-25"));
+    free(json);
+
+    json = cbm_mcp_initialize_response("[]");
+    ASSERT_NOT_NULL(json);
+    ASSERT_NOT_NULL(strstr(json, "2025-11-25"));
+    free(json);
+
+    json = cbm_mcp_initialize_response("{\"protocolVersion\":\"2024-11-05\","
+                                       "\"protocolVersion\":\"2025-11-25\"}");
+    ASSERT_NOT_NULL(json);
+    ASSERT_NOT_NULL(strstr(json, "2024-11-05"));
+    free(json);
+
+    json = cbm_mcp_initialize_response("{\"protocolVersion\":7,"
+                                       "\"protocolVersion\":\"2024-11-05\"}");
     ASSERT_NOT_NULL(json);
     ASSERT_NOT_NULL(strstr(json, "2025-11-25"));
     free(json);
@@ -218,6 +292,24 @@ TEST(mcp_index_repository_declares_name_override_issue571) {
     PASS();
 }
 
+TEST(mcp_tool_input_schema_lookup) {
+    const char *schema = cbm_mcp_tool_input_schema("search_graph");
+    ASSERT_NOT_NULL(schema);
+    ASSERT_NOT_NULL(strstr(schema, "\"project\":{\"type\":\"string\""));
+    ASSERT_NOT_NULL(strstr(schema, "\"query\":{\"type\":\"string\""));
+
+    schema = cbm_mcp_tool_input_schema("ingest_traces");
+    ASSERT_NOT_NULL(schema);
+    ASSERT_NOT_NULL(strstr(schema, "\"traces\":{\"type\":\"array\""));
+    ASSERT_NOT_NULL(strstr(schema, "\"required\":[\"traces\",\"project\"]"));
+
+    ASSERT_NULL(cbm_mcp_tool_input_schema(NULL));
+    ASSERT_NULL(cbm_mcp_tool_input_schema(""));
+    ASSERT_NULL(cbm_mcp_tool_input_schema("Search_Graph"));
+    ASSERT_NULL(cbm_mcp_tool_input_schema("unknown_tool"));
+    PASS();
+}
+
 TEST(mcp_tools_array_schemas_have_items) {
     /* VS Code 1.112+ rejects array schemas without "items" (see
      * https://github.com/microsoft/vscode/issues/248810).
@@ -250,12 +342,14 @@ TEST(mcp_tools_array_schemas_have_items) {
 TEST(mcp_text_result) {
     char *json = cbm_mcp_text_result("{\"total\":5}", false);
     ASSERT_NOT_NULL(json);
-    ASSERT_NOT_NULL(strstr(json, "\"type\":\"text\""));
-    /* The text value is JSON-escaped inside the "text" field */
-    ASSERT_NOT_NULL(strstr(json, "total"));
-    ASSERT_NOT_NULL(strstr(json, "\"structuredContent\":{\"total\":5}"));
-    ASSERT_NOT_NULL(strstr(json, "\"isError\":false"));
-    ASSERT_NULL(strstr(json, "\"isError\":true"));
+    ASSERT_STR_EQ(json,
+                  "{\"content\":[{\"type\":\"text\",\"text\":\"{\\\"total\\\":5}\"}],"
+                  "\"structuredContent\":{\"total\":5},\"isError\":false}");
+    free(json);
+
+    json = cbm_mcp_text_result(NULL, false);
+    ASSERT_NOT_NULL(json);
+    ASSERT_STR_EQ(json, "{\"content\":[{\"type\":\"text\",\"text\":\"\"}],\"isError\":false}");
     free(json);
     PASS();
 }
@@ -263,8 +357,14 @@ TEST(mcp_text_result) {
 TEST(mcp_text_result_skips_structured_content_for_plain_text) {
     char *json = cbm_mcp_text_result("plain text", false);
     ASSERT_NOT_NULL(json);
-    ASSERT_NULL(strstr(json, "\"structuredContent\""));
-    ASSERT_NOT_NULL(strstr(json, "\"isError\":false"));
+    ASSERT_STR_EQ(json,
+                  "{\"content\":[{\"type\":\"text\",\"text\":\"plain text\"}],"
+                  "\"isError\":false}");
+    free(json);
+
+    json = cbm_mcp_text_result("[1,2]", false);
+    ASSERT_NOT_NULL(json);
+    ASSERT_STR_EQ(json, "{\"content\":[{\"type\":\"text\",\"text\":\"[1,2]\"}],\"isError\":false}");
     free(json);
     PASS();
 }
@@ -272,18 +372,41 @@ TEST(mcp_text_result_skips_structured_content_for_plain_text) {
 TEST(mcp_cancel_matches_request_id) {
     ASSERT_TRUE(cbm_mcp_cancel_request_matches("{\"requestId\":7}", 7, NULL));
     ASSERT_FALSE(cbm_mcp_cancel_request_matches("{\"requestId\":8}", 7, NULL));
+    ASSERT_FALSE(cbm_mcp_cancel_request_matches("{\"requestId\":\"7\"}", 7, NULL));
+    ASSERT_FALSE(cbm_mcp_cancel_request_matches("{\"requestId\":7.0}", 7, NULL));
+    ASSERT_FALSE(cbm_mcp_cancel_request_matches("{\"requestId\":true}", 7, NULL));
+    ASSERT_TRUE(cbm_mcp_cancel_request_matches("{\"requestId\":7,\"requestId\":8}", 7, NULL));
+    ASSERT_FALSE(cbm_mcp_cancel_request_matches("{\"requestId\":7,\"requestId\":8}", 8, NULL));
     ASSERT_TRUE(cbm_mcp_cancel_request_matches("{\"requestId\":\"call-1\"}", -1, "call-1"));
     ASSERT_FALSE(cbm_mcp_cancel_request_matches("{\"requestId\":\"call-2\"}", -1, "call-1"));
     ASSERT_FALSE(cbm_mcp_cancel_request_matches("{\"requestId\":7}", -1, "7"));
+    ASSERT_TRUE(cbm_mcp_cancel_request_matches("{\"requestId\":\"call-\\u4e2d\"}", -1,
+                                               "call-\xE4\xB8\xAD"));
+    ASSERT_TRUE(cbm_mcp_cancel_request_matches("{\"requestId\":\"\",\"requestId\":\"late\"}", -1,
+                                               ""));
     ASSERT_FALSE(cbm_mcp_cancel_request_matches("{}", 7, NULL));
+    ASSERT_FALSE(cbm_mcp_cancel_request_matches(NULL, 7, NULL));
+    ASSERT_FALSE(cbm_mcp_cancel_request_matches("", 7, NULL));
+    ASSERT_FALSE(cbm_mcp_cancel_request_matches("not json", 7, NULL));
+    ASSERT_FALSE(cbm_mcp_cancel_request_matches("[]", 7, NULL));
+    ASSERT_FALSE(cbm_mcp_cancel_request_matches("{\"requestId\":\"bad\xff\"}", -1, "bad"));
     PASS();
 }
 
 TEST(mcp_text_result_error) {
-    char *json = cbm_mcp_text_result("something failed", true);
+    char *json = cbm_mcp_text_result("{\"message\":\"failed\"}", true);
     ASSERT_NOT_NULL(json);
-    ASSERT_NOT_NULL(strstr(json, "\"isError\":true"));
-    ASSERT_NOT_NULL(strstr(json, "something failed"));
+    ASSERT_STR_EQ(json,
+                  "{\"content\":[{\"type\":\"text\",\"text\":\"{\\\"message\\\":\\\"failed\\\"}\"}],"
+                  "\"isError\":true}");
+    ASSERT_NULL(strstr(json, "\"structuredContent\""));
+    free(json);
+
+    json = cbm_mcp_text_result("bad \"json\" \\ input\n", true);
+    ASSERT_NOT_NULL(json);
+    ASSERT_STR_EQ(json,
+                  "{\"content\":[{\"type\":\"text\",\"text\":\"bad \\\"json\\\" \\\\ input\\n\"}],"
+                  "\"isError\":true}");
     free(json);
     PASS();
 }
@@ -509,6 +632,11 @@ static cbm_mcp_server_t *setup_mcp_with_data(void) {
     return srv;
 }
 
+/* Forward declarations for helpers defined later in this file */
+static cbm_mcp_server_t *setup_snippet_server(char *tmp_dir, size_t tmp_sz);
+static void cleanup_snippet_dir(const char *tmp_dir);
+static char *extract_text_content(const char *mcp_result);
+
 TEST(tool_list_projects_empty) {
     cbm_mcp_server_t *srv = setup_mcp_with_data();
 
@@ -554,6 +682,39 @@ TEST(tool_unknown_tool) {
     PASS();
 }
 
+TEST(tool_handle_tool_missing_name) {
+    cbm_mcp_server_t *srv = setup_mcp_with_data();
+
+    char *resp = cbm_mcp_handle_tool(srv, NULL, "{}");
+    ASSERT_NOT_NULL(resp);
+    char *inner = extract_text_content(resp);
+    ASSERT_NOT_NULL(inner);
+    ASSERT_NOT_NULL(strstr(inner, "missing"));
+    ASSERT_NOT_NULL(strstr(inner, "tool"));
+    ASSERT_NOT_NULL(strstr(resp, "\"isError\":true"));
+    free(inner);
+    free(resp);
+
+    cbm_mcp_server_free(srv);
+    PASS();
+}
+
+TEST(tool_handle_tool_unknown_name) {
+    cbm_mcp_server_t *srv = setup_mcp_with_data();
+
+    char *resp = cbm_mcp_handle_tool(srv, "definitely_not_a_tool", "{}");
+    ASSERT_NOT_NULL(resp);
+    char *inner = extract_text_content(resp);
+    ASSERT_NOT_NULL(inner);
+    ASSERT_NOT_NULL(strstr(inner, "unknown tool"));
+    ASSERT_NOT_NULL(strstr(resp, "\"isError\":true"));
+    free(inner);
+    free(resp);
+
+    cbm_mcp_server_free(srv);
+    PASS();
+}
+
 TEST(tool_search_graph_basic) {
     cbm_mcp_server_t *srv = setup_mcp_with_data();
 
@@ -570,10 +731,25 @@ TEST(tool_search_graph_basic) {
     PASS();
 }
 
-/* Forward declarations for helpers defined later in this file */
-static cbm_mcp_server_t *setup_snippet_server(char *tmp_dir, size_t tmp_sz);
-static void cleanup_snippet_dir(const char *tmp_dir);
-static char *extract_text_content(const char *mcp_result);
+TEST(tool_search_graph_rejects_invalid_relationship) {
+    char tmp[256];
+    cbm_mcp_server_t *srv = setup_snippet_server(tmp, sizeof(tmp));
+    ASSERT_NOT_NULL(srv);
+
+    char *resp =
+        cbm_mcp_server_handle(srv, "{\"jsonrpc\":\"2.0\",\"id\":130,\"method\":\"tools/call\","
+                                   "\"params\":{\"name\":\"search_graph\","
+                                   "\"arguments\":{\"project\":\"test-project\",\"label\":\"Function\","
+                                   "\"relationship\":\"calls\"}}}");
+    ASSERT_NOT_NULL(resp);
+    ASSERT_NOT_NULL(strstr(resp, "relationship must be uppercase letters and underscores"));
+    ASSERT_NOT_NULL(strstr(resp, "\"isError\":true"));
+    free(resp);
+
+    cbm_mcp_server_free(srv);
+    cleanup_snippet_dir(tmp);
+    PASS();
+}
 
 TEST(tool_search_graph_includes_node_properties) {
     /* search_graph results must surface each node's properties_json
@@ -953,6 +1129,122 @@ TEST(tool_trace_call_path_prefers_definition) {
     ASSERT_NOT_NULL(strstr(inner, "callee"));
     free(inner);
     free(resp);
+    cbm_mcp_server_free(srv);
+    PASS();
+}
+
+TEST(tool_trace_call_path_filters_tests_by_default) {
+    cbm_mcp_server_t *srv = cbm_mcp_server_new(NULL);
+    cbm_store_t *st = cbm_mcp_server_store(srv);
+    const char *proj = "trace-test-proj";
+    cbm_mcp_server_set_project(srv, proj);
+    cbm_store_upsert_project(st, proj, "/tmp/trace-test");
+
+    cbm_node_t entry = {.project = proj,
+                        .label = "Function",
+                        .name = "entry",
+                        .qualified_name = "trace-test-proj.src.entry",
+                        .file_path = "src/entry.c",
+                        .start_line = 1,
+                        .end_line = 20};
+    cbm_node_t helper = {.project = proj,
+                         .label = "Function",
+                         .name = "test_helper",
+                         .qualified_name = "trace-test-proj.tests.test_helper",
+                         .file_path = "src/tests/test_helper.c",
+                         .start_line = 1,
+                         .end_line = 5};
+    int64_t id_entry = cbm_store_upsert_node(st, &entry);
+    int64_t id_helper = cbm_store_upsert_node(st, &helper);
+    ASSERT_GT(id_entry, 0);
+    ASSERT_GT(id_helper, 0);
+    cbm_edge_t e = {.project = proj, .source_id = id_entry, .target_id = id_helper, .type = "CALLS"};
+    cbm_store_insert_edge(st, &e);
+
+    char *resp = cbm_mcp_server_handle(
+        srv, "{\"jsonrpc\":\"2.0\",\"id\":63,\"method\":\"tools/call\","
+             "\"params\":{\"name\":\"trace_call_path\","
+             "\"arguments\":{\"function_name\":\"entry\",\"project\":\"trace-test-proj\","
+             "\"direction\":\"outbound\"}}}");
+    ASSERT_NOT_NULL(resp);
+    char *inner = extract_text_content(resp);
+    ASSERT_NOT_NULL(inner);
+    ASSERT_NULL(strstr(inner, "test_helper"));
+    free(inner);
+    free(resp);
+
+    resp = cbm_mcp_server_handle(
+        srv, "{\"jsonrpc\":\"2.0\",\"id\":64,\"method\":\"tools/call\","
+             "\"params\":{\"name\":\"trace_call_path\","
+             "\"arguments\":{\"function_name\":\"entry\",\"project\":\"trace-test-proj\","
+             "\"direction\":\"outbound\",\"include_tests\":true}}}");
+    ASSERT_NOT_NULL(resp);
+    inner = extract_text_content(resp);
+    ASSERT_NOT_NULL(inner);
+    ASSERT_NOT_NULL(strstr(inner, "test_helper"));
+    ASSERT_NOT_NULL(strstr(inner, "\"is_test\":true"));
+    free(inner);
+    free(resp);
+
+    cbm_mcp_server_free(srv);
+    PASS();
+}
+
+TEST(tool_trace_call_path_data_flow_mode_uses_data_edges) {
+    cbm_mcp_server_t *srv = cbm_mcp_server_new(NULL);
+    cbm_store_t *st = cbm_mcp_server_store(srv);
+    const char *proj = "trace-flow-proj";
+    cbm_mcp_server_set_project(srv, proj);
+    cbm_store_upsert_project(st, proj, "/tmp/trace-flow");
+
+    cbm_node_t source = {.project = proj,
+                         .label = "Function",
+                         .name = "source",
+                         .qualified_name = "trace-flow-proj.src.source",
+                         .file_path = "src/source.c",
+                         .start_line = 1,
+                         .end_line = 20};
+    cbm_node_t sink = {.project = proj,
+                       .label = "Function",
+                       .name = "sink",
+                       .qualified_name = "trace-flow-proj.src.sink",
+                       .file_path = "src/sink.c",
+                       .start_line = 1,
+                       .end_line = 10};
+    int64_t id_source = cbm_store_upsert_node(st, &source);
+    int64_t id_sink = cbm_store_upsert_node(st, &sink);
+    ASSERT_GT(id_source, 0);
+    ASSERT_GT(id_sink, 0);
+    cbm_edge_t e = {.project = proj,
+                    .source_id = id_source,
+                    .target_id = id_sink,
+                    .type = "DATA_FLOWS"};
+    cbm_store_insert_edge(st, &e);
+
+    char *resp = cbm_mcp_server_handle(
+        srv, "{\"jsonrpc\":\"2.0\",\"id\":65,\"method\":\"tools/call\","
+             "\"params\":{\"name\":\"trace_call_path\","
+             "\"arguments\":{\"function_name\":\"source\",\"project\":\"trace-flow-proj\","
+             "\"direction\":\"outbound\"}}}");
+    ASSERT_NOT_NULL(resp);
+    char *inner = extract_text_content(resp);
+    ASSERT_NOT_NULL(inner);
+    ASSERT_NULL(strstr(inner, "sink"));
+    free(inner);
+    free(resp);
+
+    resp = cbm_mcp_server_handle(
+        srv, "{\"jsonrpc\":\"2.0\",\"id\":66,\"method\":\"tools/call\","
+             "\"params\":{\"name\":\"trace_call_path\","
+             "\"arguments\":{\"function_name\":\"source\",\"project\":\"trace-flow-proj\","
+             "\"direction\":\"outbound\",\"mode\":\"data_flow\"}}}");
+    ASSERT_NOT_NULL(resp);
+    inner = extract_text_content(resp);
+    ASSERT_NOT_NULL(inner);
+    ASSERT_NOT_NULL(strstr(inner, "sink"));
+    free(inner);
+    free(resp);
+
     cbm_mcp_server_free(srv);
     PASS();
 }
@@ -1338,6 +1630,46 @@ TEST(search_code_multi_word) {
     PASS();
 }
 
+TEST(search_code_sanitizes_non_ascii_source_bytes) {
+    char tmp[512];
+    cbm_mcp_server_t *srv = setup_snippet_server(tmp, sizeof(tmp));
+    ASSERT_NOT_NULL(srv);
+
+    char src_path[512];
+    snprintf(src_path, sizeof(src_path), "%s/project/nonascii.go", tmp);
+    FILE *fp = fopen(src_path, "wb");
+    ASSERT_NOT_NULL(fp);
+    fputs("package main\nfunc NonAscii() {\n\t// caf", fp);
+    fputc(0xC3, fp);
+    fputc(0xA9, fp);
+    fputs("\n}\n", fp);
+    fclose(fp);
+
+    cbm_store_t *st = cbm_mcp_server_store(srv);
+    cbm_node_t n = {.project = "test-project",
+                    .label = "Function",
+                    .name = "NonAscii",
+                    .qualified_name = "test-project.cmd.server.main.NonAscii",
+                    .file_path = "nonascii.go",
+                    .start_line = 2,
+                    .end_line = 4};
+    ASSERT_GT(cbm_store_upsert_node(st, &n), 0);
+
+    char *resp = cbm_mcp_server_handle(
+        srv, "{\"jsonrpc\":\"2.0\",\"id\":94,\"method\":\"tools/call\","
+             "\"params\":{\"name\":\"search_code\","
+             "\"arguments\":{\"pattern\":\"caf\",\"project\":\"test-project\","
+             "\"mode\":\"full\"}}}");
+    ASSERT_NOT_NULL(resp);
+    ASSERT_NULL(strstr(resp, "\"isError\":true"));
+    ASSERT_NOT_NULL(strstr(resp, "caf??"));
+    free(resp);
+
+    cleanup_snippet_dir(tmp);
+    cbm_mcp_server_free(srv);
+    PASS();
+}
+
 /* issue #283: search_code with regex=true and a syntactically invalid pattern
  * must return an explicit error, not an empty result indistinguishable from a
  * legitimate no-match. */
@@ -1408,6 +1740,48 @@ TEST(search_code_ampersand_accepted_issue272) {
                                    "\"file_pattern\":\"*R&D*.go\",\"project\":\"test-project\"}}}");
     ASSERT_NOT_NULL(resp);
     ASSERT_TRUE(strstr(resp, "invalid characters") == NULL);
+    free(resp);
+
+    cleanup_snippet_dir(tmp);
+    cbm_mcp_server_free(srv);
+    PASS();
+}
+
+TEST(search_code_rejects_invalid_file_pattern) {
+    char tmp[512];
+    cbm_mcp_server_t *srv = setup_snippet_server(tmp, sizeof(tmp));
+    ASSERT_NOT_NULL(srv);
+
+    char *resp =
+        cbm_mcp_server_handle(srv, "{\"jsonrpc\":\"2.0\",\"id\":95,\"method\":\"tools/call\","
+                                   "\"params\":{\"name\":\"search_code\","
+                                   "\"arguments\":{\"pattern\":\"HandleRequest\","
+                                   "\"file_pattern\":\"*.go;rm -rf /\","
+                                   "\"project\":\"test-project\"}}}");
+    ASSERT_NOT_NULL(resp);
+    ASSERT_NOT_NULL(strstr(resp, "path or file_pattern contains invalid characters"));
+    ASSERT_NOT_NULL(strstr(resp, "\"isError\":true"));
+    free(resp);
+
+    cleanup_snippet_dir(tmp);
+    cbm_mcp_server_free(srv);
+    PASS();
+}
+
+TEST(search_code_files_mode_lists_files) {
+    char tmp[512];
+    cbm_mcp_server_t *srv = setup_snippet_server(tmp, sizeof(tmp));
+    ASSERT_NOT_NULL(srv);
+
+    char *resp =
+        cbm_mcp_server_handle(srv, "{\"jsonrpc\":\"2.0\",\"id\":96,\"method\":\"tools/call\","
+                                   "\"params\":{\"name\":\"search_code\","
+                                   "\"arguments\":{\"pattern\":\"HandleRequest\","
+                                   "\"mode\":\"files\",\"project\":\"test-project\"}}}");
+    ASSERT_NOT_NULL(resp);
+    ASSERT_NOT_NULL(strstr(resp, "\"files\""));
+    ASSERT_TRUE(strstr(resp, "\"results\"") == NULL);
+    ASSERT_TRUE(strstr(resp, "\"isError\":true") == NULL);
     free(resp);
 
     cleanup_snippet_dir(tmp);
@@ -1517,7 +1891,8 @@ TEST(tool_manage_adr_unified_backend_issue256) {
     char *resp = cbm_mcp_server_handle(
         srv, "{\"jsonrpc\":\"2.0\",\"id\":120,\"method\":\"tools/call\","
              "\"params\":{\"name\":\"manage_adr\",\"arguments\":{\"project\":\"adr-unify\","
-             "\"mode\":\"update\",\"content\":\"## PURPOSE\\nUnified ADR backend.\\n\"}}}");
+             "\"mode\":\"store\",\"content\":\"## PURPOSE\\nUnified ADR backend.\\n\\n## STACK\\nC "
+             "core.\\n\"}}}");
     ASSERT_NOT_NULL(resp);
     ASSERT_NOT_NULL(strstr(resp, "updated"));
     free(resp);
@@ -1528,6 +1903,7 @@ TEST(tool_manage_adr_unified_backend_issue256) {
     ASSERT_EQ(cbm_store_adr_get(st, "adr-unify", &adr), CBM_STORE_OK);
     ASSERT_NOT_NULL(adr.content);
     ASSERT_NOT_NULL(strstr(adr.content, "Unified ADR backend."));
+    ASSERT_NOT_NULL(strstr(adr.content, "## STACK"));
     cbm_store_adr_free(&adr);
 
     /* And manage_adr(get) round-trips the same content. */
@@ -1537,6 +1913,16 @@ TEST(tool_manage_adr_unified_backend_issue256) {
              "\"mode\":\"get\"}}}");
     ASSERT_NOT_NULL(resp);
     ASSERT_NOT_NULL(strstr(resp, "Unified ADR backend."));
+    ASSERT_NULL(strstr(resp, "\"isError\":true"));
+    free(resp);
+
+    resp = cbm_mcp_server_handle(
+        srv, "{\"jsonrpc\":\"2.0\",\"id\":122,\"method\":\"tools/call\","
+             "\"params\":{\"name\":\"manage_adr\",\"arguments\":{\"project\":\"adr-unify\","
+             "\"mode\":\"sections\"}}}");
+    ASSERT_NOT_NULL(resp);
+    ASSERT_NOT_NULL(strstr(resp, "## PURPOSE"));
+    ASSERT_NOT_NULL(strstr(resp, "## STACK"));
     ASSERT_NULL(strstr(resp, "\"isError\":true"));
     free(resp);
 
@@ -2619,6 +3005,137 @@ TEST(mcp_server_run_rapid_messages) {
     fclose(in_fp);
     PASS();
 }
+
+TEST(mcp_server_run_content_length_framing) {
+    int fds[2];
+    ASSERT_EQ(pipe(fds), 0);
+
+    const char *body =
+        "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\","
+        "\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{}}}";
+    char frame[2048];
+    int frame_len = snprintf(frame, sizeof(frame), "Content-Length: %zu\r\n\r\n%s", strlen(body), body);
+    ASSERT_TRUE(frame_len > 0);
+    ASSERT_TRUE((size_t)frame_len < sizeof(frame));
+
+    ssize_t written = write(fds[1], frame, (size_t)frame_len);
+    ASSERT_EQ(written, (ssize_t)frame_len);
+    close(fds[1]); /* EOF signals end of input to the server */
+
+    FILE *in_fp = fdopen(fds[0], "r");
+    ASSERT_NOT_NULL(in_fp);
+
+    FILE *out_fp = tmpfile();
+    ASSERT_NOT_NULL(out_fp);
+
+    cbm_mcp_server_t *srv = cbm_mcp_server_new(NULL);
+    ASSERT_NOT_NULL(srv);
+
+    int rc = cbm_mcp_server_run(srv, in_fp, out_fp);
+    ASSERT_EQ(rc, 0);
+
+    rewind(out_fp);
+    char buf[4096] = {0};
+    size_t nread = fread(buf, 1, sizeof(buf) - 1, out_fp);
+    ASSERT_TRUE(nread > 0);
+    ASSERT_NOT_NULL(strstr(buf, "Content-Length: "));
+    ASSERT_NOT_NULL(strstr(buf, "\"id\":1"));
+
+    cbm_mcp_server_free(srv);
+    fclose(out_fp);
+    fclose(in_fp);
+    PASS();
+}
+
+TEST(mcp_server_run_content_length_incomplete_body) {
+    int fds[2];
+    ASSERT_EQ(pipe(fds), 0);
+
+    const char *body =
+        "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\","
+        "\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{}}}";
+    size_t declared_len = strlen(body) + 8;
+    char header[256];
+    int header_len = snprintf(header, sizeof(header), "Content-Length: %zu\r\n\r\n", declared_len);
+    ASSERT_TRUE(header_len > 0);
+    ASSERT_TRUE((size_t)header_len < sizeof(header));
+
+    ssize_t header_written = write(fds[1], header, (size_t)header_len);
+    ASSERT_EQ(header_written, (ssize_t)header_len);
+    ssize_t body_written = write(fds[1], body, strlen(body));
+    ASSERT_EQ(body_written, (ssize_t)strlen(body));
+    close(fds[1]); /* EOF before the declared body length is reached */
+
+    FILE *in_fp = fdopen(fds[0], "r");
+    ASSERT_NOT_NULL(in_fp);
+
+    FILE *out_fp = tmpfile();
+    ASSERT_NOT_NULL(out_fp);
+
+    cbm_mcp_server_t *srv = cbm_mcp_server_new(NULL);
+    ASSERT_NOT_NULL(srv);
+
+    int rc = cbm_mcp_server_run(srv, in_fp, out_fp);
+    ASSERT_EQ(rc, 0);
+
+    rewind(out_fp);
+    char buf[4096] = {0};
+    size_t nread = fread(buf, 1, sizeof(buf) - 1, out_fp);
+    ASSERT_EQ(nread, 0);
+
+    cbm_mcp_server_free(srv);
+    fclose(out_fp);
+    fclose(in_fp);
+    PASS();
+}
+
+TEST(mcp_server_run_content_length_oversize_skips_body) {
+    FILE *in_fp = tmpfile();
+    ASSERT_NOT_NULL(in_fp);
+
+    enum { TEST_CONTENT_LENGTH_MAX = 10 * 1024 * 1024 };
+    const size_t declared_len = (size_t)TEST_CONTENT_LENGTH_MAX + 1;
+    const char *next_msg = "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"ping\"}\n";
+    char header[128];
+    int header_len = snprintf(header, sizeof(header), "Content-Length: %zu\r\n\r\n", declared_len);
+    ASSERT_TRUE(header_len > 0);
+
+    ASSERT_EQ(fwrite(header, 1, (size_t)header_len, in_fp), (size_t)header_len);
+
+    char fill[4096];
+    memset(fill, 'x', sizeof(fill));
+    size_t left = declared_len;
+    while (left > 0) {
+        size_t chunk = left < sizeof(fill) ? left : sizeof(fill);
+        ASSERT_EQ(fwrite(fill, 1, chunk, in_fp), chunk);
+        left -= chunk;
+    }
+
+    ASSERT_EQ(fwrite(next_msg, 1, strlen(next_msg), in_fp), strlen(next_msg));
+    fflush(in_fp);
+    rewind(in_fp);
+
+    FILE *out_fp = tmpfile();
+    ASSERT_NOT_NULL(out_fp);
+
+    cbm_mcp_server_t *srv = cbm_mcp_server_new(NULL);
+    ASSERT_NOT_NULL(srv);
+
+    int rc = cbm_mcp_server_run(srv, in_fp, out_fp);
+    ASSERT_EQ(rc, 0);
+
+    rewind(out_fp);
+    char buf[4096] = {0};
+    size_t nread = fread(buf, 1, sizeof(buf) - 1, out_fp);
+    ASSERT_TRUE(nread > 0);
+    ASSERT_NOT_NULL(strstr(buf, "\"id\":2"));
+    ASSERT_NULL(strstr(buf, "\"id\":0"));
+
+    cbm_mcp_server_free(srv);
+    fclose(out_fp);
+    fclose(in_fp);
+    PASS();
+}
 #endif /* !_WIN32 */
 
 /* Issue #235: passing an unrecognised project name to a tool crashed the
@@ -2784,6 +3301,12 @@ TEST(tool_resolve_store_by_internal_name_issue704) {
     ASSERT_NOT_NULL(gp);
     fclose(gp);
 
+    /* (4) internal/hidden filename: valid DB, but ignored by filename classifier. */
+    ASSERT_TRUE(issue704_make_db(cache, "_hidden704.db", "hidden704", "hiddenFunc704"));
+
+    /* (5) tmp-* project names are legitimate and must not be excluded. */
+    ASSERT_TRUE(issue704_make_db(cache, "tmp-bench704.db", "tmp-bench704", "tmpFunc704"));
+
     cbm_mcp_server_t *srv = cbm_mcp_server_new(NULL);
     ASSERT_NOT_NULL(srv);
 
@@ -2794,8 +3317,10 @@ TEST(tool_resolve_store_by_internal_name_issue704) {
     ASSERT_NOT_NULL(list);
     ASSERT_NOT_NULL(strstr(list, "alpha704")); /* control */
     ASSERT_NOT_NULL(strstr(list, "beta704"));  /* internal name of drifted db (RED before) */
+    ASSERT_NOT_NULL(strstr(list, "tmp-bench704")); /* tmp-* project dbs are legitimate */
     ASSERT_NULL(strstr(list, "gamma704"));     /* filename must NOT be advertised (RED before) */
     ASSERT_NULL(strstr(list, "ghost704"));     /* 0-byte ghost filtered (RED before) */
+    ASSERT_NULL(strstr(list, "hidden704"));    /* _hidden704.db is internal/hidden */
     free(list);
 
     /* ── B: the drifted project resolves by its INTERNAL name ──────── */
@@ -3159,6 +3684,7 @@ SUITE(mcp) {
     RUN_TEST(mcp_tools_list);
     RUN_TEST(mcp_tools_list_latest_metadata);
     RUN_TEST(mcp_index_repository_declares_name_override_issue571);
+    RUN_TEST(mcp_tool_input_schema_lookup);
     RUN_TEST(mcp_tools_array_schemas_have_items);
     RUN_TEST(mcp_text_result);
     RUN_TEST(mcp_text_result_skips_structured_content_for_plain_text);
@@ -3205,7 +3731,10 @@ SUITE(mcp) {
     RUN_TEST(tool_list_projects_empty);
     RUN_TEST(tool_get_graph_schema_empty);
     RUN_TEST(tool_unknown_tool);
+    RUN_TEST(tool_handle_tool_missing_name);
+    RUN_TEST(tool_handle_tool_unknown_name);
     RUN_TEST(tool_search_graph_basic);
+    RUN_TEST(tool_search_graph_rejects_invalid_relationship);
     RUN_TEST(tool_search_graph_includes_node_properties);
     RUN_TEST(tool_search_graph_query_honors_file_pattern_issue552);
     RUN_TEST(tool_search_graph_bm25_file_pattern_rank_order_contract);
@@ -3218,6 +3747,8 @@ SUITE(mcp) {
     RUN_TEST(tool_trace_missing_function_name);
     RUN_TEST(tool_trace_call_path_ambiguous);
     RUN_TEST(tool_trace_call_path_prefers_definition);
+    RUN_TEST(tool_trace_call_path_filters_tests_by_default);
+    RUN_TEST(tool_trace_call_path_data_flow_mode_uses_data_edges);
     RUN_TEST(tool_delete_project_not_found);
     RUN_TEST(tool_get_architecture_empty);
     RUN_TEST(tool_get_architecture_emits_populated_sections);
@@ -3233,9 +3764,12 @@ SUITE(mcp) {
     RUN_TEST(tool_search_code_missing_pattern);
     RUN_TEST(tool_search_code_no_project);
     RUN_TEST(search_code_multi_word);
+    RUN_TEST(search_code_sanitizes_non_ascii_source_bytes);
     RUN_TEST(search_code_invalid_regex_errors_issue283);
     RUN_TEST(search_code_literal_pipe_warns_issue282);
     RUN_TEST(search_code_ampersand_accepted_issue272);
+    RUN_TEST(search_code_rejects_invalid_file_pattern);
+    RUN_TEST(search_code_files_mode_lists_files);
     RUN_TEST(tool_detect_changes_no_project);
     RUN_TEST(tool_manage_adr_no_project);
     RUN_TEST(tool_manage_adr_get_with_existing_adr);
@@ -3269,6 +3803,9 @@ SUITE(mcp) {
     /* Poll/getline FILE* buffering fix */
 #ifndef _WIN32
     RUN_TEST(mcp_server_run_rapid_messages);
+    RUN_TEST(mcp_server_run_content_length_framing);
+    RUN_TEST(mcp_server_run_content_length_incomplete_body);
+    RUN_TEST(mcp_server_run_content_length_oversize_skips_body);
 #endif
 
     /* Snippet resolution (port of snippet_test.go) */

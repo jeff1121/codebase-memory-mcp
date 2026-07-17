@@ -5,6 +5,7 @@
  * All functions accept explicit paths for testability.
  */
 #include "cli/cli.h"
+#include "cli/archive_helpers.h"
 #include "foundation/compat.h"
 #include "foundation/platform.h"
 #include "foundation/constants.h"
@@ -80,6 +81,12 @@ enum {
 #ifndef CBM_VERSION
 #define CBM_VERSION "dev"
 #endif
+#if defined(CBM_USE_RUST_CLI_VERSION)
+extern int cbm_rs_cli_compare_versions_v1(const char *left, const char *right);
+#endif
+#if defined(CBM_USE_RUST_CLI_VERSION_ONLY)
+extern int cbm_cli_compare_versions_v1(const char *left, const char *right);
+#endif
 #include <errno.h>  // EEXIST
 #include <fcntl.h>  // open, O_WRONLY, O_CREAT, O_TRUNC
 #include <stdint.h> // uintptr_t
@@ -137,6 +144,7 @@ const char *cbm_cli_get_version(void) {
 
 /* ── Version comparison ───────────────────────────────────────── */
 
+#if !defined(CBM_USE_RUST_CLI_VERSION) && !defined(CBM_USE_RUST_CLI_VERSION_ONLY)
 /* Parse semver major.minor.patch into array. Returns number of parts parsed. */
 static int parse_semver(const char *v, int out[SEMVER_PARTS]) {
     out[0] = out[CLI_IDX_1] = out[CLI_IDX_2] = 0;
@@ -168,8 +176,14 @@ static bool has_prerelease(const char *v) {
     }
     return strchr(v, '-') != NULL;
 }
+#endif
 
 int cbm_compare_versions(const char *a, const char *b) {
+#if defined(CBM_USE_RUST_CLI_VERSION_ONLY)
+    return cbm_cli_compare_versions_v1(a, b);
+#elif defined(CBM_USE_RUST_CLI_VERSION)
+    return cbm_rs_cli_compare_versions_v1(a, b);
+#else
     int pa[SEMVER_PARTS];
     int pb[SEMVER_PARTS];
     parse_semver(a, pa);
@@ -191,6 +205,7 @@ int cbm_compare_versions(const char *a, const char *b) {
         return CLI_TRUE;
     }
     return 0;
+#endif
 }
 
 /* ── Shell RC detection ───────────────────────────────────────── */
@@ -2390,16 +2405,6 @@ static unsigned char *gzip_decompress(const unsigned char *data, int data_len, s
     return decompressed;
 }
 
-/* Check if a tar block is all zeros (end of archive). */
-static bool is_tar_end_of_archive(const unsigned char *hdr) {
-    for (int i = 0; i < TAR_BLOCK_SIZE; i++) {
-        if (hdr[i] != 0) {
-            return false;
-        }
-    }
-    return true;
-}
-
 /* Try to extract the target binary from a tar entry. Returns malloc'd data or NULL. */
 static unsigned char *tar_try_extract_binary(const unsigned char *hdr, char typeflag,
                                              const char *name, const unsigned char *archive,
@@ -2443,7 +2448,7 @@ unsigned char *cbm_extract_binary_from_targz(const unsigned char *data, int data
     while (pos + TAR_BLOCK_SIZE <= total) {
         const unsigned char *hdr = decompressed + pos;
 
-        if (is_tar_end_of_archive(hdr)) {
+        if (cbm_cli_is_tar_end_of_archive(hdr)) {
             break;
         }
 
@@ -2489,15 +2494,7 @@ enum {
 };
 static const unsigned long ZIP_MAX_UNCOMP = 500UL * 1024UL * 1024UL;
 
-static uint16_t zip_read_u16(const unsigned char *data, int off) {
-    return (uint16_t)((uint16_t)data[off] | ((uint16_t)data[off + CLI_SKIP_ONE] << BYTE_SHIFT));
-}
-
-static unsigned long zip_read_u32(const unsigned char *data, int off) {
-    return (unsigned long)data[off] | ((unsigned long)data[off + CLI_SKIP_ONE] << BYTE_SHIFT) |
-           ((unsigned long)data[off + CLI_PAIR_LEN] << (BYTE_SHIFT * CLI_PAIR_LEN)) |
-           ((unsigned long)data[off + CLI_JSON_INDENT] << (BYTE_SHIFT * CLI_JSON_INDENT));
-}
+/* zip LE readers：見 archive_helpers.c（true-source selectable CU） */
 
 /* Decompress a single zip entry (stored or deflated). Returns malloc'd buffer
  * or NULL on failure. *out_len receives the decompressed size. */
@@ -2552,11 +2549,11 @@ unsigned char *cbm_extract_binary_from_zip(const unsigned char *data, int data_l
             break;
         }
 
-        uint16_t method = zip_read_u16(data + pos, ZIP_OFF_METHOD);
-        unsigned long comp_size = zip_read_u32(data + pos, ZIP_OFF_COMP);
-        unsigned long uncomp_size = zip_read_u32(data + pos, ZIP_OFF_UNCOMP);
-        uint16_t name_len = zip_read_u16(data + pos, ZIP_OFF_NAMELEN);
-        uint16_t extra_len = zip_read_u16(data + pos, ZIP_OFF_EXTRALEN);
+        uint16_t method = cbm_cli_zip_read_u16(data + pos, ZIP_OFF_METHOD);
+        unsigned long comp_size = (unsigned long)cbm_cli_zip_read_u32(data + pos, ZIP_OFF_COMP);
+        unsigned long uncomp_size = (unsigned long)cbm_cli_zip_read_u32(data + pos, ZIP_OFF_UNCOMP);
+        uint16_t name_len = cbm_cli_zip_read_u16(data + pos, ZIP_OFF_NAMELEN);
+        uint16_t extra_len = cbm_cli_zip_read_u16(data + pos, ZIP_OFF_EXTRALEN);
 
         int header_end = pos + ZIP_HDR_SZ + name_len + extra_len;
         if (header_end > data_len || comp_size > (unsigned long)(data_len - header_end)) {

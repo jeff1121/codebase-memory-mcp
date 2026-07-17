@@ -11,6 +11,55 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if defined(CBM_USE_RUST_COMPAT_FS) || defined(CBM_USE_RUST_COMPAT_FS_ONLY)
+extern cbm_dir_t *cbm_rs_compat_fs_opendir(const char *path);
+extern cbm_dirent_t *cbm_rs_compat_fs_readdir(cbm_dir_t *dir);
+extern void cbm_rs_compat_fs_closedir(cbm_dir_t *dir);
+extern FILE *cbm_rs_compat_fs_popen(const char *cmd, const char *mode);
+extern int cbm_rs_compat_fs_pclose(FILE *f);
+extern bool cbm_rs_compat_fs_mkdir_p(const char *path, int mode);
+extern int cbm_rs_compat_fs_unlink(const char *path);
+extern int cbm_rs_compat_fs_rmdir(const char *path);
+extern int cbm_rs_compat_fs_exec_no_shell(const char *const *argv);
+
+cbm_dir_t *cbm_opendir(const char *path) {
+    return cbm_rs_compat_fs_opendir(path);
+}
+
+cbm_dirent_t *cbm_readdir(cbm_dir_t *d) {
+    return cbm_rs_compat_fs_readdir(d);
+}
+
+void cbm_closedir(cbm_dir_t *d) {
+    cbm_rs_compat_fs_closedir(d);
+}
+
+FILE *cbm_popen(const char *cmd, const char *mode) {
+    return cbm_rs_compat_fs_popen(cmd, mode);
+}
+
+int cbm_pclose(FILE *f) {
+    return cbm_rs_compat_fs_pclose(f);
+}
+
+bool cbm_mkdir_p(const char *path, int mode) {
+    return cbm_rs_compat_fs_mkdir_p(path, mode);
+}
+
+int cbm_unlink(const char *path) {
+    return cbm_rs_compat_fs_unlink(path);
+}
+
+int cbm_rmdir(const char *path) {
+    return cbm_rs_compat_fs_rmdir(path);
+}
+
+int cbm_exec_no_shell(const char *const *argv) {
+    return cbm_rs_compat_fs_exec_no_shell(argv);
+}
+
+#else
+
 #ifdef _WIN32
 
 /* ── Windows implementation ────────────────────────────────── */
@@ -319,3 +368,4 @@ int cbm_exec_no_shell(const char *const *argv) {
 }
 
 #endif /* _WIN32 */
+#endif /* CBM_USE_RUST_COMPAT_FS */

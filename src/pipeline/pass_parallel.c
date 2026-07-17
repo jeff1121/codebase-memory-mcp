@@ -51,6 +51,7 @@ enum { PP_CSHARP_M_PREFIX_LEN = 2 };
 #define PP_RETAIN_TOTAL_BUDGET_BYTES (2LL * 1024 * 1024 * 1024)
 #include "pipeline/pipeline.h"
 #include "pipeline/pipeline_internal.h"
+#include "pipeline/parallel_json.h"
 #include "pipeline/pass_lsp_cross.h" /* cbm_pxc_* helpers for fused cross-file LSP */
 #include "pipeline/lsp_resolve.h"
 #include "helpers.h" /* cbm_kind_in_set_free_cache — per-worker-thread cache teardown */
@@ -70,6 +71,9 @@ enum { PP_CSHARP_M_PREFIX_LEN = 2 };
 #include "cbm.h"
 #include "simhash/minhash.h"
 #include "semantic/ast_profile.h"
+
+int cbm_pipeline_is_path_keyword(const char *keyword);
+int cbm_pipeline_normalize_url_arg(const char *url, char *norm, int norm_sz);
 
 #include <stdatomic.h>
 #include <stdint.h>
@@ -116,6 +120,12 @@ static void free_source(char *buf) {
     free(buf);
 }
 
+static int g_test_next_parallel_resolve_rc = 0;
+
+void cbm_pipeline_test_fail_next_parallel_resolve(int rc) {
+    g_test_next_parallel_resolve_rc = rc;
+}
+
 static const char *itoa_log(int val) {
     static CBM_TLS char bufs[PP_RING][CBM_SZ_32];
     static CBM_TLS int idx = 0;
@@ -123,61 +133,6 @@ static const char *itoa_log(int val) {
     idx = (idx + SKIP_ONE) & PP_RING_MASK;
     snprintf(bufs[i], sizeof(bufs[i]), "%d", val);
     return bufs[i];
-}
-
-/* Append a JSON-escaped string value to buf at position *pos. */
-/* Escape one character for JSON. Returns bytes written (1 or 2). */
-static int json_escape_char(char *buf, size_t avail, char ch) {
-    char esc = 0;
-    switch (ch) {
-    case '"':
-        esc = '"';
-        break;
-    case '\\':
-        esc = '\\';
-        break;
-    case '\n':
-        esc = 'n';
-        break;
-    case '\r':
-        esc = 'r';
-        break;
-    case '\t':
-        esc = 't';
-        break;
-    default:
-        if (avail >= SKIP_ONE) {
-            /* Any other raw control byte (e.g. form feed) is invalid inside a
-             * JSON string — degrade to a space. */
-            buf[0] = ((unsigned char)ch < 0x20) ? ' ' : ch;
-        }
-        return SKIP_ONE;
-    }
-    if (avail >= PP_ESC_SPACE) {
-        buf[0] = '\\';
-        buf[SKIP_ONE] = esc;
-    }
-    return PP_ESC_SPACE;
-}
-
-/* Escaped length of a string under json_escape_char's rules: escaped
- * characters expand to 2 bytes, everything else stays 1. */
-static size_t pp_json_escaped_len(const char *s) {
-    size_t n = 0;
-    for (; *s; s++) {
-        switch (*s) {
-        case '"':
-        case '\\':
-        case '\n':
-        case '\r':
-        case '\t':
-            n += PP_ESC_SPACE;
-            break;
-        default:
-            n += SKIP_ONE;
-        }
-    }
-    return n;
 }
 
 /* Appends are ATOMIC: a field is emitted only if the WHOLE serialized form
@@ -192,7 +147,8 @@ static void append_json_string(char *buf, size_t bufsize, size_t *pos, const cha
     if (!val || val[0] == '\0') {
         return;
     }
-    size_t required = strlen(key) + pp_json_escaped_len(val) + PP_JSON_FIELD_OVERHEAD;
+        size_t required =
+            strlen(key) + cbm_pipeline_parallel_json_escaped_len(val) + PP_JSON_FIELD_OVERHEAD;
     if (*pos + required + PP_ESC_SPACE > bufsize) {
         return; /* whole field would not fit — skip it atomically */
     }
@@ -203,7 +159,7 @@ static void append_json_string(char *buf, size_t bufsize, size_t *pos, const cha
     }
     p += (size_t)w;
     for (const char *s = val; *s && p < bufsize - PP_ESC_MARGIN; s++) {
-        int n = json_escape_char(buf + p, bufsize - p - PP_ESC_SPACE, *s);
+            int n = cbm_pipeline_parallel_json_escape_char(buf + p, bufsize - p - PP_ESC_SPACE, *s);
         p += (size_t)n;
     }
     if (p < bufsize - SKIP_ONE) {
@@ -223,7 +179,8 @@ static void append_json_str_array(char *buf, size_t bufsize, size_t *pos, const 
     /* ,"key":[ + per item "<escaped>" + separating commas + ] */
     size_t required = strlen(key) + PP_JSON_FIELD_OVERHEAD;
     for (int i = 0; arr[i]; i++) {
-        required += pp_json_escaped_len(arr[i]) + PP_ESC_SPACE + (i > 0 ? SKIP_ONE : 0);
+        required +=
+            cbm_pipeline_parallel_json_escaped_len(arr[i]) + PP_ESC_SPACE + (i > 0 ? SKIP_ONE : 0);
     }
     if (*pos + required + PP_ESC_SPACE > bufsize) {
         return; /* whole array would not fit — skip it atomically */
@@ -245,7 +202,8 @@ static void append_json_str_array(char *buf, size_t bufsize, size_t *pos, const 
          * sliced from multi-line declarations carry raw \n/\t bytes, which are
          * invalid inside JSON strings. */
         for (const char *s = arr[i]; *s && p < bufsize - PP_ESC_SPACE; s++) {
-            p += (size_t)json_escape_char(buf + p, bufsize - p - PP_ESC_SPACE, *s);
+            p += (size_t)cbm_pipeline_parallel_json_escape_char(buf + p, bufsize - p - PP_ESC_SPACE,
+                                                                 *s);
         }
         if (p < bufsize - SKIP_ONE) {
             buf[p++] = '"';
@@ -391,23 +349,10 @@ static void free_import_map(const char **keys, const char **vals, int count) {
     }
 }
 
-/* True for languages whose module QN derives from the CONTAINING DIRECTORY
- * (Java/Go package). MUST match cbm_lang_module_is_dir() (internal/cbm/helpers.c)
- * and pxc_module_is_dir() (pass_lsp_cross.c) so same-module callee resolution
- * keys against the directory-based def-node QNs in the registry. */
-static bool pp_module_is_dir(CBMLanguage lang) {
-    return lang == CBM_LANG_JAVA || lang == CBM_LANG_GO;
-}
+int cbm_pipeline_is_checked_exception(const char *name);
 
 static bool is_checked_exception(const char *name) {
-    if (!name) {
-        return false;
-    }
-    if (strstr(name, "Error") || strstr(name, "Panic") || strstr(name, "error") ||
-        strstr(name, "panic")) {
-        return false;
-    }
-    return true;
+    return cbm_pipeline_is_checked_exception(name) != 0;
 }
 
 static const char *resolve_as_class(const cbm_registry_t *reg, const char *name,
@@ -1150,15 +1095,7 @@ static size_t append_args_json(char *buf, size_t bufsize, size_t pos, const CBMC
 
 /* Scan call args for a URL-like route path and handler reference. */
 static bool is_path_keyword(const char *keyword) {
-    static const char *path_keywords[] = {"prefix",     "path",     "route", "pattern",
-                                          "url",        "endpoint", "rule",  "mount_path",
-                                          "route_path", "url_path", NULL};
-    for (const char **kw = path_keywords; *kw; kw++) {
-        if (strcmp(keyword, *kw) == 0) {
-            return true;
-        }
-    }
-    return false;
+    return cbm_pipeline_is_path_keyword(keyword) != 0;
 }
 
 static const char *find_route_path_in_args(const CBMCall *call, const char **out_handler) {
@@ -1350,54 +1287,10 @@ static void emit_route_registration(cbm_gbuf_t *gbuf, const cbm_gbuf_node_t *sou
     }
 }
 
-/* Reject regex metacharacters, spaces, double-slashes in URL candidates. */
-static bool is_junk_url(const char *s) {
-    for (int i = 0; s[i]; i++) {
-        char ch = s[i];
-        if (ch == '\\' || ch == '^' || ch == '$' || ch == '*' || ch == '+' || ch == '(' ||
-            ch == ')' || ch == '[' || ch == ']' || ch == '|' || ch == ' ') {
-            return true;
-        }
-        if (ch == '/' && i > 0 && s[i - SKIP_ONE] == '/') {
-            return true;
-        }
-    }
-    return false;
-}
-
 /* Normalize a template literal URL and reject junk patterns.
  * Returns true if norm contains a valid API path. */
 static bool normalize_url_arg(const char *url, char *norm, int norm_sz) {
-    int ni = 0;
-    const char *p = url;
-    if (*p == '`' || *p == '"' || *p == '\'') {
-        p++;
-    }
-    if (*p != '/') {
-        return false;
-    }
-    while (*p && ni < norm_sz - PAIR_LEN) {
-        if (*p == '$' && *(p + SKIP_ONE) == '{') {
-            norm[ni++] = ':';
-            p += PAIR_LEN;
-            while (*p && *p != '}' && ni < norm_sz - PAIR_LEN) {
-                norm[ni++] = *p++;
-            }
-            if (*p == '}') {
-                p++;
-            }
-        } else if (*p == '`' || *p == '"' || *p == '\'' || *p == '?') {
-            break;
-        } else {
-            norm[ni++] = *p++;
-        }
-    }
-    norm[ni] = '\0';
-    enum { MIN_URL_LEN = 4 };
-    if (ni < MIN_URL_LEN || !strchr(norm + SKIP_ONE, '/')) {
-        return false;
-    }
-    return !is_junk_url(norm);
+    return cbm_pipeline_normalize_url_arg(url, norm, norm_sz) != 0;
 }
 
 /* Detect API paths in call arguments and create HTTP_CALLS edges. */
@@ -2265,7 +2158,7 @@ static void resolve_worker(int worker_id, void *ctx_ptr) {
         cbm_registry_resolve_cache_begin(result->calls.count + result->usages.count + 64);
 
         char *module_qn =
-            cbm_pipeline_fqn_module_dir(rc->project_name, rel, pp_module_is_dir(lang));
+            cbm_pipeline_fqn_module_dir(rc->project_name, rel, cbm_lang_module_is_dir(lang));
 
         /* ── Cross-file LSP (FUSED) ─────────────────────────────
          * Runs BEFORE resolve_file_calls so its additions to
@@ -2480,6 +2373,11 @@ int cbm_parallel_resolve(cbm_pipeline_ctx_t *ctx, const cbm_file_info_t *files, 
                          void *cross_registries_v) {
     /* See header: typed as void* across the TU boundary; cast back here. */
     CBMCrossLspRegistries *cross_registries = (CBMCrossLspRegistries *)cross_registries_v;
+    if (g_test_next_parallel_resolve_rc != 0) {
+        int rc = g_test_next_parallel_resolve_rc;
+        g_test_next_parallel_resolve_rc = 0;
+        return rc;
+    }
     if (file_count == 0) {
         return 0;
     }

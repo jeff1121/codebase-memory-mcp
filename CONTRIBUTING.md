@@ -58,6 +58,9 @@ plan in [`Rust-Refactor.md`](Rust-Refactor.md) (progress tracked in
 [`Tasks.md`](Tasks.md)). It is **never linked into the default build**; it only
 participates through explicit `CBM_USE_RUST_*` opt-in flags.
 
+release-gate 只用於驗證 Rust 切片的品質與相容性，並不等同於「預設 runtime 已切換到 Rust」；
+未經 Gate 全部放行、未完成默認切換前，發行 artefact 仍以 C path 為預設。
+
 ```bash
 scripts/rust-check.sh                       # fmt + clippy + workspace tests + FFI + opt-in/parity gates
 make -f Makefile.cbm rust-ci-tests          # Rust lint/unit/FFI/opt-in/parity subset

@@ -9,6 +9,8 @@ const CONF_SAME_MODULE: f64 = 0.90;
 const CONF_QUALIFIED_SUFFIX: f64 = 0.90;
 const CONF_UNIQUE_NAME: f64 = 0.75;
 const CONF_SUFFIX_MATCH: f64 = 0.55;
+const CONF_FUZZY_SINGLE: f64 = 0.40;
+const CONF_FUZZY_MULTI: f64 = 0.30;
 const DEFAULT_CONFIDENCE: f64 = 0.5;
 const REG_HALF_PENALTY: f64 = 0.5;
 const CANDIDATE_PENALTY_CAP: f64 = 3.0;
@@ -56,6 +58,45 @@ impl Registry {
         self.by_name.entry(simple).or_default().push(idx);
     }
 
+    pub fn contains(&self, qualified_name: &[u8]) -> bool {
+        self.exact.contains_key(qualified_name)
+    }
+
+    pub fn qualified_name(&self, qualified_name: &[u8]) -> Option<&[u8]> {
+        self.exact_qn(qualified_name)
+    }
+
+    pub fn size(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn find_by_name(&self, name: &[u8]) -> Vec<&[u8]> {
+        self.by_name
+            .get(name)
+            .map(|indices| {
+                indices
+                    .iter()
+                    .map(|index| self.entries[*index].qualified_name.as_slice())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    pub fn find_ending_with(&self, suffix: &[u8]) -> Vec<&[u8]> {
+        let mut target = Vec::with_capacity(suffix.len() + 1);
+        target.push(b'.');
+        target.extend_from_slice(suffix);
+        self.entries
+            .iter()
+            .filter_map(|entry| {
+                entry
+                    .qualified_name
+                    .ends_with(&target)
+                    .then_some(entry.qualified_name.as_slice())
+            })
+            .collect()
+    }
+
     pub fn resolve(
         &self,
         callee_name: &[u8],
@@ -70,6 +111,78 @@ impl Registry {
         self.resolve_import_map(prefix, suffix, import_keys, import_vals)
             .or_else(|| self.resolve_same_module(callee_name, suffix, module_qn))
             .or_else(|| self.resolve_name_lookup(callee_name, module_qn, import_vals))
+    }
+
+    pub fn fuzzy_resolve(
+        &self,
+        callee_name: &[u8],
+        module_qn: &[u8],
+        import_vals: &[&[u8]],
+    ) -> Option<Resolution> {
+        let arr = self.by_name.get(simple_name(callee_name))?;
+        if arr.is_empty() || arr.len() > REG_MAX_CANDIDATES {
+            return None;
+        }
+
+        if arr.len() == 1 {
+            let qn = self.entries[arr[0]].qualified_name.as_slice();
+            let mut confidence = CONF_FUZZY_SINGLE;
+            if !import_vals.is_empty() && !is_import_reachable(qn, import_vals) {
+                confidence *= DEFAULT_CONFIDENCE;
+            }
+            return Some(Resolution {
+                qualified_name: qn.to_vec(),
+                strategy: "fuzzy",
+                confidence,
+                candidate_count: REG_RESOLVED,
+            });
+        }
+
+        if import_vals.is_empty() {
+            let best = best_by_import_distance(self, arr.iter().copied(), module_qn)?;
+            return Some(Resolution {
+                qualified_name: self.entries[best].qualified_name.clone(),
+                strategy: "fuzzy",
+                confidence: candidate_count_penalty(CONF_FUZZY_MULTI, arr.len()),
+                candidate_count: arr.len() as i32,
+            });
+        }
+
+        let filtered: Vec<usize> = arr
+            .iter()
+            .copied()
+            .filter(|index| {
+                is_import_reachable(self.entries[*index].qualified_name.as_slice(), import_vals)
+            })
+            .take(REG_MAX_CANDIDATES)
+            .collect();
+
+        if filtered.is_empty() {
+            let best = best_by_import_distance(self, arr.iter().copied(), module_qn)?;
+            return Some(Resolution {
+                qualified_name: self.entries[best].qualified_name.clone(),
+                strategy: "fuzzy",
+                confidence: candidate_count_penalty(CONF_FUZZY_MULTI * REG_HALF_PENALTY, arr.len()),
+                candidate_count: arr.len() as i32,
+            });
+        }
+
+        if filtered.len() == 1 {
+            return Some(Resolution {
+                qualified_name: self.entries[filtered[0]].qualified_name.clone(),
+                strategy: "fuzzy",
+                confidence: candidate_count_penalty(CONF_FUZZY_SINGLE, arr.len()),
+                candidate_count: arr.len() as i32,
+            });
+        }
+
+        let best = best_by_import_distance(self, filtered.iter().copied(), module_qn)?;
+        Some(Resolution {
+            qualified_name: self.entries[best].qualified_name.clone(),
+            strategy: "fuzzy",
+            confidence: candidate_count_penalty(CONF_FUZZY_MULTI, filtered.len()),
+            candidate_count: filtered.len() as i32,
+        })
     }
 
     fn exact_qn(&self, qn: &[u8]) -> Option<&[u8]> {
@@ -254,7 +367,7 @@ impl Registry {
     }
 }
 
-fn simple_name(qn: &[u8]) -> &[u8] {
+pub(crate) fn simple_name(qn: &[u8]) -> &[u8] {
     let dot = qn.iter().rposition(|b| *b == b'.').map_or(0, |idx| idx + 1);
     let mut seg = dot;
     let mut i = 0;
@@ -303,7 +416,7 @@ fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
             .any(|window| window == needle)
 }
 
-fn is_test_qn(qn: &[u8]) -> bool {
+pub(crate) fn is_test_qn(qn: &[u8]) -> bool {
     const NEEDLES: &[&[u8]] = &[
         b"Test", b"test", b"Mock", b"mock", b"Stub", b"stub", b"Fake", b"fake", b"Fixture", b"spec",
     ];
@@ -347,7 +460,7 @@ fn module_prefix(qn: &[u8]) -> &[u8] {
         .map_or(qn, |idx| &qn[..idx])
 }
 
-fn is_import_reachable(candidate_qn: &[u8], import_vals: &[&[u8]]) -> bool {
+pub(crate) fn is_import_reachable(candidate_qn: &[u8], import_vals: &[&[u8]]) -> bool {
     let cand_mod = module_prefix(candidate_qn);
     import_vals
         .iter()
@@ -384,6 +497,27 @@ mod tests {
         Entry {
             qualified_name: qn.as_bytes().to_vec(),
         }
+    }
+
+    #[test]
+    fn test_qn_classifier_matches_c_contract() {
+        assert!(!is_test_qn(b""));
+        assert!(is_test_qn(b"pkg.Test.Anchor"));
+        assert!(is_test_qn(b"pkg.test.Anchor"));
+        assert!(is_test_qn(b"pkg.Mock.Anchor"));
+        assert!(is_test_qn(b"pkg.mock.Anchor"));
+        assert!(is_test_qn(b"pkg.Stub.Anchor"));
+        assert!(is_test_qn(b"pkg.stub.Anchor"));
+        assert!(is_test_qn(b"pkg.Fake.Anchor"));
+        assert!(is_test_qn(b"pkg.fake.Anchor"));
+        assert!(is_test_qn(b"pkg.Fixture.Anchor"));
+        assert!(is_test_qn(b"pkg.spec.Anchor"));
+        assert!(!is_test_qn(b"pkg.TEST.Anchor"));
+        assert!(!is_test_qn(b"pkg.fixture.Anchor"));
+        assert!(!is_test_qn(b"pkg.SPEC.Anchor"));
+        assert!(is_test_qn(b"contest"));
+        assert!(is_test_qn(b"pkg.\xffspec.Anchor"));
+        assert!(!is_test_qn(b"pkg.\xffplain.Anchor"));
     }
 
     #[test]

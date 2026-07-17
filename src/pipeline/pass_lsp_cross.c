@@ -14,6 +14,7 @@
  * multiple times if the pipeline gains a re-run path later.
  */
 #include "pipeline/pass_lsp_cross.h"
+#include "pipeline/lsp_cross_classifiers.h"
 #include "pipeline/pipeline_internal.h"
 #include "lsp/go_lsp.h"
 #include "lsp/c_lsp.h"
@@ -28,6 +29,7 @@
 #include "foundation/constants.h"
 #include "foundation/hash_table.h"
 #include "foundation/log.h"
+#include "helpers.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -53,15 +55,6 @@ static const char *itoa_buf(int val) {
 }
 
 /* ── Local helpers ─────────────────────────────────────────────── */
-
-/* True for languages whose module QN is derived from the CONTAINING DIRECTORY
- * (Java package, Go package) rather than the filename stem. MUST match the
- * extraction-side cbm_lang_module_is_dir() in internal/cbm/helpers.c so the
- * cross-file LSP caller_qn agrees with the def-node QN (the lsp_resolve join
- * keys on exact equality). */
-static bool pxc_module_is_dir(CBMLanguage lang) {
-    return lang == CBM_LANG_JAVA || lang == CBM_LANG_GO;
-}
 
 /* Slurp a file into a malloc'd, NUL-terminated buffer. Mirrors the
  * read_file helper in pass_calls.c / pass_parallel.c (kept local so the
@@ -91,21 +84,6 @@ static char *pxc_read_file(const char *path, int *out_len) {
     memset(buf + nread, 0, CBM_TS_LOOKAHEAD_PAD);
     *out_len = (int)nread;
     return buf;
-}
-
-/* Map a CBMDefinition.label to a CBMLSPDef.label. Per-language LSP registrars
- * only care about type-like containers (Class/Struct/Interface/Trait/Enum/Type)
- * plus Protocol/Function/Method — variables, modules, decorators, etc. are
- * skipped. Struct passes through so Rust/Go struct type-registration via the
- * cross-file LSP path is not dropped. */
-static const char *pxc_map_label(const char *label) {
-    if (!label)
-        return NULL;
-    if (cbm_label_is_type_like(label) || strcmp(label, "Protocol") == 0 ||
-        strcmp(label, "Function") == 0 || strcmp(label, "Method") == 0) {
-        return label;
-    }
-    return NULL;
 }
 
 /* Build the embedded_types "|"-separated string from base_classes[].
@@ -143,7 +121,7 @@ static const char *pxc_join_pipe(CBMArena *arena, const char *const *items) {
  * pointers into src and into `arena` for synthesised composites. */
 static int pxc_build_lsp_def(CBMArena *arena, const CBMDefinition *src, const char *module_qn,
                              CBMLanguage lang, CBMLSPDef *dst) {
-    const char *label = pxc_map_label(src->label);
+    const char *label = cbm_pxc_map_label(src->label);
     if (!label || !src->qualified_name || !src->name)
         return -1;
     memset(dst, 0, sizeof(*dst));
@@ -187,8 +165,8 @@ CBMLSPDef *cbm_pxc_collect_all_defs(CBMFileResult **cache, const cbm_file_info_t
         if (!cache[fi])
             continue;
         if (!def_modules[fi]) {
-            def_modules[fi] = cbm_pipeline_fqn_module_dir(project_name, files[fi].rel_path,
-                                                          pxc_module_is_dir(files[fi].language));
+            def_modules[fi] = cbm_pipeline_fqn_module_dir(
+                project_name, files[fi].rel_path, cbm_lang_module_is_dir(files[fi].language));
         }
         for (int di = 0; di < cache[fi]->defs.count; di++) {
             if (pxc_build_lsp_def(&cache[fi]->arena, &cache[fi]->defs.items[di], def_modules[fi],
@@ -270,45 +248,6 @@ static void pxc_free_import_map(const char **keys, const char **vals, int count)
         free((void *)keys);
     }
     free((void *)vals); /* vals strings borrowed from gbuf — don't free elements */
-}
-
-/* Detect TS dialect flags from a relative path. */
-void cbm_pxc_ts_modes(CBMLanguage lang, const char *rel_path, bool *out_js, bool *out_jsx,
-                      bool *out_dts) {
-    *out_js = (lang == CBM_LANG_JAVASCRIPT);
-    *out_jsx = (lang == CBM_LANG_TSX);
-    *out_dts = false;
-    if (!rel_path)
-        return;
-    size_t rl = strlen(rel_path);
-    if (lang == CBM_LANG_JAVASCRIPT && rl >= 4 && strcmp(rel_path + rl - 4, ".jsx") == 0) {
-        *out_jsx = true;
-    }
-    if (lang == CBM_LANG_TYPESCRIPT && rl >= 5 && strcmp(rel_path + rl - 5, ".d.ts") == 0) {
-        *out_dts = true;
-    }
-}
-
-/* Returns true when this language has a cross-file LSP wired up. */
-bool cbm_pxc_has_cross_lsp(CBMLanguage lang) {
-    switch (lang) {
-    case CBM_LANG_GO:
-    case CBM_LANG_C:
-    case CBM_LANG_CPP:
-    case CBM_LANG_CUDA:
-    case CBM_LANG_PYTHON:
-    case CBM_LANG_JAVASCRIPT:
-    case CBM_LANG_TYPESCRIPT:
-    case CBM_LANG_TSX:
-    case CBM_LANG_PHP:
-    case CBM_LANG_CSHARP: /* tier-2 prebuilt registry path (pass_parallel.c) */
-    case CBM_LANG_JAVA:   /* fallback cbm_pxc_run_one path */
-    case CBM_LANG_KOTLIN: /* fallback cbm_pxc_run_one path */
-    case CBM_LANG_RUST:   /* fallback cbm_pxc_run_one path (manifest-aware) */
-        return true;
-    default:
-        return false;
-    }
 }
 
 /* Append cross-file results from `src_out` (allocated in a scratch arena
@@ -590,7 +529,7 @@ int cbm_pipeline_pass_lsp_cross(cbm_pipeline_ctx_t *ctx, const cbm_file_info_t *
 
         if (!def_modules[i]) {
             def_modules[i] = cbm_pipeline_fqn_module_dir(ctx->project_name, files[i].rel_path,
-                                                         pxc_module_is_dir(files[i].language));
+                                                         cbm_lang_module_is_dir(files[i].language));
         }
 
         const char **imp_keys = NULL;

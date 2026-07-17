@@ -167,6 +167,27 @@ TEST(userconfig_unknown_lang_skipped) {
     PASS();
 }
 
+/* ── Tests: duplicate display names resolve to the first enum ────── */
+
+TEST(userconfig_cfml_uses_first_matching_enum) {
+    char dir[256];
+    snprintf(dir, sizeof(dir), "%s/uctest_cfml_duplicate", cbm_tmpdir());
+    cbm_mkdir_p(dir, 0755);
+
+    char proj[512];
+    snprintf(proj, sizeof(proj), "%s/.codebase-memory.json", dir);
+    ASSERT_EQ(write_json(proj, "{\"extra_extensions\":{\".cfml\":\"cfml\"}}"), 0);
+
+    cbm_userconfig_t *cfg = cbm_userconfig_load(dir);
+    ASSERT_NOT_NULL(cfg);
+    ASSERT_EQ(cfg->count, 1);
+    ASSERT_EQ(cbm_userconfig_lookup(cfg, ".cfml"), CBM_LANG_CFSCRIPT);
+
+    cbm_userconfig_free(cfg);
+    remove(proj);
+    PASS();
+}
+
 /* ── Tests: missing files are silently ignored ───────────────────── */
 
 TEST(userconfig_missing_files_ok) {
@@ -227,6 +248,7 @@ SUITE(userconfig) {
     RUN_TEST(userconfig_global_via_env);
     RUN_TEST(userconfig_project_wins_over_global);
     RUN_TEST(userconfig_unknown_lang_skipped);
+    RUN_TEST(userconfig_cfml_uses_first_matching_enum);
     RUN_TEST(userconfig_missing_files_ok);
     RUN_TEST(userconfig_integration_override);
     RUN_TEST(userconfig_free_null);

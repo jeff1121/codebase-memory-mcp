@@ -677,7 +677,7 @@ static void run_c_predump_passes(cbm_pipeline_t *p, cbm_pipeline_ctx_t *ctx) {
     }
 }
 
-#ifdef CBM_USE_RUST_PIPELINE_PLAN
+#if defined(CBM_USE_RUST_PIPELINE_PLAN) || defined(CBM_USE_RUST_PIPELINE_PLAN_ONLY)
 static uint64_t predump_step_bit(int kind) {
     if (kind <= 0 || kind > CBM_RS_PLAN_STEP_MAX_KIND) {
         return 0;
@@ -834,10 +834,15 @@ static bool run_rust_predump_passes(cbm_pipeline_t *p, cbm_pipeline_ctx_t *ctx) 
 #endif
 
 static void run_predump_passes(cbm_pipeline_t *p, cbm_pipeline_ctx_t *ctx) {
-#ifdef CBM_USE_RUST_PIPELINE_PLAN
+#if defined(CBM_USE_RUST_PIPELINE_PLAN) || defined(CBM_USE_RUST_PIPELINE_PLAN_ONLY)
     if (run_rust_predump_passes(p, ctx)) {
         return;
     }
+#if defined(CBM_USE_RUST_PIPELINE_PLAN_ONLY)
+    cbm_log_error("rust_plan.err", "phase", "predump", "path", "rust_plan_only");
+    cbm_pipeline_cancel(p);
+    return;
+#endif
 #endif
     run_c_predump_passes(p, ctx);
 }
@@ -905,6 +910,7 @@ static int run_sequential_dispatch(cbm_pipeline_t *p, cbm_pipeline_ctx_t *ctx,
     return rc;
 }
 
+#if !defined(CBM_USE_RUST_PIPELINE_PLAN_ONLY)
 static int run_c_sequential_dispatch(cbm_pipeline_t *p, cbm_pipeline_ctx_t *ctx,
                                      const cbm_file_info_t *files, int file_count,
                                      struct timespec *t) {
@@ -914,8 +920,9 @@ static int run_c_sequential_dispatch(cbm_pipeline_t *p, cbm_pipeline_ctx_t *ctx,
     }
     return run_sequential_dispatch(p, ctx, files, file_count, t, ordered, SEQ_PASS_COUNT);
 }
+#endif
 
-#ifdef CBM_USE_RUST_PIPELINE_PLAN
+#if defined(CBM_USE_RUST_PIPELINE_PLAN) || defined(CBM_USE_RUST_PIPELINE_PLAN_ONLY)
 static uint64_t seq_step_bit(int kind) {
     if (kind <= 0 || kind > CBM_RS_PLAN_STEP_MAX_KIND) {
         return 0;
@@ -1020,11 +1027,16 @@ static int run_sequential_pipeline(cbm_pipeline_t *p, cbm_pipeline_ctx_t *ctx,
         ctx->result_cache = seq_cache;
     }
     int rc = 0;
-#ifdef CBM_USE_RUST_PIPELINE_PLAN
+#if defined(CBM_USE_RUST_PIPELINE_PLAN) || defined(CBM_USE_RUST_PIPELINE_PLAN_ONLY)
     if (!run_rust_sequential_dispatch(p, ctx, files, file_count, t, &rc)) {
+#if defined(CBM_USE_RUST_PIPELINE_PLAN_ONLY)
+        cbm_log_error("rust_plan.err", "phase", "sequential_extract", "path", "rust_plan_only");
+        rc = CBM_NOT_FOUND;
+#else
         cbm_log_warn("rust_plan.fallback", "phase", "sequential_extract", "reason",
                      "typed_v2_unavailable", "path", "c_dispatch");
         rc = run_c_sequential_dispatch(p, ctx, files, file_count, t);
+#endif
     }
 #else
     rc = run_c_sequential_dispatch(p, ctx, files, file_count, t);
@@ -1049,7 +1061,7 @@ static int run_sequential_pipeline(cbm_pipeline_t *p, cbm_pipeline_ctx_t *ctx,
     return rc;
 }
 
-#ifdef CBM_USE_RUST_PIPELINE_PLAN
+#if defined(CBM_USE_RUST_PIPELINE_PLAN) || defined(CBM_USE_RUST_PIPELINE_PLAN_ONLY)
 typedef struct {
     const char *name;
     int rust_kind;
@@ -1140,13 +1152,20 @@ static bool decode_rust_parallel_steps_v2(const cbm_rs_pipeline_plan_step_v2_t *
     return *out_count == PARALLEL_PASS_COUNT;
 }
 
-static bool log_rust_parallel_dispatch(int mode, int worker_count, int file_count) {
+static bool run_rust_parallel_dispatch(cbm_pipeline_t *p, cbm_pipeline_ctx_t *ctx,
+                                       const cbm_file_info_t *files, int file_count,
+                                       int worker_count, CBMFileResult **cache,
+                                       _Atomic int64_t *shared_ids, struct timespec *t,
+                                       int *out_rc) {
+    if (!p || !ctx || !files || file_count < 0 || !cache || !shared_ids || !t || !out_rc) {
+        return false;
+    }
     cbm_rs_pipeline_plan_step_v2_t steps[CBM_RS_PLAN_V2_MAX_STEPS];
     const parallel_pass_def_t *ordered[PARALLEL_PASS_COUNT];
     int step_count = 0;
     int count = 0;
     char plan[CBM_RS_PLAN_PARALLEL_BUF];
-    if (!cbm_rust_plan_steps_v2(CBM_RS_PLAN_PARALLEL_EXTRACTION, mode, worker_count, file_count,
+    if (!cbm_rust_plan_steps_v2(CBM_RS_PLAN_PARALLEL_EXTRACTION, p->mode, worker_count, file_count,
                                 steps, CBM_RS_PLAN_V2_MAX_STEPS, &step_count) ||
         !decode_rust_parallel_steps_v2(steps, step_count, ordered, &count) ||
         !render_parallel_plan(ordered, count, plan, sizeof(plan))) {
@@ -1154,6 +1173,160 @@ static bool log_rust_parallel_dispatch(int mode, int worker_count, int file_coun
     }
     cbm_log_info("rust_plan.dispatch", "phase", "parallel_extract", "passes", itoa_buf(count),
                  "plan", plan, "source", "typed_v2");
+
+    char cbm_lsp_cross_env[CBM_SZ_16];
+    const bool run_cross_lsp = cbm_safe_getenv("CBM_DISABLE_LSP_CROSS", cbm_lsp_cross_env,
+                                               sizeof(cbm_lsp_cross_env), NULL) == NULL;
+    if (!run_cross_lsp) {
+        cbm_log_info("lsp_cross.skipped", "reason", "CBM_DISABLE_LSP_CROSS env set");
+    }
+
+    CBMArena cross_lsp_arena;
+    cbm_arena_init(&cross_lsp_arena);
+    CBMCrossLspRegistries cross_registries = {0};
+    CBMModuleDefIndex *module_def_index = NULL;
+    char **def_modules = NULL;
+    int def_count = 0;
+    CBMLSPDef *all_defs = NULL;
+    bool cross_state_ready = false;
+    bool cross_state_cleaned = false;
+    int rc = 0;
+    bool stop = false;
+
+    for (int si = 0; si < count && !stop; si++) {
+        const parallel_pass_def_t *pass = ordered[si];
+        cbm_clock_gettime(CLOCK_MONOTONIC, t);
+        switch (pass->rust_kind) {
+        case CBM_RS_PLAN_STEP_PARALLEL_EXTRACT:
+            rc = cbm_parallel_extract(ctx, files, file_count, cache, shared_ids, worker_count);
+            cbm_log_info("pass.timing", "pass", "parallel_extract", "elapsed_ms",
+                         itoa_buf((int)elapsed_ms(*t)));
+            if (rc != 0 || check_cancel(p)) {
+                rc = rc != 0 ? rc : CBM_NOT_FOUND;
+                stop = true;
+                break;
+            }
+            cbm_gbuf_set_next_id(p->gbuf, atomic_load(shared_ids));
+            /* extract -> registry handoff: return the extract phase's freed-but-retained
+             * allocator pages to the OS before registry_build allocates. On a 2x Linux
+             * index the extract peak holds ~13 GB of reclaimable pages (peak_mb 20.7 vs
+             * live rss_mb 7); not returning them pushed the process over the system
+             * memory-pressure threshold and got it SIGKILLed at registry entry. */
+            cbm_mem_collect();
+            cbm_log_info("mem.collect", "phase", "post_extract", "rss_mb",
+                         itoa_buf((int)(cbm_mem_rss() / (1024 * 1024))));
+            break;
+        case CBM_RS_PLAN_STEP_PARALLEL_REGISTRY_BUILD:
+            rc = cbm_build_registry_from_cache(ctx, files, file_count, cache);
+            cbm_log_info("pass.timing", "pass", "registry_build", "elapsed_ms",
+                         itoa_buf((int)elapsed_ms(*t)));
+            log_phase_mem("registry_build");
+            if (rc != 0 || check_cancel(p)) {
+                rc = rc != 0 ? rc : CBM_NOT_FOUND;
+                stop = true;
+            }
+            break;
+        case CBM_RS_PLAN_STEP_PARALLEL_LSP_CROSS_PREPARE:
+            if (run_cross_lsp) {
+                def_modules = (char **)calloc((size_t)file_count, sizeof(char *));
+                all_defs = def_modules ? cbm_pxc_collect_all_defs(cache, files, file_count,
+                                                                  ctx->project_name, def_modules,
+                                                                  &def_count)
+                                       : NULL;
+                module_def_index =
+                    all_defs ? cbm_pxc_build_module_def_index(all_defs, def_count) : NULL;
+                if (all_defs) {
+                    cross_registries.go =
+                        cbm_go_build_cross_registry(&cross_lsp_arena, all_defs, def_count);
+                    cross_registries.python =
+                        cbm_py_build_cross_registry(&cross_lsp_arena, all_defs, def_count);
+                    cross_registries.c =
+                        cbm_c_build_cross_registry(&cross_lsp_arena, all_defs, def_count);
+                    cross_registries.cs =
+                        cbm_cs_build_cross_registry(&cross_lsp_arena, all_defs, def_count);
+                    cross_registries.ts =
+                        cbm_ts_build_cross_registry(&cross_lsp_arena, all_defs, def_count);
+                }
+                cross_state_ready = true;
+            }
+            cbm_log_info("pass.timing", "pass", "lsp_cross_prepare", "elapsed_ms",
+                         itoa_buf((int)elapsed_ms(*t)));
+            log_phase_mem("lsp_cross_prepare");
+            break;
+        case CBM_RS_PLAN_STEP_PARALLEL_RESOLVE:
+            rc = cbm_parallel_resolve(ctx, files, file_count, cache, shared_ids, worker_count,
+                                      all_defs, def_count, def_modules, module_def_index,
+                                      &cross_registries);
+            cbm_log_info("pass.timing", "pass", "parallel_resolve", "elapsed_ms",
+                         itoa_buf((int)elapsed_ms(*t)));
+            log_phase_mem("parallel_resolve");
+            if (rc != 0 || check_cancel(p)) {
+                rc = rc != 0 ? rc : CBM_NOT_FOUND;
+                stop = true;
+            }
+            if (cross_state_ready) {
+                cbm_pxc_free_module_def_index(module_def_index);
+                module_def_index = NULL;
+                if (def_modules) {
+                    for (int i = 0; i < file_count; i++) {
+                        free(def_modules[i]);
+                    }
+                    free(def_modules);
+                    def_modules = NULL;
+                }
+                free(all_defs);
+                all_defs = NULL;
+                cbm_arena_destroy(&cross_lsp_arena);
+                cross_state_ready = false;
+                cross_state_cleaned = true;
+            }
+            cbm_gbuf_set_next_id(p->gbuf, atomic_load(shared_ids));
+            break;
+        case CBM_RS_PLAN_STEP_PARALLEL_INFRA_ROUTES:
+            cbm_pipeline_extract_infra_routes(p->gbuf, files, cache, file_count);
+            cbm_log_info("pass.timing", "pass", "infra_routes", "elapsed_ms",
+                         itoa_buf((int)elapsed_ms(*t)));
+            break;
+        case CBM_RS_PLAN_STEP_PARALLEL_INFRA_BINDINGS:
+            cbm_pipeline_process_infra_bindings(p->gbuf, files, cache, file_count);
+            cbm_log_info("pass.timing", "pass", "infra_bindings", "elapsed_ms",
+                         itoa_buf((int)elapsed_ms(*t)));
+            break;
+        case CBM_RS_PLAN_STEP_PARALLEL_K8S:
+            cbm_pipeline_pass_k8s(ctx, files, file_count);
+            cbm_log_info("pass.timing", "pass", "k8s", "elapsed_ms", itoa_buf((int)elapsed_ms(*t)));
+            break;
+        default:
+            rc = CBM_NOT_FOUND;
+            stop = true;
+            break;
+        }
+    }
+
+    if (cross_state_ready) {
+        cbm_pxc_free_module_def_index(module_def_index);
+        if (def_modules) {
+            for (int i = 0; i < file_count; i++) {
+                free(def_modules[i]);
+            }
+            free(def_modules);
+        }
+        free(all_defs);
+        cbm_arena_destroy(&cross_lsp_arena);
+    } else if (!cross_state_cleaned) {
+        cbm_arena_destroy(&cross_lsp_arena);
+    }
+
+    if (check_cancel(p) && rc == 0) {
+        rc = CBM_NOT_FOUND;
+    }
+    for (int i = 0; i < file_count; i++) {
+        if (cache[i]) {
+            cbm_free_result(cache[i]);
+        }
+    }
+    free(cache);
+    *out_rc = rc;
     return true;
 }
 #endif
@@ -1164,12 +1337,6 @@ static int run_parallel_pipeline(cbm_pipeline_t *p, cbm_pipeline_ctx_t *ctx,
                                  struct timespec *t) {
     cbm_log_info("pipeline.mode", "mode", "parallel", "workers", itoa_buf(worker_count), "files",
                  itoa_buf(file_count));
-#ifdef CBM_USE_RUST_PIPELINE_PLAN
-    if (!log_rust_parallel_dispatch(p->mode, worker_count, file_count)) {
-        cbm_log_warn("rust_plan.fallback", "phase", "parallel_extract", "reason",
-                     "typed_v2_unavailable", "path", "c_parallel");
-    }
-#endif
     _Atomic int64_t shared_ids;
     atomic_init(&shared_ids, cbm_gbuf_next_id(p->gbuf));
     CBMFileResult **cache = (CBMFileResult **)calloc(file_count, sizeof(CBMFileResult *));
@@ -1177,11 +1344,33 @@ static int run_parallel_pipeline(cbm_pipeline_t *p, cbm_pipeline_ctx_t *ctx,
         cbm_log_error("pipeline.err", "phase", "cache_alloc");
         return CBM_NOT_FOUND;
     }
+#if defined(CBM_USE_RUST_PIPELINE_PLAN) || defined(CBM_USE_RUST_PIPELINE_PLAN_ONLY)
+    int rc = 0;
+    if (run_rust_parallel_dispatch(p, ctx, files, file_count, worker_count, cache, &shared_ids, t,
+                                   &rc)) {
+        return rc;
+    }
+#if defined(CBM_USE_RUST_PIPELINE_PLAN_ONLY)
+    cbm_log_error("rust_plan.err", "phase", "parallel_extract", "path", "rust_plan_only");
+    free(cache);
+    return CBM_NOT_FOUND;
+#else
+    cbm_log_warn("rust_plan.fallback", "phase", "parallel_extract", "reason",
+                 "typed_v2_unavailable", "path", "c_parallel");
+#endif
+#else
+    int rc = 0;
+#endif
     cbm_clock_gettime(CLOCK_MONOTONIC, t);
-    int rc = cbm_parallel_extract(ctx, files, file_count, cache, &shared_ids, worker_count);
+    rc = cbm_parallel_extract(ctx, files, file_count, cache, &shared_ids, worker_count);
     cbm_log_info("pass.timing", "pass", "parallel_extract", "elapsed_ms",
                  itoa_buf((int)elapsed_ms(*t)));
     if (rc != 0 || check_cancel(p)) {
+        for (int i = 0; i < file_count; i++) {
+            if (cache[i]) {
+                cbm_free_result(cache[i]);
+            }
+        }
         free(cache);
         return rc != 0 ? rc : CBM_NOT_FOUND;
     }
@@ -1548,9 +1737,145 @@ static int run_post_extraction(cbm_pipeline_t *p, cbm_pipeline_ctx_t *ctx,
 
 #define MIN_FILES_FOR_PARALLEL 50
 
+#if defined(CBM_USE_RUST_PIPELINE_PLAN) || defined(CBM_USE_RUST_PIPELINE_PLAN_ONLY)
+typedef struct {
+    int kind;
+    const char *name;
+    bool skip_fast;
+    int policy;
+    uint32_t gate_flags;
+    uint32_t effect_flags;
+    int nested_plan_kind;
+} top_plan_step_def_t;
+
+typedef struct {
+    int step_count;
+    int extraction_nested_plan_kind;
+    char plan[CBM_RS_PLAN_TOP_BUF];
+} top_plan_runtime_t;
+
+enum { TOP_PLAN_DYNAMIC_EXTRACTION_NESTED = -2 };
+
+static const top_plan_step_def_t top_plan_steps[] = {
+    {CBM_RS_PLAN_TOP_MACRO_EXTRACTION, "macro_extraction", false,
+     CBM_RS_PLAN_TOP_POLICY_FULL_MODE_ONLY, 0, 0, CBM_RS_PLAN_TOP_NO_NESTED_PLAN},
+    {CBM_RS_PLAN_TOP_USERCONFIG_LOAD, "userconfig_load", false, CBM_RS_PLAN_TOP_POLICY_FAIL_OPEN, 0,
+     0, CBM_RS_PLAN_TOP_NO_NESTED_PLAN},
+    {CBM_RS_PLAN_TOP_DISCOVER, "discover", false, CBM_RS_PLAN_TOP_POLICY_REQUIRED, 0, 0,
+     CBM_RS_PLAN_TOP_NO_NESTED_PLAN},
+    {CBM_RS_PLAN_TOP_TRY_INCREMENTAL_OR_DELETE_DB, "try_incremental_or_delete_db", false,
+     CBM_RS_PLAN_TOP_POLICY_EXISTING_DB_ONLY, CBM_RS_PLAN_TOP_GATE_MAY_SHORT_CIRCUIT,
+     CBM_RS_PLAN_TOP_EFFECT_WRITES_STORE_OR_ARTIFACT, CBM_RS_PLAN_TOP_NO_NESTED_PLAN},
+    {CBM_RS_PLAN_TOP_STRUCTURE, "structure", false, CBM_RS_PLAN_TOP_POLICY_REQUIRED, 0,
+     CBM_RS_PLAN_TOP_EFFECT_MUTATES_GRAPH, CBM_RS_PLAN_TOP_NO_NESTED_PLAN},
+    {CBM_RS_PLAN_TOP_EXTRACTION_DISPATCH, "extraction_dispatch", false,
+     CBM_RS_PLAN_TOP_POLICY_REQUIRED, 0, CBM_RS_PLAN_TOP_EFFECT_MUTATES_GRAPH,
+     TOP_PLAN_DYNAMIC_EXTRACTION_NESTED},
+    {CBM_RS_PLAN_TOP_TESTS, "tests", false, CBM_RS_PLAN_TOP_POLICY_REQUIRED, 0,
+     CBM_RS_PLAN_TOP_EFFECT_MUTATES_GRAPH, CBM_RS_PLAN_TOP_NO_NESTED_PLAN},
+    {CBM_RS_PLAN_TOP_GITHISTORY, "githistory", true, CBM_RS_PLAN_TOP_POLICY_REQUIRED,
+     CBM_RS_PLAN_TOP_GATE_SKIP_FAST, CBM_RS_PLAN_TOP_EFFECT_MUTATES_GRAPH,
+     CBM_RS_PLAN_TOP_NO_NESTED_PLAN},
+    {CBM_RS_PLAN_TOP_PREDUMP, "predump", false, CBM_RS_PLAN_TOP_POLICY_REQUIRED, 0,
+     CBM_RS_PLAN_TOP_EFFECT_MUTATES_GRAPH, CBM_RS_PLAN_PREDUMP},
+    {CBM_RS_PLAN_TOP_DUMP, "dump", false, CBM_RS_PLAN_TOP_POLICY_REQUIRED, 0,
+     CBM_RS_PLAN_TOP_EFFECT_WRITES_STORE_OR_ARTIFACT, CBM_RS_PLAN_TOP_NO_NESTED_PLAN},
+    {CBM_RS_PLAN_TOP_PERSIST_HASHES, "persist_hashes", false, CBM_RS_PLAN_TOP_POLICY_BEST_EFFORT, 0,
+     CBM_RS_PLAN_TOP_EFFECT_WRITES_STORE_OR_ARTIFACT, CBM_RS_PLAN_TOP_NO_NESTED_PLAN},
+    {CBM_RS_PLAN_TOP_ARTIFACT_EXPORT, "artifact_export", false,
+     CBM_RS_PLAN_TOP_POLICY_OPTIONAL_PERSISTENCE, 0,
+     CBM_RS_PLAN_TOP_EFFECT_WRITES_STORE_OR_ARTIFACT, CBM_RS_PLAN_TOP_NO_NESTED_PLAN},
+};
+enum { TOP_PLAN_STEP_COUNT = (int)(sizeof(top_plan_steps) / sizeof(top_plan_steps[0])) };
+
+static uint64_t top_plan_step_bit(int kind) {
+    if (kind <= 0 || kind > CBM_RS_PLAN_TOP_ARTIFACT_EXPORT) {
+        return 0;
+    }
+    return UINT64_C(1) << (uint32_t)(kind - 1);
+}
+
+static bool append_top_plan_name(char *buf, size_t bufsize, size_t *used, const char *name) {
+    int written = snprintf(buf + *used, bufsize - *used, "%s%s", *used == 0 ? "" : ",", name);
+    if (written < 0 || (size_t)written >= bufsize - *used) {
+        return false;
+    }
+    *used += (size_t)written;
+    return true;
+}
+
+static bool top_plan_nested_kind_matches(const top_plan_step_def_t *expected,
+                                         const cbm_rs_pipeline_top_step_v1_t *step) {
+    if (expected->nested_plan_kind == TOP_PLAN_DYNAMIC_EXTRACTION_NESTED) {
+        return step->nested_plan_kind == CBM_RS_PLAN_SEQUENTIAL ||
+               step->nested_plan_kind == CBM_RS_PLAN_PARALLEL_EXTRACTION;
+    }
+    return step->nested_plan_kind == expected->nested_plan_kind;
+}
+
+static bool decode_rust_top_plan(const cbm_rs_pipeline_top_step_v1_t *steps, int step_count,
+                                 int mode, top_plan_runtime_t *out) {
+    if (!steps || step_count <= 0 || !out) {
+        return false;
+    }
+    int expected_total = mode == CBM_MODE_FAST ? TOP_PLAN_STEP_COUNT - 1 : TOP_PLAN_STEP_COUNT;
+    if (step_count != expected_total) {
+        return false;
+    }
+
+    uint64_t seen_mask = 0;
+    size_t used = 0;
+    int expected_idx = 0;
+    memset(out, 0, sizeof(*out));
+    out->extraction_nested_plan_kind = CBM_RS_PLAN_TOP_NO_NESTED_PLAN;
+    out->plan[0] = '\0';
+
+    for (int i = 0; i < step_count; i++) {
+        while (expected_idx < TOP_PLAN_STEP_COUNT && top_plan_steps[expected_idx].skip_fast &&
+               mode == CBM_MODE_FAST) {
+            expected_idx++;
+        }
+        if (expected_idx >= TOP_PLAN_STEP_COUNT) {
+            return false;
+        }
+
+        const top_plan_step_def_t *expected = &top_plan_steps[expected_idx];
+        const cbm_rs_pipeline_top_step_v1_t *step = &steps[i];
+        uint64_t bit = top_plan_step_bit(step->kind);
+        if (step->kind != expected->kind || step->phase != CBM_RS_PLAN_TOP_PHASE_FULL_PIPELINE ||
+            step->policy != expected->policy || step->gate_flags != expected->gate_flags ||
+            step->effect_flags != expected->effect_flags ||
+            !top_plan_nested_kind_matches(expected, step) || bit == 0 || (seen_mask & bit) != 0 ||
+            step->requires_mask != seen_mask ||
+            !append_top_plan_name(out->plan, sizeof(out->plan), &used, expected->name)) {
+            return false;
+        }
+
+        if (step->kind == CBM_RS_PLAN_TOP_EXTRACTION_DISPATCH) {
+            out->extraction_nested_plan_kind = step->nested_plan_kind;
+        }
+        seen_mask |= bit;
+        expected_idx++;
+    }
+
+    out->step_count = step_count;
+    return true;
+}
+
+static bool load_rust_top_plan(int mode, int worker_count, int file_count,
+                               top_plan_runtime_t *out) {
+    cbm_rs_pipeline_top_step_v1_t steps[CBM_RS_PLAN_TOP_MAX_STEPS];
+    int step_count = 0;
+    return cbm_rust_full_plan_steps(mode, worker_count, file_count, steps,
+                                    CBM_RS_PLAN_TOP_MAX_STEPS, &step_count) &&
+           decode_rust_top_plan(steps, step_count, mode, out);
+}
+#endif
+
 /* Run structure + extraction passes (parallel or sequential). */
 static int run_extraction_phase(cbm_pipeline_t *p, cbm_pipeline_ctx_t *ctx,
-                                const cbm_file_info_t *files, int file_count) {
+                                const cbm_file_info_t *files, int file_count, int worker_count,
+                                int rust_top_extraction_plan_kind) {
     struct timespec t;
     cbm_clock_gettime(CLOCK_MONOTONIC, &t);
     CBM_PROF_START(t_struct);
@@ -1561,14 +1886,26 @@ static int run_extraction_phase(cbm_pipeline_t *p, cbm_pipeline_ctx_t *ctx,
         return CBM_NOT_FOUND;
     }
 
-    int worker_count = cbm_default_worker_count(true);
     CBM_PROF_START(t_extract_total);
     bool use_parallel = worker_count > SKIP_ONE && file_count > MIN_FILES_FOR_PARALLEL;
-#ifdef CBM_USE_RUST_PIPELINE_PLAN
+#if defined(CBM_USE_RUST_PIPELINE_PLAN) || defined(CBM_USE_RUST_PIPELINE_PLAN_ONLY)
     bool rust_use_parallel = false;
-    if (cbm_rust_plan_extracts_parallel(p->mode, worker_count, file_count, &rust_use_parallel)) {
+    if (rust_top_extraction_plan_kind == CBM_RS_PLAN_PARALLEL_EXTRACTION) {
+        use_parallel = true;
+        cbm_log_info("rust_plan.dispatch", "phase", "extraction_choice", "decision", "parallel",
+                     "source", "top_v1");
+    } else if (rust_top_extraction_plan_kind == CBM_RS_PLAN_SEQUENTIAL) {
+        use_parallel = false;
+        cbm_log_info("rust_plan.dispatch", "phase", "extraction_choice", "decision", "sequential",
+                     "source", "top_v1");
+    } else if (cbm_rust_plan_extracts_parallel(p->mode, worker_count, file_count,
+                                               &rust_use_parallel)) {
         use_parallel = rust_use_parallel;
+        cbm_log_info("rust_plan.dispatch", "phase", "extraction_choice", "decision",
+                     use_parallel ? "parallel" : "sequential", "source", "choice_v1");
     }
+#else
+    (void)rust_top_extraction_plan_kind;
 #endif
     int rc = use_parallel ? run_parallel_pipeline(p, ctx, files, file_count, worker_count, &t)
                           : run_sequential_pipeline(p, ctx, files, file_count, &t);
@@ -1588,6 +1925,7 @@ int cbm_pipeline_run(cbm_pipeline_t *p) {
     struct timespec t0;
     cbm_clock_gettime(CLOCK_MONOTONIC, &t0);
     cbm_path_alias_collection_t *path_aliases = NULL;
+    int rust_top_extraction_plan_kind = CBM_RS_PLAN_TOP_NO_NESTED_PLAN;
 
     /* C/C++ #define Macro nodes (#375) dominate extraction on macro-dense repos
      * (≈49% of nodes on the Linux kernel), so gate them to full mode — moderate
@@ -1628,6 +1966,28 @@ int cbm_pipeline_run(cbm_pipeline_t *p) {
         goto cleanup;
     }
 
+#if defined(CBM_USE_RUST_PIPELINE_PLAN) || defined(CBM_USE_RUST_PIPELINE_PLAN_ONLY)
+    int worker_count = cbm_default_worker_count(true);
+    top_plan_runtime_t rust_top_plan;
+    if (load_rust_top_plan(p->mode, worker_count, file_count, &rust_top_plan)) {
+        rust_top_extraction_plan_kind = rust_top_plan.extraction_nested_plan_kind;
+        cbm_log_info("rust_plan.dispatch", "phase", "full_pipeline", "passes",
+                     itoa_buf(rust_top_plan.step_count), "plan", rust_top_plan.plan, "source",
+                     "top_v1");
+    } else {
+#if defined(CBM_USE_RUST_PIPELINE_PLAN_ONLY)
+        cbm_log_error("rust_plan.err", "phase", "full_pipeline", "path", "rust_plan_only");
+        rc = CBM_NOT_FOUND;
+        goto cleanup;
+#else
+        cbm_log_warn("rust_plan.fallback", "phase", "full_pipeline", "reason", "top_v1_unavailable",
+                     "path", "c_orchestrator");
+#endif
+    }
+#else
+    int worker_count = cbm_default_worker_count(true);
+#endif
+
     /* Check for existing DB → try incremental or delete for reindex */
     rc = try_incremental_or_delete_db(p, files, file_count);
     if (rc != PL_INCREMENTAL_FALLBACK) {
@@ -1654,7 +2014,8 @@ int cbm_pipeline_run(cbm_pipeline_t *p) {
         .path_aliases = path_aliases,
     };
 
-    rc = run_extraction_phase(p, &ctx, files, file_count);
+    rc = run_extraction_phase(p, &ctx, files, file_count, worker_count,
+                              rust_top_extraction_plan_kind);
     if (rc != 0) {
         goto cleanup;
     }

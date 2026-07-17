@@ -22,6 +22,18 @@
 #include <string.h>
 #include <stdint.h>
 
+#ifdef CBM_USE_RUST_UI_LAYOUT_HELPERS
+extern uint32_t cbm_rs_ui_layout_stellar_color_v1(int degree);
+extern float cbm_rs_ui_layout_size_for_label_v1(const char *label);
+extern uint32_t cbm_rs_ui_layout_fnv1a_v1(const char *value);
+extern float cbm_rs_ui_layout_rand_float_v1(uint32_t *seed);
+extern int cbm_rs_ui_layout_octant_v1(float ox, float oy, float oz, float x, float y, float z);
+extern void cbm_rs_ui_layout_child_center_v1(float ox, float oy, float oz, float half, int child,
+                                             float *cx, float *cy, float *cz);
+extern int cbm_rs_ui_layout_find_node_index_v1(const void *map, int count, int64_t id);
+extern int cbm_rs_ui_layout_clamp_max_nodes_v1(int requested, int cap);
+#endif
+
 /* ── Constants ────────────────────────────────────────────────── */
 
 #define DEFAULT_MAX_NODES 2000
@@ -48,6 +60,9 @@
  *   O (blue giant, 0.00003%)    → mega-hubs
  */
 static uint32_t stellar_color(int degree) {
+#ifdef CBM_USE_RUST_UI_LAYOUT_HELPERS
+    return cbm_rs_ui_layout_stellar_color_v1(degree);
+#else
     if (degree <= 1)
         return 0xff6050; /* M — red dwarf */
     if (degree <= 3)
@@ -67,12 +82,16 @@ static uint32_t stellar_color(int degree) {
     if (degree <= 50)
         return 0xc0d0ff; /* B — blue-white */
     return 0x80a0ff;     /* O — blue giant */
+#endif
 }
 
 /* label-based colors removed — using stellar_color(degree) for graph rendering.
  * Label colors are handled in the frontend (lib/colors.ts) for sidebar/tooltips. */
 
 static float size_for_label(const char *label) {
+#ifdef CBM_USE_RUST_UI_LAYOUT_HELPERS
+    return cbm_rs_ui_layout_size_for_label_v1(label);
+#else
     if (!label)
         return 4.0f;
     if (strcmp(label, "Project") == 0)
@@ -96,9 +115,13 @@ static float size_for_label(const char *label) {
     if (strcmp(label, "Method") == 0)
         return 4.0f;
     return 4.0f;
+#endif
 }
 
 static uint32_t fnv1a(const char *s) {
+#ifdef CBM_USE_RUST_UI_LAYOUT_HELPERS
+    return cbm_rs_ui_layout_fnv1a_v1(s);
+#else
     uint32_t h = 2166136261u;
     if (!s)
         return h;
@@ -107,11 +130,16 @@ static uint32_t fnv1a(const char *s) {
         h *= 16777619u;
     }
     return h;
+#endif
 }
 
 static float rand_float(uint32_t *seed) {
+#ifdef CBM_USE_RUST_UI_LAYOUT_HELPERS
+    return cbm_rs_ui_layout_rand_float_v1(seed);
+#else
     *seed = (*seed) * 1103515245u + 12345u;
     return (float)((*seed >> 16) & 0x7FFF) / 32768.0f - 0.5f;
+#endif
 }
 
 static int render_node_limit(void) {
@@ -133,10 +161,14 @@ static int render_node_limit(void) {
 
 static int clamp_max_nodes(int requested) {
     int cap = render_node_limit();
+#ifdef CBM_USE_RUST_UI_LAYOUT_HELPERS
+    return cbm_rs_ui_layout_clamp_max_nodes_v1(requested, cap);
+#else
     if (requested <= 0 || requested > cap) {
         return cap;
     }
     return requested;
+#endif
 }
 
 /* ── Barnes-Hut Octree ────────────────────────────────────────── */
@@ -167,13 +199,21 @@ static void octree_free(octree_node_t *n) {
     free(n);
 }
 static int octant(octree_node_t *n, float x, float y, float z) {
+#ifdef CBM_USE_RUST_UI_LAYOUT_HELPERS
+    return cbm_rs_ui_layout_octant_v1(n->ox, n->oy, n->oz, x, y, z);
+#else
     return ((x >= n->ox) ? 1 : 0) | ((y >= n->oy) ? 2 : 0) | ((z >= n->oz) ? 4 : 0);
+#endif
 }
 static void child_center(octree_node_t *n, int o, float *cx, float *cy, float *cz) {
+#ifdef CBM_USE_RUST_UI_LAYOUT_HELPERS
+    cbm_rs_ui_layout_child_center_v1(n->ox, n->oy, n->oz, n->half_size, o, cx, cy, cz);
+#else
     float q = n->half_size * 0.5f;
     *cx = n->ox + ((o & 1) ? q : -q);
     *cy = n->oy + ((o & 2) ? q : -q);
     *cz = n->oz + ((o & 4) ? q : -q);
+#endif
 }
 static void octree_insert(octree_node_t *n, int idx, float x, float y, float z, float mass) {
     if (n->total_mass == 0.0f && n->body_index == -1) {
@@ -393,6 +433,9 @@ static int cmp_node_id_entry(const void *a, const void *b) {
 }
 
 static int find_node_index(const node_id_entry_t *map, int count, int64_t id) {
+#ifdef CBM_USE_RUST_UI_LAYOUT_HELPERS
+    return cbm_rs_ui_layout_find_node_index_v1(map, count, id);
+#else
     int lo = 0;
     int hi = count - SKIP_ONE;
     while (lo <= hi) {
@@ -407,6 +450,7 @@ static int find_node_index(const node_id_entry_t *map, int count, int64_t id) {
         }
     }
     return CBM_NOT_FOUND;
+#endif
 }
 
 /* ── Public API ───────────────────────────────────────────────── */

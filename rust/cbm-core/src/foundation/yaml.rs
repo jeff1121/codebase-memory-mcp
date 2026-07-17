@@ -1,6 +1,6 @@
 //! 對齊 `src/foundation/yaml.c` 的 minimal YAML parser contract。
 //!
-//! 這個模組只供 test-only FFI parity fixture 使用，不接入產品預設 C 路徑。
+//! 這個模組供 YAML direct ABI 與 C/Rust parity fixture 共用。
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NodeKind {
@@ -351,8 +351,48 @@ fn eq_ignore_ascii_case(a: &[u8], b: &[u8]) -> bool {
 
 fn parse_float_prefix(bytes: &[u8]) -> Option<f64> {
     let mut i = 0;
-    if matches!(bytes.first(), Some(b'+' | b'-')) {
+    while i < bytes.len() && bytes[i].is_ascii_whitespace() {
         i += 1;
+    }
+
+    let negative = match bytes.get(i) {
+        Some(b'+') => {
+            i += 1;
+            false
+        }
+        Some(b'-') => {
+            i += 1;
+            true
+        }
+        _ => false,
+    };
+    let number_start = i;
+
+    if bytes
+        .get(i..i.saturating_add(3))
+        .is_some_and(|value| eq_ignore_ascii_case(value, b"inf"))
+    {
+        return Some(if negative {
+            f64::NEG_INFINITY
+        } else {
+            f64::INFINITY
+        });
+    }
+    if bytes
+        .get(i..i.saturating_add(3))
+        .is_some_and(|value| eq_ignore_ascii_case(value, b"nan"))
+    {
+        return Some(f64::NAN);
+    }
+
+    if bytes.get(i..i.saturating_add(2)).is_some_and(|value| {
+        value.len() == 2 && value[0] == b'0' && matches!(value[1], b'x' | b'X')
+    }) {
+        let (mut value, _) = parse_hex_float_prefix(bytes, i)?;
+        if negative {
+            value = -value;
+        }
+        return Some(value);
     }
 
     let mut saw_digit = false;
@@ -386,7 +426,82 @@ fn parse_float_prefix(bytes: &[u8]) -> Option<f64> {
         }
     }
 
-    std::str::from_utf8(&bytes[..i]).ok()?.parse::<f64>().ok()
+    let mut value = std::str::from_utf8(&bytes[number_start..i])
+        .ok()?
+        .parse::<f64>()
+        .ok()?;
+    if negative {
+        value = -value;
+    }
+    Some(value)
+}
+
+fn hex_digit(value: u8) -> Option<u8> {
+    match value {
+        b'0'..=b'9' => Some(value - b'0'),
+        b'a'..=b'f' => Some(value - b'a' + 10),
+        b'A'..=b'F' => Some(value - b'A' + 10),
+        _ => None,
+    }
+}
+
+fn parse_hex_float_prefix(bytes: &[u8], start: usize) -> Option<(f64, usize)> {
+    let mut i = start + 2;
+    let mut mantissa = 0.0;
+    let mut digits = 0usize;
+    while let Some(digit) = bytes.get(i).and_then(|value| hex_digit(*value)) {
+        mantissa = mantissa * 16.0 + f64::from(digit);
+        digits += 1;
+        i += 1;
+    }
+
+    let mut fractional_digits = 0usize;
+    if bytes.get(i) == Some(&b'.') {
+        i += 1;
+        while let Some(digit) = bytes.get(i).and_then(|value| hex_digit(*value)) {
+            mantissa = mantissa * 16.0 + f64::from(digit);
+            fractional_digits += 1;
+            digits += 1;
+            i += 1;
+        }
+    }
+    if digits == 0 {
+        return None;
+    }
+
+    let mut exponent = 0.0;
+    if matches!(bytes.get(i), Some(b'p' | b'P')) {
+        let exponent_marker = i;
+        i += 1;
+        let negative_exponent = match bytes.get(i) {
+            Some(b'+') => {
+                i += 1;
+                false
+            }
+            Some(b'-') => {
+                i += 1;
+                true
+            }
+            _ => false,
+        };
+        let exponent_start = i;
+        while matches!(bytes.get(i), Some(b'0'..=b'9')) {
+            i += 1;
+        }
+        if i == exponent_start {
+            i = exponent_marker;
+        } else {
+            for digit in &bytes[exponent_start..i] {
+                exponent = (exponent * 10.0 + f64::from(*digit - b'0')).min(f64::MAX);
+            }
+            if negative_exponent {
+                exponent = -exponent;
+            }
+        }
+    }
+
+    let scale = exponent - fractional_digits as f64 * 4.0;
+    Some((mantissa * 2.0_f64.powf(scale), i))
 }
 
 #[cfg(test)]
@@ -415,6 +530,16 @@ mod tests {
         assert_eq!(root.get_str(b"channel"), Some(&b"#general"[..]));
         assert_eq!(root.get_str(b"key"), Some(&b"first"[..]));
         assert!(!root.has(&[b'a'; 260]));
+    }
+
+    #[test]
+    fn parses_c_strtod_float_prefixes() {
+        let yaml = b"hex: 0x1p-1\ninf: inf\nnan: nan\npartial: 0.5e\n";
+        let root = Node::parse(Some(yaml), yaml.len() as i32);
+        assert_eq!(root.get_float(b"hex", 0.0), 0.5);
+        assert!(root.get_float(b"inf", 0.0).is_infinite());
+        assert!(root.get_float(b"nan", 0.0).is_nan());
+        assert_eq!(root.get_float(b"partial", 0.0), 0.5);
     }
 
     #[test]

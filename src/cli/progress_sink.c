@@ -15,6 +15,24 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef CBM_USE_RUST_PROGRESS_SINK
+
+void cbm_progress_sink_init(FILE *out) {
+    cbm_rs_progress_sink_init(out ? out : stderr);
+    cbm_log_set_sink(cbm_progress_sink_fn);
+}
+
+void cbm_progress_sink_fini(void) {
+    cbm_rs_progress_sink_fini();
+    cbm_log_set_sink(NULL);
+}
+
+void cbm_progress_sink_fn(const char *line) {
+    cbm_rs_progress_sink_fn(line);
+}
+
+#else
+
 enum { PERCENT = 100, NOT_SET = -1 };
 
 static FILE *s_out;
@@ -215,3 +233,4 @@ void cbm_progress_sink_fn(const char *line) {
         }
     }
 }
+#endif

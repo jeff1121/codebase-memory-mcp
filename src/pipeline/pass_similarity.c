@@ -9,6 +9,7 @@
  */
 #include "foundation/constants.h"
 #include "pipeline/pipeline.h"
+#include "pipeline/similarity_fp.h"
 #include <stdint.h>
 #include "pipeline/pipeline_internal.h"
 #include "graph_buffer/graph_buffer.h"
@@ -30,7 +31,7 @@ enum {
 #include <stdlib.h>
 #include <string.h>
 
-enum { FP_KEY_PREFIX_LEN = 6, MIN_FP_ENTRIES = 2 }; /* strlen("\"fp\":\"") */
+enum { MIN_FP_ENTRIES = 2 };
 
 /* ── Helpers ─────────────────────────────────────────────────────── */
 
@@ -41,32 +42,6 @@ static const char *file_ext(const char *path) {
     }
     const char *dot = strrchr(path, '.');
     return dot ? dot : "";
-}
-
-/* Parse "fp" hex string from a node's properties_json.
- * Returns true if found and decoded successfully. */
-static bool parse_fp_from_props(const char *props_json, cbm_minhash_t *out) {
-    if (!props_json) {
-        return false;
-    }
-    const char *fp_key = strstr(props_json, "\"fp\":\"");
-    if (!fp_key) {
-        return false;
-    }
-    const char *hex_start = fp_key + FP_KEY_PREFIX_LEN;
-    /* Find closing quote */
-    const char *hex_end = strchr(hex_start, '"');
-    if (!hex_end) {
-        return false;
-    }
-    int hex_len = (int)(hex_end - hex_start);
-    if (hex_len != CBM_MINHASH_HEX_LEN) {
-        return false;
-    }
-    char hex_buf[CBM_MINHASH_HEX_BUF];
-    memcpy(hex_buf, hex_start, (size_t)hex_len);
-    hex_buf[hex_len] = '\0';
-    return cbm_minhash_from_hex(hex_buf, out);
 }
 
 /* Log helper for integer-to-string in log calls. */
@@ -107,7 +82,7 @@ static int collect_fp_entries(cbm_gbuf_t *gbuf, fp_entry_t **out_entries) {
         for (int i = 0; i < node_count; i++) {
             const cbm_gbuf_node_t *n = nodes[i];
             cbm_minhash_t fp;
-            if (!parse_fp_from_props(n->properties_json, &fp)) {
+            if (!cbm_pipeline_similarity_parse_fp(n->properties_json, fp.values)) {
                 continue;
             }
             if (count >= cap) {

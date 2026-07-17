@@ -1,3 +1,5 @@
+#ifndef CBM_USE_RUST_MEM_ONLY
+
 /*
  * mem.c — Unified memory management via mimalloc.
  *
@@ -191,3 +193,5 @@ size_t cbm_mem_worker_budget(int num_workers) {
 void cbm_mem_collect(void) {
     mi_collect(true);
 }
+
+#endif

@@ -16,22 +16,16 @@
 #include "pipeline/pipeline.h"
 #include <stdint.h>
 #include "pipeline/pipeline_internal.h"
+#include "pipeline/semantic_fp_suffix.h"
 #include "graph_buffer/graph_buffer.h"
 #include "foundation/log.h"
 #include "foundation/compat.h"
 #include "cbm.h"
+#include "helpers.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-/* True for languages whose module QN derives from the CONTAINING DIRECTORY
- * (Java/Go package). MUST match cbm_lang_module_is_dir() (internal/cbm/helpers.c)
- * so base-class / same-module resolution keys against the directory-based
- * def-node QNs. */
-static bool ps_module_is_dir(CBMLanguage lang) {
-    return lang == CBM_LANG_JAVA || lang == CBM_LANG_GO;
-}
 
 static char *read_file(const char *path, int *out_len) {
     FILE *f = fopen(path, "rb");
@@ -224,14 +218,9 @@ static void extract_decorator_func(const char *dec, char *out, size_t outsz) {
 
 /* ── Go-style implicit interface satisfaction ─────────────────── */
 
-/* Check if file_path ends with a suffix. */
+/* Check if file_path ends with a suffix — 公開 bridge 見 semantic_fp_suffix.h。 */
 static bool fp_ends_with(const char *fp, const char *suffix) {
-    if (!fp || !suffix) {
-        return false;
-    }
-    size_t fplen = strlen(fp);
-    size_t sflen = strlen(suffix);
-    return fplen >= sflen && strcmp(fp + fplen - sflen, suffix) == 0;
+    return cbm_pipeline_semantic_fp_ends_with(fp, suffix);
 }
 
 /* Info about one interface method (name + node ID). */
@@ -550,7 +539,7 @@ int cbm_pipeline_pass_semantic(cbm_pipeline_ctx_t *ctx, const cbm_file_info_t *f
         build_import_map(ctx, rel, result, &imp_keys, &imp_vals, &imp_count);
 
         char *module_qn = cbm_pipeline_fqn_module_dir(ctx->project_name, rel,
-                                                      ps_module_is_dir(files[i].language));
+                                                      cbm_lang_module_is_dir(files[i].language));
 
         /* ── INHERITS + DECORATES from definitions ──────────────── */
         for (int d = 0; d < result->defs.count; d++) {

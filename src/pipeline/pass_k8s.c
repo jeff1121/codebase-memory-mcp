@@ -18,6 +18,18 @@
 #include "graph_buffer/graph_buffer.h"
 #include "discover/discover.h"
 #include "foundation/log.h"
+
+#ifdef CBM_USE_RUST_PIPELINE_K8S_FILE_CLASSIFIERS
+extern int cbm_rs_pipeline_is_helm_chart_file_v1(const char *name);
+extern int cbm_rs_pipeline_is_gomod_file_v1(const char *name);
+extern int cbm_rs_pipeline_is_requirements_file_v1(const char *name);
+#endif
+#ifdef CBM_USE_RUST_PIPELINE_K8S_FILE_CLASSIFIERS_ONLY
+extern int cbm_pipeline_is_helm_chart_file(const char *name);
+extern int cbm_pipeline_is_gomod_file(const char *name);
+extern int cbm_pipeline_is_requirements_file(const char *name);
+#endif
+#include "pipeline/k8s_text_helpers.h"
 #include "foundation/compat.h"
 #include "cbm.h"
 
@@ -73,11 +85,7 @@ static const char *itoa_k8s(int val) {
     return bufs[i];
 }
 
-/* Extract the basename of a path (pointer into the string; no allocation). */
-static const char *k8s_basename(const char *path) {
-    const char *p = strrchr(path, '/');
-    return p ? p + SKIP_ONE : path;
-}
+/* basename / indent / split_kv：見 k8s_text_helpers.c（true-source selectable CU） */
 
 /* ── Kustomize handler ───────────────────────────────────────────── */
 
@@ -90,7 +98,7 @@ static void handle_kustomize(cbm_pipeline_ctx_t *ctx, const char *path, const ch
     }
 
     int64_t mod_id =
-        cbm_gbuf_apply_upsert_node(ctx->gbuf, "Module", k8s_basename(rel_path), mod_qn, rel_path,
+        cbm_gbuf_apply_upsert_node(ctx->gbuf, "Module", cbm_pipeline_k8s_basename(rel_path), mod_qn, rel_path,
                                    SKIP_ONE, 0, "{\"source\":\"kustomize\"}");
     free(mod_qn);
 
@@ -179,55 +187,6 @@ typedef struct {
     int cap;
 } k8s_record_array_t;
 
-/* Count leading-space indentation of a line (tabs are invalid YAML indent). */
-static int k8s_indent(const char *line) {
-    int n = 0;
-    while (line[n] == ' ') {
-        n++;
-    }
-    return n;
-}
-
-/* Split `key: value` (already de-indented). Returns 1 if a key was found; fills
- * key/val (val empty when the key opens a nested block). */
-static int k8s_split_kv(const char *t, char *key, size_t key_sz, char *val, size_t val_sz) {
-    key[0] = '\0';
-    val[0] = '\0';
-    if (t[0] == '#' || t[0] == '-' || t[0] == '\0') {
-        return 0;
-    }
-    const char *colon = strchr(t, ':');
-    if (!colon) {
-        return 0;
-    }
-    size_t klen = (size_t)(colon - t);
-    if (klen == 0 || klen >= key_sz) {
-        return 0;
-    }
-    memcpy(key, t, klen);
-    key[klen] = '\0';
-    const char *v = colon + 1;
-    while (*v == ' ' || *v == '\t') {
-        v++;
-    }
-    size_t vn = 0;
-    while (v[vn] && v[vn] != '\r' && v[vn] != '\n' && v[vn] != '#' && vn + 1 < val_sz) {
-        val[vn] = v[vn];
-        vn++;
-    }
-    /* trim trailing space */
-    while (vn > 0 && (val[vn - 1] == ' ' || val[vn - 1] == '\t')) {
-        vn--;
-    }
-    val[vn] = '\0';
-    /* strip surrounding quotes */
-    if (vn >= 2 && (val[0] == '"' || val[0] == '\'') && val[vn - 1] == val[0]) {
-        memmove(val, val + 1, vn - 2);
-        val[vn - 2] = '\0';
-    }
-    return 1;
-}
-
 static void k8s_add_val(char dst[][K8S_LABEL_LEN], int *n, const char *v) {
     if (*n >= K8S_MAX_LABELS || !v || !v[0]) {
         return;
@@ -268,13 +227,13 @@ static void k8s_scan_labels(const char *source, k8s_record_t *rec) {
         }
 
         if (trimmed[0] && trimmed[0] != '#') {
-            int ind = k8s_indent(line);
+            int ind = cbm_pipeline_k8s_indent(line);
             while (depth > 0 && stack[depth - 1].indent >= ind) {
                 depth--;
             }
             char key[64];
             char val[K8S_LABEL_LEN];
-            if (k8s_split_kv(trimmed, key, sizeof(key), val, sizeof(val))) {
+            if (cbm_pipeline_k8s_split_kv(trimmed, key, sizeof(key), val, sizeof(val))) {
                 /* Build the current dotted path for context decisions. */
                 bool under_selector = (depth >= 1 && strcmp(stack[depth - 1].key, "selector") == 0);
                 bool under_labels = (depth >= 1 && strcmp(stack[depth - 1].key, "labels") == 0);
@@ -427,7 +386,16 @@ static void handle_k8s_manifest(cbm_pipeline_ctx_t *ctx, const char *path, const
 /* ── Helm chart handler ──────────────────────────────────────────── */
 
 static bool is_helm_chart_file(const char *base) {
+#if defined(CBM_USE_RUST_PIPELINE_K8S_FILE_CLASSIFIERS_ONLY)
+    return cbm_pipeline_is_helm_chart_file(base) != 0;
+#elif defined(CBM_USE_RUST_PIPELINE_K8S_FILE_CLASSIFIERS)
+    return cbm_rs_pipeline_is_helm_chart_file_v1(base) != 0;
+#else
+    if (!base) {
+        return false;
+    }
     return strcmp(base, "Chart.yaml") == 0 || strcmp(base, "Chart.yml") == 0;
+#endif
 }
 
 /* Emit a Chart node for a Chart.yaml and a DEPENDS_ON edge to a (shared,
@@ -438,7 +406,7 @@ static void handle_helm_chart(cbm_pipeline_ctx_t *ctx, const char *rel_path, con
         return;
     }
 
-    const char *cname = hc.chart_name[0] ? hc.chart_name : k8s_basename(rel_path);
+    const char *cname = hc.chart_name[0] ? hc.chart_name : cbm_pipeline_k8s_basename(rel_path);
     char *chart_qn = cbm_infra_qn(ctx->project_name, rel_path, "helm-chart", NULL);
     if (!chart_qn) {
         return;
@@ -474,11 +442,29 @@ static void handle_helm_chart(cbm_pipeline_ctx_t *ctx, const char *rel_path, con
 /* ── Dependency-manifest handler (go.mod / requirements.txt) ──────── */
 
 static bool is_gomod_file(const char *base) {
+#if defined(CBM_USE_RUST_PIPELINE_K8S_FILE_CLASSIFIERS_ONLY)
+    return cbm_pipeline_is_gomod_file(base) != 0;
+#elif defined(CBM_USE_RUST_PIPELINE_K8S_FILE_CLASSIFIERS)
+    return cbm_rs_pipeline_is_gomod_file_v1(base) != 0;
+#else
+    if (!base) {
+        return false;
+    }
     return strcmp(base, "go.mod") == 0;
+#endif
 }
 
 static bool is_requirements_file(const char *base) {
+#if defined(CBM_USE_RUST_PIPELINE_K8S_FILE_CLASSIFIERS_ONLY)
+    return cbm_pipeline_is_requirements_file(base) != 0;
+#elif defined(CBM_USE_RUST_PIPELINE_K8S_FILE_CLASSIFIERS)
+    return cbm_rs_pipeline_is_requirements_file_v1(base) != 0;
+#else
+    if (!base) {
+        return false;
+    }
     return strcmp(base, "requirements.txt") == 0;
+#endif
 }
 
 /* Emit a DEPENDS_ON edge from the manifest file node to a (shared, per-project)
@@ -645,7 +631,7 @@ int cbm_pipeline_pass_k8s(cbm_pipeline_ctx_t *ctx, const cbm_file_info_t *files,
         const char *path = files[i].path;
         const char *rel = files[i].rel_path;
         CBMLanguage lang = files[i].language;
-        const char *base = k8s_basename(rel);
+        const char *base = cbm_pipeline_k8s_basename(rel);
 
         CBMFileResult *cached =
             (ctx->result_cache && ctx->result_cache[i]) ? ctx->result_cache[i] : NULL;

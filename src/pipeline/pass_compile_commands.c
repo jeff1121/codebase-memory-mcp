@@ -11,53 +11,36 @@ enum { CC_FLAG_IDX = 1, CC_FLAG_SKIP = 2 };
 #define SLEN(s) (sizeof(s) - 1)
 #include "pipeline/pipeline.h"
 #include "pipeline/pipeline_internal.h"
+#include "pipeline/split_command.h"
 
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 #include "yyjson/yyjson.h"
 
-/* Emit the current token if non-empty. Returns updated count. */
-static int emit_token(char *current, int *clen, char **out, int count, int max_out) {
-    if (*clen > 0 && count < max_out) {
-        current[*clen] = '\0';
-        out[count++] = strdup(current);
-        *clen = 0;
-    }
-    return count;
-}
-
-int cbm_split_command(const char *cmd, char **out, int max_out) {
-    if (!cmd || !out || max_out <= 0) {
-        return 0;
-    }
-
-    int count = 0;
-    char current[CBM_SZ_4K];
-    int clen = 0;
-    char in_quote = 0;
-
-    for (int i = 0; cmd[i]; i++) {
-        char c = cmd[i];
-        if (in_quote) {
-            if (c == in_quote) {
-                in_quote = 0;
-            } else if (clen < (int)sizeof(current) - SKIP_ONE) {
-                current[clen++] = c;
-            }
-        } else if (c == '"' || c == '\'') {
-            in_quote = c;
-        } else if (c == ' ' || c == '\t') {
-            count = emit_token(current, &clen, out, count, max_out);
-        } else if (clen < (int)sizeof(current) - SKIP_ONE) {
-            current[clen++] = c;
-        }
-    }
-    return emit_token(current, &clen, out, count, max_out);
-}
+#ifdef CBM_USE_RUST_PIPELINE_SPLIT_COMMAND
+extern size_t cbm_rs_pipeline_resolve_compile_path_v1(char *buf, size_t bufsize, const char *path,
+                                                      const char *directory);
+#endif
 
 /* Resolve a path: if relative, join with directory. */
 static char *resolve_path(const char *path, const char *directory) {
+#ifdef CBM_USE_RUST_PIPELINE_SPLIT_COMMAND
+    size_t length = cbm_rs_pipeline_resolve_compile_path_v1(NULL, 0, path, directory);
+    if (length == (size_t)-1) {
+        return NULL;
+    }
+    char *result = malloc(length + SKIP_ONE);
+    if (!result) {
+        return NULL;
+    }
+    if (cbm_rs_pipeline_resolve_compile_path_v1(result, length + SKIP_ONE, path, directory) !=
+        length) {
+        free(result);
+        return NULL;
+    }
+    return result;
+#else
     if (!path) {
         return NULL;
     }
@@ -75,6 +58,7 @@ static char *resolve_path(const char *path, const char *directory) {
     }
 
     return strdup(path);
+#endif
 }
 
 /* Try to consume a -I or -isystem include path flag. Returns true if consumed. */

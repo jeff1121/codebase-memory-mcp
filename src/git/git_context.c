@@ -1,4 +1,7 @@
 #include "git/git_context.h"
+#include "git/json_escaped_len.h"
+#include "git/path_absolute.h"
+#include "git/trim_newlines.h"
 
 #include "foundation/compat_fs.h"
 #include "foundation/constants.h"
@@ -27,16 +30,6 @@ static char *git_strdup(const char *s) {
     }
     memcpy(out, s, n);
     return out;
-}
-
-static void trim_newlines(char *s) {
-    if (!s) {
-        return;
-    }
-    size_t n = strlen(s);
-    while (n > 0 && (s[n - 1] == '\n' || s[n - 1] == '\r')) {
-        s[--n] = '\0';
-    }
 }
 
 static bool git_validate_repo_path(const char *repo_path) {
@@ -85,7 +78,7 @@ static int git_capture(const char *repo_path, const char *git_args, char **out) 
         cbm_pclose(fp);
         return CBM_NOT_FOUND;
     }
-    trim_newlines(buf);
+    cbm_git_trim_newlines(buf);
 
     int rc = cbm_pclose(fp);
     if (rc != 0 || buf[0] == '\0') {
@@ -94,20 +87,6 @@ static int git_capture(const char *repo_path, const char *git_args, char **out) 
 
     *out = git_strdup(buf);
     return *out ? 0 : CBM_NOT_FOUND;
-}
-
-static bool path_is_absolute(const char *path) {
-    if (!path || !path[0]) {
-        return false;
-    }
-    if (path[0] == '/') {
-        return true;
-    }
-#ifdef _WIN32
-    return isalpha((unsigned char)path[0]) && path[1] == ':';
-#else
-    return false;
-#endif
 }
 
 static char *join_root_relative(const char *root, const char *rel) {
@@ -132,7 +111,8 @@ static char *derive_canonical_root(const char *worktree_root, const char *git_co
         return git_strdup("");
     }
 
-    char *root = path_is_absolute(src) ? git_strdup(src) : join_root_relative(worktree_root, src);
+    char *root =
+        cbm_git_path_is_absolute(src) ? git_strdup(src) : join_root_relative(worktree_root, src);
     if (!root) {
         return NULL;
     }
@@ -306,24 +286,6 @@ static bool append_fmt_checked(char *buf, int buf_size, int *off, const char *fm
     return true;
 }
 
-static int json_escaped_len(const char *src) {
-    if (!src) {
-        return 0;
-    }
-    int len = 0;
-    for (int i = 0; src[i]; i++) {
-        unsigned char c = (unsigned char)src[i];
-        if (c == '"' || c == '\\' || c == '\n' || c == '\r' || c == '\t') {
-            len += 2;
-        } else if (c < 0x20) {
-            len += 6; /* \u00XX */
-        } else {
-            len++;
-        }
-    }
-    return len;
-}
-
 static bool json_append_bool(char *buf, int buf_size, int *off, const char *name, bool value,
                              bool comma) {
     return append_fmt_checked(buf, buf_size, off, "\"%s\":%s%s", name, value ? "true" : "false",
@@ -332,7 +294,10 @@ static bool json_append_bool(char *buf, int buf_size, int *off, const char *name
 
 static bool json_append_string(char *buf, int buf_size, int *off, const char *name,
                                const char *value, bool comma) {
-    int needed = json_escaped_len(value ? value : "");
+    int needed = cbm_git_json_escaped_len(value ? value : "");
+    if (needed < 0) {
+        return false;
+    }
     char *escaped = malloc((size_t)needed + 1);
     if (!escaped) {
         return false;

@@ -155,10 +155,18 @@ mod tests {
     fn parses_level_and_format_like_c_env() {
         assert_eq!(parse_level_value(Some(b"WARN"), LEVEL_INFO), LEVEL_WARN);
         assert_eq!(parse_level_value(Some(b"3"), LEVEL_INFO), LEVEL_ERROR);
+        assert_eq!(parse_level_value(Some(b" +3"), LEVEL_INFO), LEVEL_ERROR);
+        assert_eq!(parse_level_value(Some(b"3 "), LEVEL_WARN), LEVEL_WARN);
+        assert_eq!(parse_level_value(Some(b"-1"), LEVEL_WARN), LEVEL_WARN);
+        assert_eq!(
+            parse_level_value(Some(b"999999999999999999999"), LEVEL_WARN),
+            LEVEL_WARN
+        );
         assert_eq!(parse_level_value(Some(b"5"), LEVEL_INFO), LEVEL_INFO);
         assert_eq!(parse_level_value(Some(b""), LEVEL_WARN), LEVEL_WARN);
         assert_eq!(parse_format_value(Some(b"json"), FORMAT_TEXT), FORMAT_JSON);
         assert_eq!(parse_format_value(Some(b"text"), FORMAT_JSON), FORMAT_TEXT);
+        assert_eq!(parse_format_value(Some(b" json"), FORMAT_JSON), FORMAT_JSON);
         assert_eq!(parse_format_value(None, FORMAT_JSON), FORMAT_JSON);
     }
 

@@ -9,6 +9,7 @@
  * Pure functions — thread-safe, no shared state.
  */
 #include "semantic/ast_profile.h"
+#include "semantic/ast_profile_classifiers.h"
 #include "foundation/constants.h"
 #include "tree_sitter/api.h"
 
@@ -22,12 +23,9 @@
 
 enum {
     WALK_STACK_CAP = 2048,
-    HALSTEAD_SET_SIZE = 512,
-    HALSTEAD_SET_MASK = 511,
     PROFILE_FIELD_COUNT = 25,
     DEPTH_SCALE = 10,
     BASE_DECIMAL_AST = 10,
-    HALSTEAD_HASH_MUL = 31,
 };
 
 typedef struct {
@@ -35,108 +33,72 @@ typedef struct {
     int depth;
 } profile_frame_t;
 
-static bool is_control_if(const char *k) {
-    return strcmp(k, "if_statement") == 0 || strcmp(k, "if_expression") == 0 ||
-           strcmp(k, "elif_clause") == 0;
+static bool kind_has_flag(const char *kind, uint32_t flag) {
+    return (cbm_ast_profile_kind_flags(kind) & flag) != 0;
 }
 
-static bool is_control_for(const char *k) {
-    return strcmp(k, "for_statement") == 0 || strcmp(k, "for_range_loop") == 0 ||
-           strcmp(k, "for_expression") == 0 || strcmp(k, "for_in_clause") == 0;
+static bool is_control_if(const char *kind) {
+    return kind_has_flag(kind, CBM_AST_PROFILE_KIND_IF);
 }
 
-static bool is_control_while(const char *k) {
-    return strcmp(k, "while_statement") == 0 || strcmp(k, "while_expression") == 0 ||
-           strcmp(k, "do_statement") == 0;
+static bool is_control_for(const char *kind) {
+    return kind_has_flag(kind, CBM_AST_PROFILE_KIND_FOR);
 }
 
-static bool is_control_switch(const char *k) {
-    return strcmp(k, "switch_statement") == 0 || strcmp(k, "switch_expression") == 0 ||
-           strcmp(k, "match_expression") == 0 || strcmp(k, "type_switch_statement") == 0;
+static bool is_control_while(const char *kind) {
+    return kind_has_flag(kind, CBM_AST_PROFILE_KIND_WHILE);
 }
 
-static bool is_control_try(const char *k) {
-    return strcmp(k, "try_statement") == 0 || strcmp(k, "try_expression") == 0 ||
-           strcmp(k, "catch_clause") == 0 || strcmp(k, "except_clause") == 0;
+static bool is_control_switch(const char *kind) {
+    return kind_has_flag(kind, CBM_AST_PROFILE_KIND_SWITCH);
 }
 
-static bool is_return(const char *k) {
-    return strcmp(k, "return_statement") == 0 || strcmp(k, "return_expression") == 0;
+static bool is_control_try(const char *kind) {
+    return kind_has_flag(kind, CBM_AST_PROFILE_KIND_TRY);
 }
 
-static bool is_comparison(const char *k) {
-    return strcmp(k, "binary_expression") == 0 || strcmp(k, "comparison_operator") == 0 ||
-           strcmp(k, "boolean_operator") == 0;
+static bool is_return(const char *kind) {
+    return kind_has_flag(kind, CBM_AST_PROFILE_KIND_RETURN);
 }
 
-static bool is_arithmetic(const char *k) {
-    return strcmp(k, "unary_expression") == 0 || strcmp(k, "update_expression") == 0;
+static bool is_comparison(const char *kind) {
+    return kind_has_flag(kind, CBM_AST_PROFILE_KIND_COMPARISON);
 }
 
-static bool is_assignment(const char *k) {
-    return strcmp(k, "assignment_expression") == 0 || strcmp(k, "assignment_statement") == 0 ||
-           strcmp(k, "augmented_assignment") == 0 || strcmp(k, "short_var_declaration") == 0;
+static bool is_arithmetic(const char *kind) {
+    return kind_has_flag(kind, CBM_AST_PROFILE_KIND_ARITHMETIC);
 }
 
-static bool is_string_lit(const char *k) {
-    return strcmp(k, "string") == 0 || strcmp(k, "string_literal") == 0 ||
-           strcmp(k, "interpreted_string_literal") == 0 || strcmp(k, "raw_string_literal") == 0;
+static bool is_assignment(const char *kind) {
+    return kind_has_flag(kind, CBM_AST_PROFILE_KIND_ASSIGNMENT);
 }
 
-static bool is_number_lit(const char *k) {
-    return strcmp(k, "number") == 0 || strcmp(k, "integer") == 0 || strcmp(k, "float") == 0 ||
-           strcmp(k, "integer_literal") == 0 || strcmp(k, "float_literal") == 0;
+static bool is_string_lit(const char *kind) {
+    return kind_has_flag(kind, CBM_AST_PROFILE_KIND_STRING_LITERAL);
 }
 
-static bool is_bool_lit(const char *k) {
-    return strcmp(k, "true") == 0 || strcmp(k, "false") == 0;
+static bool is_number_lit(const char *kind) {
+    return kind_has_flag(kind, CBM_AST_PROFILE_KIND_NUMBER_LITERAL);
 }
 
-static bool is_operator_node(const char *k) {
-    /* Named nodes that represent operations (not data). */
-    return is_control_if(k) || is_control_for(k) || is_control_while(k) || is_control_switch(k) ||
-           is_control_try(k) || is_return(k) || is_comparison(k) || is_arithmetic(k) ||
-           is_assignment(k) || strcmp(k, "call_expression") == 0 ||
-           strcmp(k, "member_expression") == 0 || strcmp(k, "subscript_expression") == 0;
+static bool is_bool_lit(const char *kind) {
+    return kind_has_flag(kind, CBM_AST_PROFILE_KIND_BOOL_LITERAL);
 }
 
-static bool is_identifier(const char *k) {
-    return strcmp(k, "identifier") == 0 || strcmp(k, "field_identifier") == 0 ||
-           strcmp(k, "property_identifier") == 0 || strcmp(k, "type_identifier") == 0;
+static bool is_operator_node(const char *kind) {
+    return kind_has_flag(kind, CBM_AST_PROFILE_KIND_OPERATOR);
 }
 
-/* Simple hash set for Halstead unique counting (open addressing). */
-static bool halstead_insert(uint32_t *set, const char *key) {
-    uint32_t h = 0;
-    for (const char *p = key; *p; p++) {
-        h = (h * HALSTEAD_HASH_MUL) + (uint32_t)*p;
-    }
-    uint32_t idx = h & HALSTEAD_SET_MASK;
-    for (int probe = 0; probe < HALSTEAD_SET_SIZE; probe++) {
-        uint32_t slot = (idx + (uint32_t)probe) & HALSTEAD_SET_MASK;
-        if (set[slot] == 0) {
-            set[slot] = h | SKIP_ONE;
-            return true; /* new */
-        }
-        if (set[slot] == (h | SKIP_ONE)) {
-            return false; /* existing */
-        }
-    }
-    return false;
+static bool is_identifier(const char *kind) {
+    return kind_has_flag(kind, CBM_AST_PROFILE_KIND_IDENTIFIER);
 }
 
-/* Check if an identifier matches any parameter name. */
 static bool is_param_name(const char *ident, const char *source, const char **param_names,
                           int param_count) {
-    if (!ident || !source || !param_names || param_count == 0) {
+    if (!ident || !source || !param_names || param_count <= 0) {
         return false;
     }
-    for (int i = 0; i < param_count; i++) {
-        if (param_names[i] && strcmp(ident, param_names[i]) == 0) {
-            return true;
-        }
-    }
-    return false;
+    return cbm_ast_profile_is_param_name(ident, param_names, param_count);
 }
 
 /* ── Main computation ────────────────────────────────────────────── */
@@ -197,14 +159,14 @@ static void accumulate_halstead(const char *kind, uint32_t child_count, uint32_t
                                 uint32_t *operand_set, cbm_ast_profile_t *out) {
     if (is_operator_node(kind)) {
         out->total_operators++;
-        if (halstead_insert(op_set, kind)) {
+        if (cbm_ast_profile_halstead_insert(op_set, kind)) {
             out->unique_operators++;
         }
     }
     if (child_count == 0 &&
         (is_identifier(kind) || is_string_lit(kind) || is_number_lit(kind) || is_bool_lit(kind))) {
         out->total_operands++;
-        if (halstead_insert(operand_set, kind)) {
+        if (cbm_ast_profile_halstead_insert(operand_set, kind)) {
             out->unique_operands++;
         }
         out->body_tokens++;
@@ -249,8 +211,8 @@ bool cbm_ast_profile_compute(TSNode func_body, const char *source, const char **
     memset(out, 0, sizeof(*out));
     out->param_count = (uint16_t)param_count;
 
-    uint32_t op_set[HALSTEAD_SET_SIZE];
-    uint32_t operand_set[HALSTEAD_SET_SIZE];
+    uint32_t op_set[CBM_AST_PROFILE_HALSTEAD_SET_SIZE];
+    uint32_t operand_set[CBM_AST_PROFILE_HALSTEAD_SET_SIZE];
     memset(op_set, 0, sizeof(op_set));
     memset(operand_set, 0, sizeof(operand_set));
 
@@ -315,6 +277,9 @@ bool cbm_ast_profile_compute(TSNode func_body, const char *source, const char **
 
     return node_count > 0;
 }
+
+/* Rust direct slice 只取代純 codec；Tree-sitter traversal 仍保留 C fallback。 */
+#ifndef CBM_USE_RUST_AST_PROFILE_CODEC_ONLY
 
 /* ── Serialization ───────────────────────────────────────────────── */
 
@@ -415,3 +380,5 @@ void cbm_ast_profile_to_vector(const cbm_ast_profile_t *p, float *out) {
     out[i++] = (float)p->body_lines / MAX_TOKENS;
     out[i++] = (float)p->body_tokens / MAX_TOKENS;
 }
+
+#endif

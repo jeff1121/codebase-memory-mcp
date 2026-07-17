@@ -3,6 +3,7 @@
  */
 #include "log.h"
 #include "foundation/constants.h"
+#include "foundation/log_path.h"
 #include <ctype.h>
 #include <inttypes.h>
 #include <stdarg.h>
@@ -16,11 +17,22 @@ static CBMLogFormat g_log_format = CBM_LOG_FORMAT_TEXT;
 static cbm_log_sink_fn g_log_sink = NULL;
 static CBMLogSinkMode g_log_sink_mode = CBM_LOG_SINK_REPLACE;
 
+#if defined(CBM_USE_RUST_LOG_ENV_PARSE) || defined(CBM_USE_RUST_LOG_ENV_PARSE_ONLY)
+extern int cbm_rs_log_parse_level_value(const char *value, int current);
+extern int cbm_rs_log_parse_format_value(const char *value, int current);
+#endif
+
 /* CBM_LOG_LEVEL support — distilled from #414 (closes #413, thanks @santanusinha). */
 void cbm_log_init_from_env(void) {
     /* getenv() is safe here: this runs at startup before any thread is created,
      * so there is no concurrent setenv() to race against. */
     const char *raw = getenv("CBM_LOG_LEVEL");
+#if defined(CBM_USE_RUST_LOG_ENV_PARSE) || defined(CBM_USE_RUST_LOG_ENV_PARSE_ONLY)
+    int parsed_level = cbm_rs_log_parse_level_value(raw, (int)g_log_level);
+    if (parsed_level >= CBM_LOG_DEBUG && parsed_level <= CBM_LOG_NONE) {
+        cbm_log_set_level((CBMLogLevel)parsed_level);
+    }
+#else
     if (raw && raw[0] != '\0') {
         /* Textual form, case-insensitive. Index of each name == its enum value. */
         static const char *const names[] = {"debug", "info", "warn", "error", "none"};
@@ -48,9 +60,18 @@ void cbm_log_init_from_env(void) {
     }
 
     /* Unrecognised value: leave the level unchanged (fail-open). */
+#endif
 
+#if !defined(CBM_USE_RUST_LOG_ENV_PARSE) && !defined(CBM_USE_RUST_LOG_ENV_PARSE_ONLY)
 parse_format:;
+#endif
     const char *fmt = getenv("CBM_LOG_FORMAT");
+#if defined(CBM_USE_RUST_LOG_ENV_PARSE) || defined(CBM_USE_RUST_LOG_ENV_PARSE_ONLY)
+    int parsed_format = cbm_rs_log_parse_format_value(fmt, (int)g_log_format);
+    if (parsed_format == CBM_LOG_FORMAT_TEXT || parsed_format == CBM_LOG_FORMAT_JSON) {
+        cbm_log_set_format((CBMLogFormat)parsed_format);
+    }
+#else
     if (fmt && fmt[0] != '\0') {
         char lower_fmt[8];
         size_t i = 0;
@@ -65,6 +86,7 @@ parse_format:;
         }
         return;
     }
+#endif
 
     /* Format is intentionally explicit-only. Logs stay local to stderr and the
      * optional in-process sink; deployment environment variables must not
@@ -261,22 +283,6 @@ void cbm_log_int(CBMLogLevel level, const char *msg, const char *key, int64_t va
     cbm_log(level, msg, key ? key : "?", value_buf, NULL);
 }
 
-static void copy_path_without_query(const char *path, char *out, size_t outsz) {
-    if (!out || outsz == 0) {
-        return;
-    }
-    out[0] = '\0';
-    if (!path) {
-        return;
-    }
-    size_t n = 0;
-    while (path[n] && path[n] != '?' && path[n] != '#' && n < outsz - 1) {
-        out[n] = path[n];
-        n++;
-    }
-    out[n] = '\0';
-}
-
 void cbm_log_mcp_request(const char *method, const char *tool_name, bool is_error,
                          int64_t duration_us) {
     char duration_ms[CBM_SZ_32];
@@ -299,7 +305,7 @@ void cbm_log_http_request(const char *component, const char *method, const char 
     char duration_buf[CBM_SZ_32];
     char request_buf[CBM_SZ_32];
     char response_buf[CBM_SZ_32];
-    copy_path_without_query(path, safe_path, sizeof(safe_path));
+    cbm_log_copy_path_without_query(path, safe_path, sizeof(safe_path));
     snprintf(status_buf, sizeof(status_buf), "%d", status);
     snprintf(duration_buf, sizeof(duration_buf), "%" PRId64, duration_ms);
     snprintf(request_buf, sizeof(request_buf), "%zu", request_bytes);
@@ -315,4 +321,34 @@ void cbm_log_http_request(const char *component, const char *method, const char 
     cbm_log(level, "http.request", "component", component ? component : "", "method",
             method ? method : "", "path", safe_path, "status", status_buf, "duration_ms",
             duration_buf, "request_bytes", request_buf, "response_bytes", response_buf, NULL);
+}
+
+void cbm_log_dump_verify_invalid_ratio(const char *value) {
+    cbm_log_warn("dump_verify.env.invalid", "value", value ? value : "", "fallback", "0.5");
+}
+
+void cbm_log_workers_env_invalid(const char *value) {
+    cbm_log_warn("workers.env.invalid", "value", value ? value : "", "fallback", "sysconf");
+}
+
+void cbm_log_profile_elapsed(const char *phase, const char *sub, long ms, long us, long items) {
+    char ms_buf[32];
+    char us_buf[32];
+    char items_buf[32];
+    snprintf(ms_buf, sizeof(ms_buf), "%ld", ms);
+    snprintf(us_buf, sizeof(us_buf), "%ld", us);
+    if (items > 0 && us > 0) {
+        char rate_buf[32];
+        long rate = (long)((double)items * 1000000.0 / (double)us);
+        snprintf(items_buf, sizeof(items_buf), "%ld", items);
+        snprintf(rate_buf, sizeof(rate_buf), "%ld", rate);
+        cbm_log_info("prof", "phase", phase, "sub", sub, "ms", ms_buf, "us", us_buf, "items",
+                     items_buf, "rate_per_s", rate_buf);
+    } else if (items > 0) {
+        snprintf(items_buf, sizeof(items_buf), "%ld", items);
+        cbm_log_info("prof", "phase", phase, "sub", sub, "ms", ms_buf, "us", us_buf, "items",
+                     items_buf);
+    } else {
+        cbm_log_info("prof", "phase", phase, "sub", sub, "ms", ms_buf, "us", us_buf);
+    }
 }

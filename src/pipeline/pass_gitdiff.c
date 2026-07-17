@@ -16,7 +16,25 @@ enum { GD_STATUS_IDX = 1, GD_PLUS_PREFIX = 6 };
 #include <stdlib.h>
 #include <string.h>
 
+#if defined(CBM_USE_RUST_PIPELINE_GITDIFF_RANGE) || \
+    defined(CBM_USE_RUST_PIPELINE_GITDIFF_RANGE_ONLY)
+extern void cbm_rs_pipeline_parse_range_v1(const char *input, int *out_start, int *out_count);
+#endif
+#if defined(CBM_USE_RUST_PIPELINE_GITDIFF_NAME_STATUS) || \
+    defined(CBM_USE_RUST_PIPELINE_GITDIFF_NAME_STATUS_ONLY)
+extern int cbm_rs_pipeline_parse_name_status_v1(const char *input, cbm_changed_file_t *out,
+                                                int max_out);
+#endif
+#if defined(CBM_USE_RUST_PIPELINE_GITDIFF_HUNKS) || \
+    defined(CBM_USE_RUST_PIPELINE_GITDIFF_HUNKS_ONLY)
+extern int cbm_rs_pipeline_parse_hunks_v1(const char *input, cbm_changed_hunk_t *out, int max_out);
+#endif
+
 void cbm_parse_range(const char *s, int *out_start, int *out_count) {
+#if defined(CBM_USE_RUST_PIPELINE_GITDIFF_RANGE) || \
+    defined(CBM_USE_RUST_PIPELINE_GITDIFF_RANGE_ONLY)
+    cbm_rs_pipeline_parse_range_v1(s, out_start, out_count);
+#else
     *out_start = 0;
     *out_count = SKIP_ONE;
 
@@ -38,12 +56,15 @@ void cbm_parse_range(const char *s, int *out_start, int *out_count) {
 
     /* Parse count */
     *out_count = (int)strtol(comma + SKIP_ONE, NULL, CBM_DECIMAL_BASE);
+#endif
 }
 
 #define HUNK_LINE_BUF 1536
 
 /* Parse a single name-status line into a cbm_changed_file_t.
  * Returns true if a valid entry was produced. */
+#if !defined(CBM_USE_RUST_PIPELINE_GITDIFF_NAME_STATUS) && \
+    !defined(CBM_USE_RUST_PIPELINE_GITDIFF_NAME_STATUS_ONLY)
 static bool parse_one_name_status(const char *line, size_t line_len, cbm_changed_file_t *out_f) {
     char tmp[HUNK_LINE_BUF];
     if (line_len >= sizeof(tmp)) {
@@ -83,8 +104,13 @@ static bool parse_one_name_status(const char *line, size_t line_len, cbm_changed
 
     return cbm_is_trackable_file(out_f->path);
 }
+#endif
 
 int cbm_parse_name_status(const char *output, cbm_changed_file_t *out, int max_out) {
+#if defined(CBM_USE_RUST_PIPELINE_GITDIFF_NAME_STATUS) || \
+    defined(CBM_USE_RUST_PIPELINE_GITDIFF_NAME_STATUS_ONLY)
+    return cbm_rs_pipeline_parse_name_status_v1(output, out, max_out);
+#else
     if (!output || !out || max_out <= 0) {
         return 0;
     }
@@ -106,10 +132,13 @@ int cbm_parse_name_status(const char *output, cbm_changed_file_t *out, int max_o
         line = eol ? eol + SKIP_ONE : line + line_len;
     }
     return count;
+#endif
 }
 
 /* Parse a single @@ hunk header line and emit a hunk entry if valid.
  * Returns true if a hunk was added. */
+#if !defined(CBM_USE_RUST_PIPELINE_GITDIFF_HUNKS) && \
+    !defined(CBM_USE_RUST_PIPELINE_GITDIFF_HUNKS_ONLY)
 static bool parse_hunk_line(const char *line, size_t line_len, const char *current_file,
                             cbm_changed_hunk_t *out_h) {
     const char *plus = memchr(line, '+', line_len);
@@ -150,8 +179,13 @@ static bool parse_hunk_line(const char *line, size_t line_len, const char *curre
     out_h->end_line = end;
     return true;
 }
+#endif
 
 int cbm_parse_hunks(const char *output, cbm_changed_hunk_t *out, int max_out) {
+#if defined(CBM_USE_RUST_PIPELINE_GITDIFF_HUNKS) || \
+    defined(CBM_USE_RUST_PIPELINE_GITDIFF_HUNKS_ONLY)
+    return cbm_rs_pipeline_parse_hunks_v1(output, out, max_out);
+#else
     if (!output || !out || max_out <= 0) {
         return 0;
     }
@@ -187,4 +221,5 @@ int cbm_parse_hunks(const char *output, cbm_changed_hunk_t *out, int max_out) {
         line = eol ? eol + SKIP_ONE : line + line_len;
     }
     return count;
+#endif
 }

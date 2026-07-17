@@ -22,6 +22,11 @@ enum { ENRICH_ATTR_SKIP = 2, ENRICH_MAX_CAMEL = 16 };
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef CBM_USE_RUST_PIPELINE_ENRICHMENT_TOKENS
+extern int cbm_rs_pipeline_split_camel_case_v1(const char *value, char **out, int max_out);
+extern int cbm_rs_pipeline_tokenize_decorator_v1(const char *value, char **out, int max_out);
+#endif
+
 /* Convert intptr_t to void* without triggering performance-no-int-to-ptr. */
 static inline void *intptr_to_ptr(intptr_t v) {
     void *p;
@@ -43,6 +48,9 @@ static bool is_decorator_stopword(const char *w) {
 }
 
 int cbm_split_camel_case(const char *s, char **out, int max_out) {
+#ifdef CBM_USE_RUST_PIPELINE_ENRICHMENT_TOKENS
+    return cbm_rs_pipeline_split_camel_case_v1(s, out, max_out);
+#else
     if (!s || !out || max_out <= 0) {
         return 0;
     }
@@ -69,6 +77,7 @@ int cbm_split_camel_case(const char *s, char **out, int max_out) {
         count++;
     }
     return count;
+#endif
 }
 
 /* Strip decorator syntax: leading @, #[...], and arguments (...).
@@ -98,6 +107,9 @@ static char *strip_decorator_syntax(char *buf) {
 }
 
 int cbm_tokenize_decorator(const char *dec, char **out, int max_out) {
+#ifdef CBM_USE_RUST_PIPELINE_ENRICHMENT_TOKENS
+    return cbm_rs_pipeline_tokenize_decorator_v1(dec, out, max_out);
+#else
     if (!dec || !out || max_out <= 0) {
         return 0;
     }
@@ -134,6 +146,7 @@ int cbm_tokenize_decorator(const char *dec, char **out, int max_out) {
     }
 
     return count;
+#endif
 }
 
 /* ══════════════════════════════════════════════════════════════════

@@ -40,6 +40,7 @@ enum {
 
 #define SLEN(s) (sizeof(s) - 1)
 #include "mcp/mcp.h"
+#include "mcp/edge_type_valid.h"
 #include "store/store.h"
 #include <sqlite3.h>
 #include "cypher/cypher.h"
@@ -108,7 +109,7 @@ static char *heap_strdup(const char *s) {
     return d;
 }
 
-#ifdef CBM_USE_RUST_MCP_CODEC
+#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
 static char *heap_dup_nul(const char *s, size_t len) {
     char *d = malloc(len + SKIP_ONE);
     if (!d) {
@@ -135,7 +136,16 @@ static char *yy_doc_to_str(yyjson_mut_doc *doc) {
  *  JSON-RPC PARSING
  * ══════════════════════════════════════════════════════════════════ */
 
-#ifdef CBM_USE_RUST_MCP_CODEC
+enum {
+    CBM_MCP_METHOD_UNKNOWN = 0,
+    CBM_MCP_METHOD_INITIALIZE = 1,
+    CBM_MCP_METHOD_PING = 2,
+    CBM_MCP_METHOD_TOOLS_LIST = 3,
+    CBM_MCP_METHOD_TOOLS_CALL = 4,
+    CBM_MCP_METHOD_NOTIFICATIONS_CANCELLED = 5,
+};
+
+#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
 enum {
     CBM_RS_MCP_ID_NONE = 0,
     CBM_RS_MCP_ID_INT = 1,
@@ -154,6 +164,13 @@ typedef struct {
     size_t params_len;
 } CbmRsMcpJsonRpcParseOutV1;
 
+typedef struct {
+    int start;
+    int end;
+    int has_next;
+    int next_cursor;
+} CbmRsMcpToolsPageBoundsV1;
+
 extern int cbm_rs_mcp_jsonrpc_parse_v1(const unsigned char *input, int len,
                                        CbmRsMcpJsonRpcParseOutV1 *out, char *jsonrpc_buf,
                                        size_t jsonrpc_bufsize, char *method_buf,
@@ -161,13 +178,92 @@ extern int cbm_rs_mcp_jsonrpc_parse_v1(const unsigned char *input, int len,
                                        size_t id_str_bufsize, char *params_buf,
                                        size_t params_bufsize);
 extern int cbm_rs_mcp_tools_cursor_offset_v1(const char *params_json, int tool_count);
+extern int cbm_rs_mcp_tool_index_v1(const char *name);
+extern int cbm_rs_mcp_tool_dispatch_index_v1(const char *name);
+extern int cbm_rs_mcp_tool_count_v1(void);
+extern size_t cbm_rs_mcp_tool_name_v1(char *buf, size_t bufsize, int index);
+extern size_t cbm_rs_mcp_tool_title_v1(char *buf, size_t bufsize, int index);
+extern size_t cbm_rs_mcp_tool_description_v1(char *buf, size_t bufsize, int index);
+extern size_t cbm_rs_mcp_tool_input_schema_v1(char *buf, size_t bufsize, int index);
+extern size_t cbm_rs_mcp_tool_output_schema_v1(char *buf, size_t bufsize);
+extern size_t cbm_rs_mcp_tools_list_json_v1(char *buf, size_t bufsize, int offset, int limit,
+                                            int include_next_cursor);
+extern int cbm_rs_mcp_tools_page_bounds_v1(int offset, int limit, int include_next_cursor,
+                                           int tool_count, CbmRsMcpToolsPageBoundsV1 *out);
+extern int cbm_rs_mcp_content_length_header_is_blank_v1(const char *line);
+extern int cbm_rs_mcp_content_length_header_matches_v1(const char *line);
+extern long long cbm_rs_mcp_content_length_raw_v1(const char *line);
+extern size_t cbm_rs_mcp_initialize_protocol_version_v1(char *buf, size_t bufsize,
+                                                        const unsigned char *input, int len);
+extern size_t cbm_rs_mcp_initialize_response_v1(char *buf, size_t bufsize,
+                                                const unsigned char *input, int len);
+extern size_t cbm_rs_mcp_tools_call_name_v1(char *buf, size_t bufsize, const unsigned char *input,
+                                            int len);
+extern size_t cbm_rs_mcp_tools_call_arguments_v1(char *buf, size_t bufsize,
+                                                 const unsigned char *input, int len);
+extern size_t cbm_rs_mcp_get_string_arg_v1(char *buf, size_t bufsize, const unsigned char *input,
+                                           int len, const char *key);
+extern int cbm_rs_mcp_get_int_arg_v1(const unsigned char *input, int len, const char *key,
+                                     int default_value);
+extern int cbm_rs_mcp_get_bool_arg_v1(const unsigned char *input, int len, const char *key);
+extern int cbm_rs_mcp_edge_type_valid_v1(const char *input);
+extern int cbm_rs_mcp_search_path_arg_valid_v1(const char *input);
+extern int cbm_rs_mcp_search_args_valid_v1(const char *root_path, const char *file_pattern);
+extern size_t cbm_rs_mcp_strip_root_prefix_offset_v1(const char *path, const char *root,
+                                                     size_t root_len);
+extern int cbm_rs_mcp_search_mode_v1(const char *input);
+extern int cbm_rs_mcp_index_mode_v1(const char *input);
+extern uint32_t cbm_rs_mcp_trace_mode_edge_mask_v1(const char *input);
+extern void cbm_rs_mcp_sanitize_ascii_in_place_v1(char *input);
+extern int cbm_rs_mcp_search_code_score_v1(const char *label, const char *file, int in_degree);
+extern int cbm_rs_mcp_search_score_cmp_v1(int left_score, int right_score);
+extern size_t cbm_rs_mcp_search_top_dir_v1(char *buf, size_t bufsize, const char *file);
+extern int cbm_rs_mcp_detect_changes_wants_symbols_v1(const char *scope);
+extern int cbm_rs_mcp_detect_changes_impacted_label_v1(const char *label);
+extern size_t cbm_rs_mcp_detect_changes_status_path_offset_v1(const char *line);
+extern int cbm_rs_mcp_search_line_match_span_v1(int start_line, int end_line, int line);
+extern int cbm_rs_mcp_search_pick_resolved_index_v1(const long *scores, int count,
+                                                    int *ambiguous_out);
+extern int cbm_rs_mcp_search_pick_tightest_index_v1(const int *spans, int count);
+extern int cbm_rs_mcp_utf8_is_cont_v1(int byte);
+extern long cbm_rs_mcp_node_resolution_score_v1(const char *label, int start_line, int end_line);
+extern int cbm_rs_mcp_adr_mode_v1(const char *input);
+extern size_t cbm_rs_mcp_adr_sections_json_v1(char *buf, size_t bufsize, const char *content);
+extern int cbm_rs_mcp_bm25_build_match_v1(char *buf, size_t bufsize, const char *input);
+extern size_t cbm_rs_mcp_bm25_file_pattern_like_v1(char *buf, size_t bufsize, const char *input);
+extern size_t cbm_rs_mcp_sanitize_utf8_lossy_v1(char *buf, size_t bufsize, const char *input);
+extern int cbm_rs_mcp_architecture_aspect_wanted_v1(const char *input, const char *name);
+extern int cbm_rs_mcp_trace_is_test_file_v1(const char *input);
+extern int cbm_rs_mcp_project_db_file_name_v1(const char *input);
+extern int cbm_rs_mcp_cancel_request_matches_v1(const char *params_json, int64_t active_id,
+                                                const char *active_id_str);
+extern size_t cbm_rs_mcp_jsonrpc_format_error_v1(char *buf, size_t bufsize, int64_t id, int code,
+                                                 const char *message);
+extern size_t cbm_rs_mcp_jsonrpc_format_response_v1(char *buf, size_t bufsize, int64_t id,
+                                                    const char *id_str, const char *result_json,
+                                                    const char *error_json);
+extern size_t cbm_rs_mcp_text_result_v1(char *buf, size_t bufsize, const char *text, int is_error);
+extern int cbm_rs_mcp_content_length_v1(const char *line, int max_len);
+extern size_t cbm_rs_mcp_content_length_response_v1(char *buf, size_t bufsize, const char *resp);
+extern size_t cbm_rs_mcp_parse_file_uri_v1(char *buf, size_t bufsize, const char *uri);
+extern int cbm_rs_mcp_method_kind_v1(const char *method);
+extern size_t cbm_rs_mcp_method_not_found_error_v1(char *buf, size_t bufsize);
+extern size_t cbm_rs_mcp_parse_error_message_v1(char *buf, size_t bufsize);
+extern size_t cbm_rs_mcp_ping_result_v1(char *buf, size_t bufsize);
+extern size_t cbm_rs_mcp_tools_call_default_arguments_v1(char *buf, size_t bufsize);
+extern size_t cbm_rs_mcp_missing_tool_name_message_v1(char *buf, size_t bufsize);
+extern size_t cbm_rs_mcp_missing_project_error_v1(char *buf, size_t bufsize);
+extern size_t cbm_rs_mcp_project_not_found_message_v1(char *buf, size_t bufsize);
+extern size_t cbm_rs_mcp_project_list_error_v1(char *buf, size_t bufsize, const char *reason,
+                                               const char *projects_csv, int count);
+extern size_t cbm_rs_mcp_unknown_tool_message_v1(char *buf, size_t bufsize, const char *tool_name);
 #endif
 
 int cbm_jsonrpc_parse(const char *line, cbm_jsonrpc_request_t *out) {
     memset(out, 0, sizeof(*out));
     out->id = CBM_NOT_FOUND;
 
-#ifdef CBM_USE_RUST_MCP_CODEC
+#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
     size_t line_len = strlen(line);
     if (line_len > (size_t)INT_MAX) {
         return CBM_NOT_FOUND;
@@ -290,6 +386,23 @@ void cbm_jsonrpc_request_free(cbm_jsonrpc_request_t *r) {
  * ══════════════════════════════════════════════════════════════════ */
 
 char *cbm_jsonrpc_format_response(const cbm_jsonrpc_response_t *resp) {
+#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
+    size_t json_len = cbm_rs_mcp_jsonrpc_format_response_v1(NULL, 0, resp->id, resp->id_str,
+                                                            resp->result_json, resp->error_json);
+    if (json_len != SIZE_MAX) {
+        char *out = heap_dup_nul(NULL, json_len);
+        if (!out) {
+            return NULL;
+        }
+        size_t written = cbm_rs_mcp_jsonrpc_format_response_v1(
+            out, json_len + SKIP_ONE, resp->id, resp->id_str, resp->result_json, resp->error_json);
+        if (written == json_len) {
+            return out;
+        }
+        free(out);
+    }
+#endif
+
     yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
     yyjson_mut_val *root = yyjson_mut_obj(doc);
     yyjson_mut_doc_set_root(doc, root);
@@ -328,6 +441,22 @@ char *cbm_jsonrpc_format_response(const cbm_jsonrpc_response_t *resp) {
 }
 
 char *cbm_jsonrpc_format_error(int64_t id, int code, const char *message) {
+#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
+    size_t json_len = cbm_rs_mcp_jsonrpc_format_error_v1(NULL, 0, id, code, message);
+    if (json_len != SIZE_MAX) {
+        char *out = heap_dup_nul(NULL, json_len);
+        if (!out) {
+            return NULL;
+        }
+        size_t written =
+            cbm_rs_mcp_jsonrpc_format_error_v1(out, json_len + SKIP_ONE, id, code, message);
+        if (written == json_len) {
+            return out;
+        }
+        free(out);
+    }
+#endif
+
     yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
     yyjson_mut_val *root = yyjson_mut_obj(doc);
     yyjson_mut_doc_set_root(doc, root);
@@ -350,6 +479,22 @@ char *cbm_jsonrpc_format_error(int64_t id, int code, const char *message) {
  * ══════════════════════════════════════════════════════════════════ */
 
 char *cbm_mcp_text_result(const char *text, bool is_error) {
+#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
+    size_t json_len = cbm_rs_mcp_text_result_v1(NULL, 0, text, is_error ? 1 : 0);
+    if (json_len != SIZE_MAX) {
+        char *out = heap_dup_nul(NULL, json_len);
+        if (!out) {
+            return NULL;
+        }
+        size_t written =
+            cbm_rs_mcp_text_result_v1(out, json_len + SKIP_ONE, text, is_error ? 1 : 0);
+        if (written == json_len) {
+            return out;
+        }
+        free(out);
+    }
+#endif
+
     yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
     yyjson_mut_val *root = yyjson_mut_obj(doc);
     yyjson_mut_doc_set_root(doc, root);
@@ -381,6 +526,9 @@ char *cbm_mcp_text_result(const char *text, bool is_error) {
 
 bool cbm_mcp_cancel_request_matches(const char *params_json, int64_t active_id,
                                     const char *active_id_str) {
+#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
+    return cbm_rs_mcp_cancel_request_matches_v1(params_json, active_id, active_id_str) != 0;
+#else
     if (!params_json) {
         return false;
     }
@@ -404,6 +552,7 @@ bool cbm_mcp_cancel_request_matches(const char *params_json, int64_t active_id,
 
     yyjson_doc_free(doc);
     return matches;
+#endif
 }
 
 /* ── Tool definitions ─────────────────────────────────────────── */
@@ -620,22 +769,121 @@ static void mcp_add_json_schema(yyjson_mut_doc *doc, yyjson_mut_val *obj, const 
 
 static void mcp_add_tool_def(yyjson_mut_doc *doc, yyjson_mut_val *tools, int i) {
     yyjson_mut_val *tool = yyjson_mut_obj(doc);
-    yyjson_mut_obj_add_str(doc, tool, "name", TOOLS[i].name);
-    yyjson_mut_obj_add_str(doc, tool, "title", TOOLS[i].title);
-    yyjson_mut_obj_add_str(doc, tool, "description", TOOLS[i].description);
+#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
+    char rust_name[64];
+    char rust_title[64];
+    char rust_description[2048];
+    char rust_input_schema[8192];
+    char rust_output_schema[128];
+    size_t rust_name_len = cbm_rs_mcp_tool_name_v1(rust_name, sizeof(rust_name), i);
+    size_t rust_title_len = cbm_rs_mcp_tool_title_v1(rust_title, sizeof(rust_title), i);
+    size_t rust_description_len =
+        cbm_rs_mcp_tool_description_v1(rust_description, sizeof(rust_description), i);
+    size_t rust_input_schema_len =
+        cbm_rs_mcp_tool_input_schema_v1(rust_input_schema, sizeof(rust_input_schema), i);
+    size_t rust_output_schema_len =
+        cbm_rs_mcp_tool_output_schema_v1(rust_output_schema, sizeof(rust_output_schema));
+    if (cbm_rs_mcp_tool_count_v1() == TOOL_COUNT && rust_name_len < sizeof(rust_name) &&
+        strcmp(rust_name, TOOLS[i].name) == 0) {
+        yyjson_mut_obj_add_strcpy(doc, tool, "name", rust_name);
+    } else
+#endif
+    {
+        yyjson_mut_obj_add_str(doc, tool, "name", TOOLS[i].name);
+    }
+#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
+    if (cbm_rs_mcp_tool_count_v1() == TOOL_COUNT && rust_name_len < sizeof(rust_name) &&
+        rust_title_len < sizeof(rust_title) && strcmp(rust_name, TOOLS[i].name) == 0 &&
+        strcmp(rust_title, TOOLS[i].title) == 0) {
+        yyjson_mut_obj_add_strcpy(doc, tool, "title", rust_title);
+    } else
+#endif
+    {
+        yyjson_mut_obj_add_str(doc, tool, "title", TOOLS[i].title);
+    }
+#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
+    if (cbm_rs_mcp_tool_count_v1() == TOOL_COUNT && rust_name_len < sizeof(rust_name) &&
+        rust_title_len < sizeof(rust_title) && rust_description_len < sizeof(rust_description) &&
+        strcmp(rust_name, TOOLS[i].name) == 0 && strcmp(rust_title, TOOLS[i].title) == 0 &&
+        strcmp(rust_description, TOOLS[i].description) == 0) {
+        yyjson_mut_obj_add_strcpy(doc, tool, "description", rust_description);
+    } else
+#endif
+    {
+        yyjson_mut_obj_add_str(doc, tool, "description", TOOLS[i].description);
+    }
 
-    mcp_add_json_schema(doc, tool, "inputSchema", TOOLS[i].input_schema);
-    mcp_add_json_schema(doc, tool, "outputSchema", MCP_TOOL_OUTPUT_SCHEMA);
+#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
+    if (cbm_rs_mcp_tool_count_v1() == TOOL_COUNT && rust_name_len < sizeof(rust_name) &&
+        rust_title_len < sizeof(rust_title) && rust_description_len < sizeof(rust_description) &&
+        rust_input_schema_len < sizeof(rust_input_schema) &&
+        strcmp(rust_name, TOOLS[i].name) == 0 && strcmp(rust_title, TOOLS[i].title) == 0 &&
+        strcmp(rust_description, TOOLS[i].description) == 0 &&
+        strcmp(rust_input_schema, TOOLS[i].input_schema) == 0) {
+        mcp_add_json_schema(doc, tool, "inputSchema", rust_input_schema);
+    } else
+#endif
+    {
+        mcp_add_json_schema(doc, tool, "inputSchema", TOOLS[i].input_schema);
+    }
+#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
+    if (rust_output_schema_len < sizeof(rust_output_schema) &&
+        strcmp(rust_output_schema, MCP_TOOL_OUTPUT_SCHEMA) == 0) {
+        mcp_add_json_schema(doc, tool, "outputSchema", rust_output_schema);
+    } else
+#endif
+    {
+        mcp_add_json_schema(doc, tool, "outputSchema", MCP_TOOL_OUTPUT_SCHEMA);
+    }
 
     yyjson_mut_arr_add_val(tools, tool);
 }
 
 static char *cbm_mcp_tools_list_range(int offset, int limit, bool include_next_cursor) {
+#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
+    size_t rust_json_len =
+        cbm_rs_mcp_tools_list_json_v1(NULL, 0, offset, limit, include_next_cursor ? 1 : 0);
+    if (rust_json_len != SIZE_MAX) {
+        char *rust_json = malloc(rust_json_len + SKIP_ONE);
+        if (rust_json) {
+            size_t written = cbm_rs_mcp_tools_list_json_v1(
+                rust_json, rust_json_len + SKIP_ONE, offset, limit, include_next_cursor ? 1 : 0);
+            if (written == rust_json_len) {
+                return rust_json;
+            }
+            free(rust_json);
+        }
+    }
+#endif
+
     yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
     yyjson_mut_val *root = yyjson_mut_obj(doc);
     yyjson_mut_doc_set_root(doc, root);
 
     yyjson_mut_val *tools = yyjson_mut_arr(doc);
+
+#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
+    CbmRsMcpToolsPageBoundsV1 bounds = {0};
+    if (cbm_rs_mcp_tools_page_bounds_v1(offset, limit, include_next_cursor ? 1 : 0, TOOL_COUNT,
+                                        &bounds) == 0) {
+        offset = bounds.start;
+        int end = bounds.end;
+        for (int i = offset; i < end; i++) {
+            mcp_add_tool_def(doc, tools, i);
+        }
+
+        yyjson_mut_obj_add_val(doc, root, "tools", tools);
+        if (bounds.has_next) {
+            char cursor[32];
+            snprintf(cursor, sizeof(cursor), "%d", bounds.next_cursor);
+            yyjson_mut_obj_add_strcpy(doc, root, "nextCursor", cursor);
+        }
+
+        char *out = yy_doc_to_str(doc);
+        yyjson_mut_doc_free(doc);
+        return out;
+    }
+#endif
 
     if (offset < 0) {
         offset = 0;
@@ -679,6 +927,12 @@ const char *cbm_mcp_tool_input_schema(const char *tool_name) {
     if (!tool_name) {
         return NULL;
     }
+#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
+    int idx = cbm_rs_mcp_tool_index_v1(tool_name);
+    if (idx >= 0 && idx < TOOL_COUNT && strcmp(TOOLS[idx].name, tool_name) == 0) {
+        return TOOLS[idx].input_schema;
+    }
+#endif
     for (int i = 0; i < TOOL_COUNT; i++) {
         if (strcmp(TOOLS[i].name, tool_name) == 0) {
             return TOOLS[i].input_schema;
@@ -688,7 +942,7 @@ const char *cbm_mcp_tool_input_schema(const char *tool_name) {
 }
 
 static int mcp_tools_cursor_offset(const char *params_json) {
-#ifdef CBM_USE_RUST_MCP_CODEC
+#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
     return cbm_rs_mcp_tools_cursor_offset_v1(params_json, TOOL_COUNT);
 #else
     if (!params_json) {
@@ -736,13 +990,40 @@ static const char *SUPPORTED_PROTOCOL_VERSIONS[] = {
     "2025-03-26",
     "2024-11-05",
 };
+#if !defined(CBM_USE_RUST_MCP_CODEC) && !defined(CBM_USE_RUST_MCP_CODEC_ONLY)
 static const int SUPPORTED_VERSION_COUNT =
     (int)(sizeof(SUPPORTED_PROTOCOL_VERSIONS) / sizeof(SUPPORTED_PROTOCOL_VERSIONS[0]));
+#endif
 
 char *cbm_mcp_initialize_response(const char *params_json) {
     /* Determine protocol version: if client requests a version we support,
      * echo it back; otherwise respond with our latest. */
     const char *version = SUPPORTED_PROTOCOL_VERSIONS[0]; /* default: latest */
+#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
+    size_t params_len = params_json ? strlen(params_json) : 0;
+    int rust_len = (params_len <= (size_t)INT_MAX) ? (int)params_len : -1;
+    size_t response_len =
+        cbm_rs_mcp_initialize_response_v1(NULL, 0, (const unsigned char *)params_json, rust_len);
+    if (response_len != SIZE_MAX) {
+        char *rust_response = heap_dup_nul(NULL, response_len);
+        if (rust_response) {
+            size_t written =
+                cbm_rs_mcp_initialize_response_v1(rust_response, response_len + SKIP_ONE,
+                                                  (const unsigned char *)params_json, rust_len);
+            if (written == response_len) {
+                return rust_response;
+            }
+            free(rust_response);
+        }
+    }
+
+    char rust_version[32];
+    size_t version_len = cbm_rs_mcp_initialize_protocol_version_v1(
+        rust_version, sizeof(rust_version), (const unsigned char *)params_json, rust_len);
+    if (version_len < sizeof(rust_version)) {
+        version = rust_version;
+    }
+#else
     if (params_json) {
         yyjson_doc *pdoc = yyjson_read(params_json, strlen(params_json), 0);
         if (pdoc) {
@@ -759,6 +1040,7 @@ char *cbm_mcp_initialize_response(const char *params_json) {
             yyjson_doc_free(pdoc);
         }
     }
+#endif
 
     yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
     yyjson_mut_val *root = yyjson_mut_obj(doc);
@@ -787,6 +1069,31 @@ char *cbm_mcp_initialize_response(const char *params_json) {
  * ══════════════════════════════════════════════════════════════════ */
 
 char *cbm_mcp_get_tool_name(const char *params_json) {
+#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
+    if (!params_json) {
+        return NULL;
+    }
+    size_t params_len = strlen(params_json);
+    if (params_len > (size_t)INT_MAX) {
+        return NULL;
+    }
+    size_t name_len =
+        cbm_rs_mcp_tools_call_name_v1(NULL, 0, (const unsigned char *)params_json, (int)params_len);
+    if (name_len == SIZE_MAX) {
+        return NULL;
+    }
+    char *result = heap_dup_nul(NULL, name_len);
+    if (!result) {
+        return NULL;
+    }
+    size_t written = cbm_rs_mcp_tools_call_name_v1(
+        result, name_len + SKIP_ONE, (const unsigned char *)params_json, (int)params_len);
+    if (written != name_len) {
+        free(result);
+        return NULL;
+    }
+    return result;
+#else
     yyjson_doc *doc = yyjson_read(params_json, strlen(params_json), 0);
     if (!doc) {
         return NULL;
@@ -799,9 +1106,35 @@ char *cbm_mcp_get_tool_name(const char *params_json) {
     }
     yyjson_doc_free(doc);
     return result;
+#endif
 }
 
 char *cbm_mcp_get_arguments(const char *params_json) {
+#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
+    if (!params_json) {
+        return NULL;
+    }
+    size_t params_len = strlen(params_json);
+    if (params_len > (size_t)INT_MAX) {
+        return NULL;
+    }
+    size_t args_len = cbm_rs_mcp_tools_call_arguments_v1(
+        NULL, 0, (const unsigned char *)params_json, (int)params_len);
+    if (args_len == SIZE_MAX) {
+        return NULL;
+    }
+    char *result = heap_dup_nul(NULL, args_len);
+    if (!result) {
+        return NULL;
+    }
+    size_t written = cbm_rs_mcp_tools_call_arguments_v1(
+        result, args_len + SKIP_ONE, (const unsigned char *)params_json, (int)params_len);
+    if (written != args_len) {
+        free(result);
+        return NULL;
+    }
+    return result;
+#else
     yyjson_doc *doc = yyjson_read(params_json, strlen(params_json), 0);
     if (!doc) {
         return NULL;
@@ -814,9 +1147,33 @@ char *cbm_mcp_get_arguments(const char *params_json) {
     }
     yyjson_doc_free(doc);
     return result ? result : heap_strdup("{}");
+#endif
 }
 
 char *cbm_mcp_get_string_arg(const char *args_json, const char *key) {
+#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
+    if (args_json && key) {
+        size_t args_len = strlen(args_json);
+        if (args_len <= (size_t)INT32_MAX) {
+            size_t value_len = cbm_rs_mcp_get_string_arg_v1(
+                NULL, 0, (const unsigned char *)args_json, (int)args_len, key);
+            if (value_len != SIZE_MAX) {
+                char *result = heap_dup_nul(NULL, value_len);
+                if (!result) {
+                    return NULL;
+                }
+                size_t written = cbm_rs_mcp_get_string_arg_v1(result, value_len + SKIP_ONE,
+                                                              (const unsigned char *)args_json,
+                                                              (int)args_len, key);
+                if (written != value_len) {
+                    free(result);
+                    return NULL;
+                }
+                return result;
+            }
+        }
+    }
+#endif
     yyjson_doc *doc = yyjson_read(args_json, strlen(args_json), 0);
     if (!doc) {
         return NULL;
@@ -852,6 +1209,15 @@ static char *get_project_arg(const char *args_json) {
 }
 
 int cbm_mcp_get_int_arg(const char *args_json, const char *key, int default_val) {
+#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
+    if (args_json && key) {
+        size_t args_len = strlen(args_json);
+        if (args_len <= (size_t)INT32_MAX) {
+            return cbm_rs_mcp_get_int_arg_v1((const unsigned char *)args_json, (int)args_len, key,
+                                             default_val);
+        }
+    }
+#endif
     yyjson_doc *doc = yyjson_read(args_json, strlen(args_json), 0);
     if (!doc) {
         return default_val;
@@ -867,6 +1233,15 @@ int cbm_mcp_get_int_arg(const char *args_json, const char *key, int default_val)
 }
 
 bool cbm_mcp_get_bool_arg(const char *args_json, const char *key) {
+#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
+    if (args_json && key) {
+        size_t args_len = strlen(args_json);
+        if (args_len <= (size_t)INT32_MAX) {
+            return cbm_rs_mcp_get_bool_arg_v1((const unsigned char *)args_json, (int)args_len,
+                                              key) != 0;
+        }
+    }
+#endif
     yyjson_doc *doc = yyjson_read(args_json, strlen(args_json), 0);
     if (!doc) {
         return false;
@@ -1222,6 +1597,21 @@ static char *build_project_list_error(const char *reason) {
     char projects[CBM_SZ_4K] = "";
     int count = collect_db_project_names(dir_path, projects, sizeof(projects));
 
+#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
+    size_t len = cbm_rs_mcp_project_list_error_v1(NULL, 0, reason, projects, count);
+    if (len != SIZE_MAX && len < SIZE_MAX - SKIP_ONE) {
+        char *msg = malloc(len + SKIP_ONE);
+        if (msg) {
+            size_t written =
+                cbm_rs_mcp_project_list_error_v1(msg, len + SKIP_ONE, reason, projects, count);
+            if (written == len) {
+                return msg;
+            }
+            free(msg);
+        }
+    }
+#endif
+
     enum { ERR_BUF_SZ = 5120 };
     char buf[ERR_BUF_SZ];
     if (count > 0) {
@@ -1243,10 +1633,40 @@ static char *build_project_list_error(const char *reason) {
  * entirely (no recognized key). Name the literal "project" key so the fix is
  * obvious (#640). Caller must free() result. */
 static char *build_missing_project_error(void) {
+#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
+    size_t len = cbm_rs_mcp_missing_project_error_v1(NULL, 0);
+    if (len != SIZE_MAX && len < SIZE_MAX - SKIP_ONE) {
+        char *msg = malloc(len + SKIP_ONE);
+        if (msg) {
+            size_t written = cbm_rs_mcp_missing_project_error_v1(msg, len + SKIP_ONE);
+            if (written == len) {
+                return msg;
+            }
+            free(msg);
+        }
+    }
+#endif
     return heap_strdup("{\"error\":\"missing required argument: project\",\"hint\":\"Pass "
                        "the project as the \\\"project\\\" argument, e.g. "
                        "{\\\"project\\\":\\\"<name from list_projects>\\\"}. Run "
                        "list_projects to see indexed projects.\"}");
+}
+
+static char *build_project_not_found_message(void) {
+#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
+    size_t len = cbm_rs_mcp_project_not_found_message_v1(NULL, 0);
+    if (len != SIZE_MAX && len < SIZE_MAX - SKIP_ONE) {
+        char *msg = malloc(len + SKIP_ONE);
+        if (msg) {
+            size_t written = cbm_rs_mcp_project_not_found_message_v1(msg, len + SKIP_ONE);
+            if (written == len) {
+                return msg;
+            }
+            free(msg);
+        }
+    }
+#endif
+    return heap_strdup("project not found");
 }
 
 /* Pick the right no-store error: a NULL project means the argument was missing
@@ -1279,6 +1699,10 @@ static char *build_no_store_error(const char *project) {
  * The "_" prefix is reserved for internal/hidden DBs, and ":memory:" is the
  * SQLite in-memory marker (defensive — never appears as a real file). */
 static bool is_project_db_file(const char *name, size_t len) {
+#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
+    (void)len;
+    return cbm_rs_mcp_project_db_file_name_v1(name) != 0;
+#endif
     if (len < MCP_MIN_DB_NAME || strcmp(name + len - MCP_DB_EXT, ".db") != 0) {
         return false;
     }
@@ -1543,15 +1967,7 @@ static char *handle_get_graph_schema(cbm_mcp_server_t *srv, const char *args) {
 
 /* Validate edge type: uppercase letters + underscore only, max 64 chars. */
 static bool validate_edge_type(const char *s) {
-    if (!s || strlen(s) > CBM_SZ_64) {
-        return false;
-    }
-    for (const char *c = s; *c; c++) {
-        if (!(*c >= 'A' && *c <= 'Z') && *c != '_') {
-            return false;
-        }
-    }
-    return true;
+    return cbm_mcp_edge_type_valid(s);
 }
 
 /* Enrich search result with 1-hop connected node names. */
@@ -1631,6 +2047,9 @@ static sqlite3_destructor_type mcp_sqlite_transient(void) {
 #define MCP_SQLITE_TRANSIENT (mcp_sqlite_transient())
 
 static int bm25_build_match(const char *query, char *out, size_t out_size) {
+#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
+    return cbm_rs_mcp_bm25_build_match_v1(out, out_size, query);
+#endif
     if (!query || !out || out_size < BM25_MIN_BUF) {
         return 0;
     }
@@ -1670,6 +2089,24 @@ static int bm25_build_match(const char *query, char *out, size_t out_size) {
 }
 
 static char *bm25_file_pattern_like(const char *file_pattern) {
+#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
+    {
+        size_t len = cbm_rs_mcp_bm25_file_pattern_like_v1(NULL, 0, file_pattern);
+        if (len == SIZE_MAX) {
+            return NULL;
+        }
+        char *like = malloc(len + SKIP_ONE);
+        if (!like) {
+            return NULL;
+        }
+        size_t written = cbm_rs_mcp_bm25_file_pattern_like_v1(like, len + SKIP_ONE, file_pattern);
+        if (written == SIZE_MAX) {
+            free(like);
+            return NULL;
+        }
+        return like;
+    }
+#endif
     if (!file_pattern) {
         return NULL;
     }
@@ -2273,7 +2710,11 @@ static char *handle_delete_project(cbm_mcp_server_t *srv, const char *args) {
 }
 
 /* Check if an aspect is requested (NULL aspects = all, or array contains "all" or the name). */
-static bool aspect_wanted(yyjson_doc *aspects_doc, yyjson_val *aspects_arr, const char *name) {
+static bool aspect_wanted(yyjson_doc *aspects_doc, yyjson_val *aspects_arr, const char *name,
+                          const char *args) {
+#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
+    return cbm_rs_mcp_architecture_aspect_wanted_v1(args, name);
+#endif
     if (!aspects_arr) {
         return true; /* no filter = all */
     }
@@ -2395,7 +2836,7 @@ static char *handle_get_architecture(cbm_mcp_server_t *srv, const char *args) {
     yyjson_mut_obj_add_int(doc, root, "total_edges", edge_count);
 
     /* Node label summary */
-    if (aspect_wanted(aspects_doc, aspects_arr, "structure")) {
+    if (aspect_wanted(aspects_doc, aspects_arr, "structure", args)) {
         yyjson_mut_val *labels = yyjson_mut_arr(doc);
         for (int i = 0; i < schema.node_label_count; i++) {
             yyjson_mut_val *item = yyjson_mut_obj(doc);
@@ -2407,7 +2848,7 @@ static char *handle_get_architecture(cbm_mcp_server_t *srv, const char *args) {
     }
 
     /* Edge type summary */
-    if (aspect_wanted(aspects_doc, aspects_arr, "dependencies")) {
+    if (aspect_wanted(aspects_doc, aspects_arr, "dependencies", args)) {
         yyjson_mut_val *types = yyjson_mut_arr(doc);
         for (int i = 0; i < schema.edge_type_count; i++) {
             yyjson_mut_val *item = yyjson_mut_obj(doc);
@@ -2419,7 +2860,7 @@ static char *handle_get_architecture(cbm_mcp_server_t *srv, const char *args) {
     }
 
     /* Relationship patterns */
-    if (aspect_wanted(aspects_doc, aspects_arr, "routes") && schema.rel_pattern_count > 0) {
+    if (aspect_wanted(aspects_doc, aspects_arr, "routes", args) && schema.rel_pattern_count > 0) {
         yyjson_mut_val *pats = yyjson_mut_arr(doc);
         for (int i = 0; i < schema.rel_pattern_count; i++) {
             yyjson_mut_arr_add_str(doc, pats, schema.rel_patterns[i]);
@@ -2613,18 +3054,63 @@ static char *handle_get_architecture(cbm_mcp_server_t *srv, const char *args) {
     return result;
 }
 
+#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
+enum {
+    TRACE_EDGE_CALLS = 1u << 0,
+    TRACE_EDGE_DATA_FLOWS = 1u << 1,
+    TRACE_EDGE_HTTP_CALLS = 1u << 2,
+    TRACE_EDGE_ASYNC_CALLS = 1u << 3,
+    TRACE_EDGE_CROSS_HTTP_CALLS = 1u << 4,
+    TRACE_EDGE_CROSS_ASYNC_CALLS = 1u << 5,
+    TRACE_EDGE_CROSS_CHANNEL = 1u << 6,
+    TRACE_EDGE_CROSS_GRPC_CALLS = 1u << 7,
+    TRACE_EDGE_CROSS_GRAPHQL_CALLS = 1u << 8,
+    TRACE_EDGE_CROSS_TRPC_CALLS = 1u << 9,
+};
+
+static void fill_trace_edge_types_from_mask(uint32_t mask, const char **out_types, int *out_count) {
+    static const struct {
+        uint32_t bit;
+        const char *name;
+    } names[] = {
+        {TRACE_EDGE_HTTP_CALLS, "HTTP_CALLS"},
+        {TRACE_EDGE_ASYNC_CALLS, "ASYNC_CALLS"},
+        {TRACE_EDGE_DATA_FLOWS, "DATA_FLOWS"},
+        {TRACE_EDGE_CALLS, "CALLS"},
+        {TRACE_EDGE_CROSS_HTTP_CALLS, "CROSS_HTTP_CALLS"},
+        {TRACE_EDGE_CROSS_ASYNC_CALLS, "CROSS_ASYNC_CALLS"},
+        {TRACE_EDGE_CROSS_CHANNEL, "CROSS_CHANNEL"},
+        {TRACE_EDGE_CROSS_GRPC_CALLS, "CROSS_GRPC_CALLS"},
+        {TRACE_EDGE_CROSS_GRAPHQL_CALLS, "CROSS_GRAPHQL_CALLS"},
+        {TRACE_EDGE_CROSS_TRPC_CALLS, "CROSS_TRPC_CALLS"},
+    };
+
+    *out_count = 0;
+    if (mask == TRACE_EDGE_CALLS) {
+        out_types[(*out_count)++] = "CALLS";
+        return;
+    }
+    if (mask == (TRACE_EDGE_CALLS | TRACE_EDGE_DATA_FLOWS)) {
+        out_types[(*out_count)++] = "CALLS";
+        out_types[(*out_count)++] = "DATA_FLOWS";
+        return;
+    }
+    for (size_t i = 0; i < sizeof(names) / sizeof(names[0]) && *out_count < MCP_COL_16; i++) {
+        if ((mask & names[i].bit) != 0) {
+            out_types[(*out_count)++] = names[i].name;
+        }
+    }
+    if (*out_count == 0) {
+        out_types[(*out_count)++] = "CALLS";
+    }
+}
+#endif
+
 /* Resolve edge types from args: explicit array > mode-based > default ("CALLS").
  * Writes types into out_types (max 16). Returns the parsed yyjson_doc if explicit
  * edge_types were found (caller must keep alive until types are consumed), or NULL. */
 static yyjson_doc *resolve_trace_edge_types(const char *args, const char *mode,
                                             const char **out_types, int *out_count) {
-    static const char *mode_calls[] = {"CALLS"};
-    static const char *mode_data_flow[] = {"CALLS", "DATA_FLOWS"};
-    static const char *mode_cross_svc[] = {
-        "HTTP_CALLS",          "ASYNC_CALLS",       "DATA_FLOWS",    "CALLS",
-        "CROSS_HTTP_CALLS",    "CROSS_ASYNC_CALLS", "CROSS_CHANNEL", "CROSS_GRPC_CALLS",
-        "CROSS_GRAPHQL_CALLS", "CROSS_TRPC_CALLS"};
-
     *out_count = 0;
 
     yyjson_doc *et_doc = yyjson_read(args, strlen(args), 0);
@@ -2648,6 +3134,18 @@ static yyjson_doc *resolve_trace_edge_types(const char *args, const char *mode,
 
     yyjson_doc_free(et_doc); /* no explicit types found, free */
 
+#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
+    fill_trace_edge_types_from_mask(cbm_rs_mcp_trace_mode_edge_mask_v1(mode), out_types, out_count);
+    return NULL;
+#endif
+
+    static const char *mode_calls[] = {"CALLS"};
+    static const char *mode_data_flow[] = {"CALLS", "DATA_FLOWS"};
+    static const char *mode_cross_svc[] = {
+        "HTTP_CALLS",          "ASYNC_CALLS",       "DATA_FLOWS",    "CALLS",
+        "CROSS_HTTP_CALLS",    "CROSS_ASYNC_CALLS", "CROSS_CHANNEL", "CROSS_GRPC_CALLS",
+        "CROSS_GRAPHQL_CALLS", "CROSS_TRPC_CALLS"};
+
     const char **defaults = mode_calls;
     int n_defaults = SKIP_ONE;
     if (mode && strcmp(mode, "data_flow") == 0) {
@@ -2666,6 +3164,9 @@ static yyjson_doc *resolve_trace_edge_types(const char *args, const char *mode,
 
 /* Check if a file path looks like a test file. */
 static bool is_test_file(const char *path) {
+#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
+    return cbm_rs_mcp_trace_is_test_file_v1(path) != 0;
+#endif
     if (!path) {
         return false;
     }
@@ -2775,6 +3276,9 @@ enum {
     RES_LABEL_WEIGHT = 1000000 /* label tier dominates span */
 };
 static long node_resolution_score(const cbm_node_t *n) {
+#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
+    return cbm_rs_mcp_node_resolution_score_v1(n->label, n->start_line, n->end_line);
+#endif
     long label_rank = RES_RANK_MODULE;
     if (n->label) {
         if (strcmp(n->label, "Function") == 0 || strcmp(n->label, "Method") == 0) {
@@ -2798,6 +3302,21 @@ static int pick_resolved_node(const cbm_node_t *nodes, int count, bool *ambiguou
     if (count <= 1) {
         return 0;
     }
+#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
+    long *scores = malloc((size_t)count * sizeof(*scores));
+    if (scores) {
+        for (int i = 0; i < count; i++) {
+            scores[i] = node_resolution_score(&nodes[i]);
+        }
+        int ambiguous_i = 0;
+        int best = cbm_rs_mcp_search_pick_resolved_index_v1(scores, count, &ambiguous_i);
+        free(scores);
+        if (best >= 0 && best < count) {
+            *ambiguous = (ambiguous_i != 0);
+            return best;
+        }
+    }
+#endif
     int best = 0;
     long best_score = node_resolution_score(&nodes[0]);
     for (int i = 1; i < count; i++) {
@@ -3303,6 +3822,29 @@ static bool build_index_success_response(cbm_mcp_server_t *srv, yyjson_mut_doc *
     return degraded;
 }
 
+enum { INDEX_REPO_MODE_CROSS_REPO = 3 };
+
+/* Parse index_repository mode string. Values align with cbm_index_mode_t for
+ * 0..2; INDEX_REPO_MODE_CROSS_REPO is a dispatch sentinel. */
+static int parse_index_repository_mode(const char *mode_str) {
+#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
+    return cbm_rs_mcp_index_mode_v1(mode_str);
+#endif
+    if (!mode_str) {
+        return CBM_MODE_FULL;
+    }
+    if (strcmp(mode_str, "moderate") == 0) {
+        return CBM_MODE_MODERATE;
+    }
+    if (strcmp(mode_str, "fast") == 0) {
+        return CBM_MODE_FAST;
+    }
+    if (strcmp(mode_str, "cross-repo-intelligence") == 0) {
+        return INDEX_REPO_MODE_CROSS_REPO;
+    }
+    return CBM_MODE_FULL;
+}
+
 static char *handle_index_repository(cbm_mcp_server_t *srv, const char *args) {
     char *repo_path = cbm_mcp_get_string_arg(args, "repo_path");
     char *mode_str = cbm_mcp_get_string_arg(args, "mode");
@@ -3315,7 +3857,8 @@ static char *handle_index_repository(cbm_mcp_server_t *srv, const char *args) {
         return cbm_mcp_text_result("repo_path is required", true);
     }
 
-    if (mode_str && strcmp(mode_str, "cross-repo-intelligence") == 0) {
+    int mode_value = parse_index_repository_mode(mode_str);
+    if (mode_value == INDEX_REPO_MODE_CROSS_REPO) {
         free(mode_str);
         free(name_override);
         char *result = handle_cross_repo_mode(repo_path, args);
@@ -3323,12 +3866,7 @@ static char *handle_index_repository(cbm_mcp_server_t *srv, const char *args) {
         return result;
     }
 
-    cbm_index_mode_t mode = CBM_MODE_FULL;
-    if (mode_str && strcmp(mode_str, "fast") == 0) {
-        mode = CBM_MODE_FAST;
-    } else if (mode_str && strcmp(mode_str, "moderate") == 0) {
-        mode = CBM_MODE_MODERATE;
-    }
+    cbm_index_mode_t mode = (cbm_index_mode_t)mode_value;
     free(mode_str);
 
     bool persistence = cbm_mcp_get_bool_arg(args, "persistence");
@@ -3542,10 +4080,28 @@ static char *resolve_snippet_source(const char *root_path, const char *file_path
 }
 
 static bool utf8_is_cont(unsigned char c) {
+#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
+    return cbm_rs_mcp_utf8_is_cont_v1((int)c) != 0;
+#endif
     return (c & 0xC0) == 0x80;
 }
 
 static char *sanitize_utf8_lossy(const char *s) {
+#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
+    {
+        size_t len = cbm_rs_mcp_sanitize_utf8_lossy_v1(NULL, 0, s);
+        if (len != SIZE_MAX) {
+            char *out = malloc(len + SKIP_ONE);
+            if (out) {
+                size_t written = cbm_rs_mcp_sanitize_utf8_lossy_v1(out, len + SKIP_ONE, s);
+                if (written != SIZE_MAX) {
+                    return out;
+                }
+                free(out);
+            }
+        }
+    }
+#endif
     enum {
         UTF8_REPLACEMENT_LEN = 3,
         UTF8_THREE_BYTE_LEN = 3,
@@ -3823,6 +4379,10 @@ static char *handle_get_code_snippet(cbm_mcp_server_t *srv, const char *args) {
 /* Strip non-ASCII bytes to guarantee valid UTF-8 JSON output */
 enum { ASCII_MAX = 127 };
 static void sanitize_ascii(char *s) {
+#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
+    cbm_rs_mcp_sanitize_ascii_in_place_v1(s);
+    return;
+#endif
     for (unsigned char *p = (unsigned char *)s; *p; p++) {
         if (*p > ASCII_MAX) {
             *p = '?';
@@ -3858,6 +4418,9 @@ enum { SCORE_FUNC = 10, SCORE_ROUTE = 15, SCORE_VENDORED = -50, SCORE_TEST = -5 
 enum { MAX_LINE_SPAN = 999999 };
 
 static int compute_search_score(const search_result_t *r) {
+#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
+    return cbm_rs_mcp_search_code_score_v1(r->label, r->file, r->in_degree);
+#endif
     int score = r->in_degree;
     if (strcmp(r->label, "Function") == 0 || strcmp(r->label, "Method") == 0) {
         score += SCORE_FUNC;
@@ -3879,7 +4442,33 @@ static int compute_search_score(const search_result_t *r) {
 static int search_result_cmp(const void *a, const void *b) {
     const search_result_t *ra = (const search_result_t *)a;
     const search_result_t *rb = (const search_result_t *)b;
+#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
+    return cbm_rs_mcp_search_score_cmp_v1(ra->score, rb->score);
+#endif
     return rb->score - ra->score; /* descending */
+}
+
+static void search_result_top_dir(char *out, size_t out_sz, const char *file) {
+    if (!out || out_sz == 0) {
+        return;
+    }
+#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
+    size_t len = cbm_rs_mcp_search_top_dir_v1(out, out_sz, file);
+    if (len != SIZE_MAX) {
+        return;
+    }
+#endif
+    const char *slash = strchr(file, '/');
+    if (slash) {
+        size_t dlen = (size_t)(slash - file + SKIP_ONE);
+        if (dlen >= out_sz) {
+            dlen = out_sz - SKIP_ONE;
+        }
+        memcpy(out, file, dlen);
+        out[dlen] = '\0';
+    } else {
+        snprintf(out, out_sz, "%s", file);
+    }
 }
 
 /* Build the grep/search command string based on scoped vs recursive mode.
@@ -4026,17 +4615,7 @@ static yyjson_mut_val *build_dir_distribution(yyjson_mut_doc *doc, search_result
     int dir_n = 0;
     for (int di = 0; di < sr_count; di++) {
         char top[CBM_SZ_128] = "";
-        const char *slash = strchr(sr[di].file, '/');
-        if (slash) {
-            size_t dlen = (size_t)(slash - sr[di].file + SKIP_ONE);
-            if (dlen >= sizeof(top)) {
-                dlen = sizeof(top) - SKIP_ONE;
-            }
-            memcpy(top, sr[di].file, dlen);
-            top[dlen] = '\0';
-        } else {
-            snprintf(top, sizeof(top), "%s", sr[di].file);
-        }
+        search_result_top_dir(top, sizeof(top), sr[di].file);
         int found = CBM_NOT_FOUND;
         for (int d = 0; d < dir_n; d++) {
             if (strcmp(dir_names[d], top) == 0) {
@@ -4165,6 +4744,9 @@ static char *assemble_search_output(search_result_t *sr, int sr_count, grep_matc
  * and return a dynamically-allocated grep_match_t array. */
 /* Strip root path prefix from a file path. */
 static const char *strip_root_prefix(const char *path, const char *root, size_t root_len) {
+#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
+    return path + cbm_rs_mcp_strip_root_prefix_offset_v1(path, root, root_len);
+#endif
     if (strncmp(path, root, root_len) != 0) {
         return path;
     }
@@ -4234,15 +4816,41 @@ static grep_match_t *collect_grep_matches(FILE *fp, const char *root_path, size_
 
 /* Find the tightest node containing a line in a file. Returns index or -1. */
 static int find_tightest_node(cbm_node_t *nodes, int count, int line) {
+#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
+    int *spans = malloc((size_t)count * sizeof(*spans));
+    if (spans) {
+        for (int j = 0; j < count; j++) {
+            int span =
+                cbm_rs_mcp_search_line_match_span_v1(nodes[j].start_line, nodes[j].end_line, line);
+            if (span == CBM_NOT_FOUND && nodes[j].start_line <= line && nodes[j].end_line >= line) {
+                span = nodes[j].end_line - nodes[j].start_line;
+            }
+            spans[j] = span;
+        }
+        int best = cbm_rs_mcp_search_pick_tightest_index_v1(spans, count);
+        free(spans);
+        if (best >= 0 && best < count) {
+            return best;
+        }
+    }
+#endif
     int best = CBM_NOT_FOUND;
     int best_span = MAX_LINE_SPAN;
     for (int j = 0; j < count; j++) {
+        int span = CBM_NOT_FOUND;
+#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
+        span = cbm_rs_mcp_search_line_match_span_v1(nodes[j].start_line, nodes[j].end_line, line);
+        if (span == CBM_NOT_FOUND && nodes[j].start_line <= line && nodes[j].end_line >= line) {
+            span = nodes[j].end_line - nodes[j].start_line;
+        }
+#else
         if (nodes[j].start_line <= line && nodes[j].end_line >= line) {
-            int span = nodes[j].end_line - nodes[j].start_line;
-            if (span < best_span) {
-                best = j;
-                best_span = span;
-            }
+            span = nodes[j].end_line - nodes[j].start_line;
+        }
+#endif
+        if (span != CBM_NOT_FOUND && span < best_span) {
+            best = j;
+            best_span = span;
         }
     }
     return best;
@@ -4368,6 +4976,9 @@ static bool write_scoped_filelist(cbm_mcp_server_t *srv, const char *project, co
 
 /* Parse search mode string (0=compact, 1=full, 2=files). */
 static int parse_search_mode(const char *mode_str) {
+#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
+    return cbm_rs_mcp_search_mode_v1(mode_str);
+#endif
     if (!mode_str) {
         return 0;
     }
@@ -4387,6 +4998,9 @@ static int parse_search_mode(const char *mode_str) {
  * OneDrive). Accept '&' here while still rejecting every metacharacter that
  * could break out of the quoting (#272). */
 static bool validate_search_path_arg(const char *s) {
+#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
+    return cbm_rs_mcp_search_path_arg_valid_v1(s) != 0;
+#endif
     if (!s) {
         return false;
     }
@@ -4414,6 +5028,9 @@ static bool validate_search_path_arg(const char *s) {
 }
 
 static bool validate_search_args(const char *root_path, const char *file_pattern) {
+#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
+    return cbm_rs_mcp_search_args_valid_v1(root_path, file_pattern) != 0;
+#endif
     if (!validate_search_path_arg(root_path)) {
         return false;
     }
@@ -4683,6 +5300,14 @@ static char *handle_search_code(cbm_mcp_server_t *srv, const char *args) {
 
 /* ── detect_changes ───────────────────────────────────────────── */
 
+static bool detect_changes_impacted_label(const char *label) {
+#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
+    return cbm_rs_mcp_detect_changes_impacted_label_v1(label) != 0;
+#endif
+    return label && strcmp(label, "File") != 0 && strcmp(label, "Folder") != 0 &&
+           strcmp(label, "Project") != 0;
+}
+
 /* Find symbols defined in a file and add them to the impacted array. */
 static void detect_add_impacted_symbols(cbm_store_t *store, const char *project, const char *file,
                                         yyjson_mut_doc *doc, yyjson_mut_val *impacted) {
@@ -4690,8 +5315,7 @@ static void detect_add_impacted_symbols(cbm_store_t *store, const char *project,
     int ncount = 0;
     cbm_store_find_nodes_by_file(store, project, file, &nodes, &ncount);
     for (int i = 0; i < ncount; i++) {
-        if (nodes[i].label && strcmp(nodes[i].label, "File") != 0 &&
-            strcmp(nodes[i].label, "Folder") != 0 && strcmp(nodes[i].label, "Project") != 0) {
+        if (detect_changes_impacted_label(nodes[i].label)) {
             yyjson_mut_val *item = yyjson_mut_obj(doc);
             yyjson_mut_obj_add_strcpy(doc, item, "name", nodes[i].name ? nodes[i].name : "");
             yyjson_mut_obj_add_strcpy(doc, item, "label", nodes[i].label);
@@ -4702,6 +5326,13 @@ static void detect_add_impacted_symbols(cbm_store_t *store, const char *project,
     cbm_store_free_nodes(nodes, ncount);
 }
 
+static bool detect_changes_wants_symbols(const char *scope) {
+#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
+    return cbm_rs_mcp_detect_changes_wants_symbols_v1(scope) != 0;
+#endif
+    return !scope || strcmp(scope, "symbols") == 0 || strcmp(scope, "impact") == 0;
+}
+
 static char *handle_detect_changes(cbm_mcp_server_t *srv, const char *args) {
     char *project = get_project_arg(args);
     char *base_branch = cbm_mcp_get_string_arg(args, "base_branch");
@@ -4710,7 +5341,7 @@ static char *handle_detect_changes(cbm_mcp_server_t *srv, const char *args) {
     int depth = cbm_mcp_get_int_arg(args, "depth", MCP_DEFAULT_BFS_DEPTH);
 
     /* scope: "files" = just changed files, "symbols" = files + symbols (default) */
-    bool want_symbols = !scope || strcmp(scope, "symbols") == 0 || strcmp(scope, "impact") == 0;
+    bool want_symbols = detect_changes_wants_symbols(scope);
 
     /* `since` (e.g. "HEAD~10", "v0.5.0") is the documented diff base but was
      * previously parsed and never used: it takes precedence over base_branch.
@@ -4741,7 +5372,10 @@ static char *handle_detect_changes(cbm_mcp_server_t *srv, const char *args) {
         free(project);
         free(base_branch);
         free(scope);
-        return cbm_mcp_text_result("project not found", true);
+        char *msg = build_project_not_found_message();
+        char *res = cbm_mcp_text_result(msg, true);
+        free(msg);
+        return res;
     }
 
     if (!validate_search_path_arg(root_path)) {
@@ -4819,6 +5453,22 @@ static char *handle_detect_changes(cbm_mcp_server_t *srv, const char *args) {
          * prefix when present so all three sources yield clean paths; for a
          * rename ("R  old -> new") keep the post-arrow destination path. */
         char *path_line = line;
+#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
+        size_t path_offset = cbm_rs_mcp_detect_changes_status_path_offset_v1(line);
+        if (path_offset != SIZE_MAX && path_offset <= len) {
+            path_line = line + path_offset;
+        } else {
+            if (len > PAIR_LEN && line[PAIR_LEN] == ' ' && strchr(" MADRCU?!", line[0]) &&
+                strchr(" MADRCU?!", line[1])) {
+                path_line = line + PAIR_LEN + SKIP_ONE;
+                char *arrow = strstr(path_line, " -> ");
+                if (arrow) {
+                    enum { ARROW_LEN = 4 }; /* length of " -> " */
+                    path_line = arrow + ARROW_LEN;
+                }
+            }
+        }
+#else
         if (len > PAIR_LEN && line[PAIR_LEN] == ' ' && strchr(" MADRCU?!", line[0]) &&
             strchr(" MADRCU?!", line[1])) {
             path_line = line + PAIR_LEN + SKIP_ONE;
@@ -4828,6 +5478,7 @@ static char *handle_detect_changes(cbm_mcp_server_t *srv, const char *args) {
                 path_line = arrow + ARROW_LEN;
             }
         }
+#endif
         if (path_line[0] == '\0') {
             continue;
         }
@@ -4874,6 +5525,24 @@ static char *handle_detect_changes(cbm_mcp_server_t *srv, const char *args) {
  * ADR content string. */
 static void adr_list_sections_from_content(yyjson_mut_doc *doc, yyjson_mut_val *root_obj,
                                            const char *content) {
+#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
+    size_t len = cbm_rs_mcp_adr_sections_json_v1(NULL, 0, content);
+    if (len != SIZE_MAX && len < SIZE_MAX - SKIP_ONE) {
+        char *json = malloc(len + SKIP_ONE);
+        if (json) {
+            size_t written = cbm_rs_mcp_adr_sections_json_v1(json, len + SKIP_ONE, content);
+            if (written == len) {
+                yyjson_mut_val *sections = yyjson_mut_rawncpy(doc, json, len);
+                if (sections) {
+                    yyjson_mut_obj_add_val(doc, root_obj, "sections", sections);
+                    free(json);
+                    return;
+                }
+            }
+            free(json);
+        }
+    }
+#endif
     yyjson_mut_val *sections = yyjson_mut_arr(doc);
     const char *p = content;
     while (p && *p) {
@@ -4934,6 +5603,25 @@ static char *adr_read_legacy_file(const char *root_path) {
     return buf;
 }
 
+enum {
+    ADR_MODE_GET = 0,
+    ADR_MODE_UPDATE = 1,
+    ADR_MODE_SECTIONS = 2,
+};
+
+static int parse_adr_mode(const char *mode_str) {
+#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
+    return cbm_rs_mcp_adr_mode_v1(mode_str);
+#endif
+    if (mode_str && (strcmp(mode_str, "update") == 0 || strcmp(mode_str, "store") == 0)) {
+        return ADR_MODE_UPDATE;
+    }
+    if (mode_str && strcmp(mode_str, "sections") == 0) {
+        return ADR_MODE_SECTIONS;
+    }
+    return ADR_MODE_GET;
+}
+
 #define ADR_EMPTY_HINT                                                             \
     "No ADR yet. Create one with manage_adr(mode='update', "                       \
     "content='## PURPOSE\\n...\\n\\n## STACK\\n...\\n\\n## ARCHITECTURE\\n..."     \
@@ -4950,6 +5638,7 @@ static char *handle_manage_adr(cbm_mcp_server_t *srv, const char *args) {
     if (!mode_str) {
         mode_str = heap_strdup("get");
     }
+    int mode = parse_adr_mode(mode_str);
 
     /* ADRs are stored in the SQLite store (project_summaries), the SAME
      * backend the UI /api/adr endpoints use — so writes via the MCP tool and
@@ -4959,7 +5648,10 @@ static char *handle_manage_adr(cbm_mcp_server_t *srv, const char *args) {
         free(project);
         free(mode_str);
         free(content);
-        return cbm_mcp_text_result("project not found", true);
+        char *msg = build_project_not_found_message();
+        char *res = cbm_mcp_text_result(msg, true);
+        free(msg);
+        return res;
     }
 
     /* resolve_store opens file-backed projects READ-ONLY (query stores must
@@ -4978,7 +5670,10 @@ static char *handle_manage_adr(cbm_mcp_server_t *srv, const char *args) {
             free(project);
             free(mode_str);
             free(content);
-            return cbm_mcp_text_result("project not found", true);
+            char *msg = build_project_not_found_message();
+            char *res = cbm_mcp_text_result(msg, true);
+            free(msg);
+            return res;
         }
         store = owned_rw;
     }
@@ -5006,14 +5701,14 @@ static char *handle_manage_adr(cbm_mcp_server_t *srv, const char *args) {
     yyjson_mut_doc_set_root(doc, root_obj);
 
     bool is_error = false;
-    if ((strcmp(mode_str, "update") == 0 || strcmp(mode_str, "store") == 0) && content) {
+    if (mode == ADR_MODE_UPDATE && content) {
         if (cbm_store_adr_store(store, project, content) == CBM_STORE_OK) {
             yyjson_mut_obj_add_str(doc, root_obj, "status", "updated");
         } else {
             yyjson_mut_obj_add_str(doc, root_obj, "status", "write_error");
             is_error = true;
         }
-    } else if (strcmp(mode_str, "sections") == 0) {
+    } else if (mode == ADR_MODE_SECTIONS) {
         adr_list_sections_from_content(doc, root_obj, have_adr ? adr.content : NULL);
     } else { /* get */
         if (have_adr && adr.content) {
@@ -5080,7 +5775,53 @@ static char *handle_ingest_traces(cbm_mcp_server_t *srv, const char *args) {
 
 char *cbm_mcp_handle_tool(cbm_mcp_server_t *srv, const char *tool_name, const char *args_json) {
     if (!tool_name) {
+#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
+        char msg[CBM_SZ_64];
+        size_t msg_len = cbm_rs_mcp_missing_tool_name_message_v1(msg, sizeof(msg));
+        if (msg_len != SIZE_MAX && msg_len < sizeof(msg)) {
+            return cbm_mcp_text_result(msg, true);
+        }
+#endif
         return cbm_mcp_text_result("missing tool name", true);
+    }
+
+#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
+    int dispatch_idx = cbm_rs_mcp_tool_dispatch_index_v1(tool_name);
+    if (dispatch_idx >= 0 && dispatch_idx < TOOL_COUNT &&
+        (strcmp(TOOLS[dispatch_idx].name, tool_name) == 0 ||
+         (dispatch_idx == 3 && strcmp(tool_name, "trace_call_path") == 0))) {
+        switch (dispatch_idx) {
+        case 0:
+            return handle_index_repository(srv, args_json);
+        case 1:
+            return handle_search_graph(srv, args_json);
+        case 2:
+            return handle_query_graph(srv, args_json);
+        case 3:
+            return handle_trace_call_path(srv, args_json);
+        case 4:
+            return handle_get_code_snippet(srv, args_json);
+        case 5:
+            return handle_get_graph_schema(srv, args_json);
+        case 6:
+            return handle_get_architecture(srv, args_json);
+        case 7:
+            return handle_search_code(srv, args_json);
+        case 8:
+            return handle_list_projects(srv, args_json);
+        case 9:
+            return handle_delete_project(srv, args_json);
+        case 10:
+            return handle_index_status(srv, args_json);
+        case 11:
+            return handle_detect_changes(srv, args_json);
+        case 12:
+            return handle_manage_adr(srv, args_json);
+        case 13:
+            return handle_ingest_traces(srv, args_json);
+        default:
+            break;
+        }
     }
 
     if (strcmp(tool_name, "list_projects") == 0) {
@@ -5127,8 +5868,62 @@ char *cbm_mcp_handle_tool(cbm_mcp_server_t *srv, const char *tool_name, const ch
     if (strcmp(tool_name, "ingest_traces") == 0) {
         return handle_ingest_traces(srv, args_json);
     }
+
+    /* Fallback to error response if dispatch is unavailable or unknown. */
+    char msg[CBM_SZ_256];
+    size_t msg_len = cbm_rs_mcp_unknown_tool_message_v1(msg, sizeof(msg), tool_name);
+    if (msg_len == SIZE_MAX || msg_len >= sizeof(msg)) {
+        snprintf(msg, sizeof(msg), "unknown tool: %s", tool_name);
+    }
+    return cbm_mcp_text_result(msg, true);
+#else
+    if (strcmp(tool_name, "list_projects") == 0) {
+        return handle_list_projects(srv, args_json);
+    }
+    if (strcmp(tool_name, "get_graph_schema") == 0) {
+        return handle_get_graph_schema(srv, args_json);
+    }
+    if (strcmp(tool_name, "search_graph") == 0) {
+        return handle_search_graph(srv, args_json);
+    }
+    if (strcmp(tool_name, "query_graph") == 0) {
+        return handle_query_graph(srv, args_json);
+    }
+    if (strcmp(tool_name, "index_status") == 0) {
+        return handle_index_status(srv, args_json);
+    }
+    if (strcmp(tool_name, "delete_project") == 0) {
+        return handle_delete_project(srv, args_json);
+    }
+    if (strcmp(tool_name, "trace_path") == 0 || strcmp(tool_name, "trace_call_path") == 0) {
+        return handle_trace_call_path(srv, args_json);
+    }
+    if (strcmp(tool_name, "get_architecture") == 0) {
+        return handle_get_architecture(srv, args_json);
+    }
+
+    /* Pipeline-dependent tools */
+    if (strcmp(tool_name, "index_repository") == 0) {
+        return handle_index_repository(srv, args_json);
+    }
+    if (strcmp(tool_name, "get_code_snippet") == 0) {
+        return handle_get_code_snippet(srv, args_json);
+    }
+    if (strcmp(tool_name, "search_code") == 0) {
+        return handle_search_code(srv, args_json);
+    }
+    if (strcmp(tool_name, "detect_changes") == 0) {
+        return handle_detect_changes(srv, args_json);
+    }
+    if (strcmp(tool_name, "manage_adr") == 0) {
+        return handle_manage_adr(srv, args_json);
+    }
+    if (strcmp(tool_name, "ingest_traces") == 0) {
+        return handle_ingest_traces(srv, args_json);
+    }
     char msg[CBM_SZ_256];
     snprintf(msg, sizeof(msg), "unknown tool: %s", tool_name);
+#endif
     return cbm_mcp_text_result(msg, true);
 }
 
@@ -5379,12 +6174,29 @@ static char *inject_update_notice(cbm_mcp_server_t *srv, char *result_json) {
 char *cbm_mcp_server_handle(cbm_mcp_server_t *srv, const char *line) {
     cbm_jsonrpc_request_t req = {0};
     if (cbm_jsonrpc_parse(line, &req) < 0) {
+#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
+        char parse_error[32];
+        size_t parse_error_len =
+            cbm_rs_mcp_parse_error_message_v1(parse_error, sizeof(parse_error));
+        return cbm_jsonrpc_format_error(
+            0, JSONRPC_PARSE_ERROR,
+            (parse_error_len != SIZE_MAX && parse_error_len < sizeof(parse_error)) ? parse_error
+                                                                                   : "Parse error");
+#else
         return cbm_jsonrpc_format_error(0, JSONRPC_PARSE_ERROR, "Parse error");
+#endif
     }
 
     /* Notifications (no id) → handle cancellation, then no response */
     if (!req.has_id) {
-        if (req.method && strcmp(req.method, "notifications/cancelled") == 0) {
+        bool is_cancelled = false;
+#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
+        is_cancelled =
+            cbm_rs_mcp_method_kind_v1(req.method) == CBM_MCP_METHOD_NOTIFICATIONS_CANCELLED;
+#else
+        is_cancelled = req.method && strcmp(req.method, "notifications/cancelled") == 0;
+#endif
+        if (is_cancelled) {
             if (srv->active_pipeline &&
                 cbm_mcp_cancel_request_matches(req.params_raw, srv->active_request_id,
                                                srv->active_request_id_str)) {
@@ -5401,19 +6213,56 @@ char *cbm_mcp_server_handle(cbm_mcp_server_t *srv, const char *line) {
     char *result_json = NULL;
     bool request_logged = false;
 
+    int method_kind = CBM_MCP_METHOD_UNKNOWN;
+#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
+    method_kind = cbm_rs_mcp_method_kind_v1(req.method);
+#else
     if (strcmp(req.method, "initialize") == 0) {
+        method_kind = CBM_MCP_METHOD_INITIALIZE;
+    } else if (strcmp(req.method, "ping") == 0) {
+        method_kind = CBM_MCP_METHOD_PING;
+    } else if (strcmp(req.method, "tools/list") == 0) {
+        method_kind = CBM_MCP_METHOD_TOOLS_LIST;
+    } else if (strcmp(req.method, "tools/call") == 0) {
+        method_kind = CBM_MCP_METHOD_TOOLS_CALL;
+    }
+#endif
+
+    if (method_kind == CBM_MCP_METHOD_INITIALIZE) {
         result_json = cbm_mcp_initialize_response(req.params_raw);
         start_update_check(srv);
         detect_session(srv);
         maybe_auto_index(srv);
-    } else if (strcmp(req.method, "ping") == 0) {
+    } else if (method_kind == CBM_MCP_METHOD_PING) {
+#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
+        char ping_result[8];
+        size_t ping_len = cbm_rs_mcp_ping_result_v1(ping_result, sizeof(ping_result));
+        result_json = (ping_len != SIZE_MAX && ping_len < sizeof(ping_result))
+                          ? heap_strdup(ping_result)
+                          : heap_strdup("{}");
+#else
         result_json = heap_strdup("{}");
-    } else if (strcmp(req.method, "tools/list") == 0) {
+#endif
+    } else if (method_kind == CBM_MCP_METHOD_TOOLS_LIST) {
         result_json = cbm_mcp_tools_list_page(req.params_raw);
-    } else if (strcmp(req.method, "tools/call") == 0) {
+    } else if (method_kind == CBM_MCP_METHOD_TOOLS_CALL) {
         char *tool_name = req.params_raw ? cbm_mcp_get_tool_name(req.params_raw) : NULL;
+#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
+        char default_args[8];
+        char *tool_args = NULL;
+        if (req.params_raw) {
+            tool_args = cbm_mcp_get_arguments(req.params_raw);
+        } else {
+            size_t default_args_len =
+                cbm_rs_mcp_tools_call_default_arguments_v1(default_args, sizeof(default_args));
+            tool_args = (default_args_len != SIZE_MAX && default_args_len < sizeof(default_args))
+                            ? heap_strdup(default_args)
+                            : heap_strdup("{}");
+        }
+#else
         char *tool_args =
             req.params_raw ? cbm_mcp_get_arguments(req.params_raw) : heap_strdup("{}");
+#endif
         srv->active_request_id = req.id;
         free(srv->active_request_id_str);
         srv->active_request_id_str = req.id_str ? heap_strdup(req.id_str) : NULL;
@@ -5441,8 +6290,16 @@ char *cbm_mcp_server_handle(cbm_mcp_server_t *srv, const char *line) {
     } else {
         /* Echo the original id (string or numeric, issue #253) on the error. */
         char err_obj[160];
+#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
+        size_t err_len = cbm_rs_mcp_method_not_found_error_v1(err_obj, sizeof(err_obj));
+        if (err_len == SIZE_MAX || err_len >= sizeof(err_obj)) {
+            snprintf(err_obj, sizeof(err_obj), "{\"code\":%d,\"message\":\"Method not found\"}",
+                     JSONRPC_METHOD_NOT_FOUND);
+        }
+#else
         snprintf(err_obj, sizeof(err_obj), "{\"code\":%d,\"message\":\"Method not found\"}",
                  JSONRPC_METHOD_NOT_FOUND);
+#endif
         cbm_jsonrpc_response_t err_resp = {
             .id = req.id,
             .id_str = req.id_str,
@@ -5477,12 +6334,14 @@ char *cbm_mcp_server_handle(cbm_mcp_server_t *srv, const char *line) {
     return out;
 }
 
-/* Handle a Content-Length-framed message (LSP-style transport).
- * Reads headers, body, processes request, writes framed response. */
-static void handle_content_length_frame(cbm_mcp_server_t *srv, FILE *in, FILE *out, char **line,
-                                        size_t *cap, int content_len) {
+static void consume_content_length_headers(FILE *in, char **line, size_t *cap) {
     /* Skip blank line(s) between header and body */
     while (cbm_getline(line, cap, in) > 0) {
+#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
+        if (cbm_rs_mcp_content_length_header_is_blank_v1(*line)) {
+            break;
+        }
+#else
         size_t hlen = strlen(*line);
         while (hlen > 0 && ((*line)[hlen - SKIP_ONE] == '\n' || (*line)[hlen - SKIP_ONE] == '\r')) {
             (*line)[--hlen] = '\0';
@@ -5490,24 +6349,82 @@ static void handle_content_length_frame(cbm_mcp_server_t *srv, FILE *in, FILE *o
         if (hlen == 0) {
             break;
         }
+#endif
     }
+}
+
+/* Handle a Content-Length-framed message (LSP-style transport).
+ * Reads headers, body, processes request, writes framed response. */
+static void handle_content_length_frame(cbm_mcp_server_t *srv, FILE *in, FILE *out, char **line,
+                                        size_t *cap, int content_len) {
+    consume_content_length_headers(in, line, cap);
 
     char *body = malloc((size_t)content_len + SKIP_ONE);
     if (!body) {
         return;
     }
-    size_t nread = fread(body, SKIP_ONE, (size_t)content_len, in);
+    size_t expected = (size_t)content_len;
+    size_t nread = 0;
+    while (nread < expected) {
+        size_t got = fread(body + nread, SKIP_ONE, expected - nread, in);
+        if (got == 0) {
+            break;
+        }
+        nread += got;
+    }
+    if (nread != expected) {
+        free(body);
+        return;
+    }
     body[nread] = '\0';
 
     char *resp = cbm_mcp_server_handle(srv, body);
     free(body);
 
     if (resp) {
+#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
+        size_t framed_len = cbm_rs_mcp_content_length_response_v1(NULL, 0, resp);
+        if (framed_len != SIZE_MAX && framed_len < SIZE_MAX - SKIP_ONE) {
+            char *framed = malloc(framed_len + SKIP_ONE);
+            if (framed) {
+                size_t written =
+                    cbm_rs_mcp_content_length_response_v1(framed, framed_len + SKIP_ONE, resp);
+                if (written == framed_len) {
+                    (void)fwrite(framed, SKIP_ONE, framed_len, out);
+                    (void)fflush(out);
+                    free(framed);
+                    free(resp);
+                    return;
+                }
+                free(framed);
+            }
+        }
+#endif
         size_t rlen = strlen(resp);
         (void)fprintf(out, "Content-Length: %zu\r\n\r\n%s", rlen, resp);
         (void)fflush(out);
         free(resp);
     }
+}
+
+static bool skip_content_length_body(FILE *in, size_t remaining) {
+    char dump[2048];
+
+    while (remaining > 0) {
+        size_t to_read = remaining < sizeof(dump) ? remaining : sizeof(dump);
+        size_t nread = fread(dump, SKIP_ONE, to_read, in);
+        if (nread == 0) {
+            return false;
+        }
+        remaining -= nread;
+    }
+
+    return true;
+}
+
+static void skip_content_length_frame(FILE *in, char **line, size_t *cap, size_t content_len) {
+    consume_content_length_headers(in, line, cap);
+    (void)skip_content_length_body(in, content_len);
 }
 
 #ifndef _WIN32
@@ -5645,13 +6562,33 @@ int cbm_mcp_server_run(cbm_mcp_server_t *srv, FILE *in, FILE *out) {
         }
 
         /* Content-Length framing (LSP-style transport) */
-        if (strncmp(line, "Content-Length:", SLEN("Content-Length:")) == 0) {
-            int content_len = (int)strtol(line + MCP_CONTENT_PREFIX, NULL, CBM_DECIMAL_BASE);
-            if (content_len > 0 && content_len <= MCP_DEFAULT_LIMIT * CBM_SZ_1K * CBM_SZ_1K) {
+#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
+        if (cbm_rs_mcp_content_length_header_matches_v1(line)) {
+            const long long max_content_len =
+                MCP_DEFAULT_LIMIT * (long long)CBM_SZ_1K * (long long)CBM_SZ_1K;
+            int content_len = cbm_rs_mcp_content_length_v1(line, (int)max_content_len);
+            if (content_len > 0) {
                 handle_content_length_frame(srv, in, out, &line, &cap, content_len);
+            } else {
+                long long raw_content_len = cbm_rs_mcp_content_length_raw_v1(line);
+                if (raw_content_len > max_content_len) {
+                    skip_content_length_frame(in, &line, &cap, (size_t)raw_content_len);
+                }
             }
             continue;
         }
+#else
+        if (strncmp(line, "Content-Length:", SLEN("Content-Length:")) == 0) {
+            const long max_content_len = MCP_DEFAULT_LIMIT * CBM_SZ_1K * CBM_SZ_1K;
+            long content_len = strtol(line + MCP_CONTENT_PREFIX, NULL, CBM_DECIMAL_BASE);
+            if (content_len > 0 && content_len <= max_content_len) {
+                handle_content_length_frame(srv, in, out, &line, &cap, (int)content_len);
+            } else if (content_len > max_content_len) {
+                skip_content_length_frame(in, &line, &cap, (size_t)content_len);
+            }
+            continue;
+        }
+#endif
 
         char *resp = cbm_mcp_server_handle(srv, line);
         if (resp) {
@@ -5675,6 +6612,14 @@ bool cbm_parse_file_uri(const char *uri, char *out_path, int out_size) {
         return false;
     }
 
+#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
+    size_t parsed_len = cbm_rs_mcp_parse_file_uri_v1(out_path, (size_t)out_size, uri);
+    if (parsed_len != SIZE_MAX) {
+        return true;
+    }
+    out_path[0] = '\0';
+    return false;
+#else
     /* Must start with file:// */
     if (strncmp(uri, "file://", SLEN("file://")) != 0) {
         out_path[0] = '\0';
@@ -5693,4 +6638,5 @@ bool cbm_parse_file_uri(const char *uri, char *out_path, int out_size) {
 
     snprintf(out_path, out_size, "%s", path);
     return true;
+#endif
 }

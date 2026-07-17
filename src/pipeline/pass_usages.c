@@ -19,17 +19,21 @@
 #include "foundation/log.h"
 #include "foundation/compat.h"
 #include "cbm.h"
+#include "helpers.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-/* True for languages whose module QN derives from the CONTAINING DIRECTORY
- * (Java/Go package). MUST match cbm_lang_module_is_dir() (internal/cbm/helpers.c)
- * so same-module resolution keys against the directory-based def-node QNs. */
-static bool pu_module_is_dir(CBMLanguage lang) {
-    return lang == CBM_LANG_JAVA || lang == CBM_LANG_GO;
-}
+#ifdef CBM_USE_RUST_PIPELINE_CHECKED_EXCEPTION
+extern int cbm_rs_pipeline_is_checked_exception_v1(const char *name);
+#endif
+#ifdef CBM_USE_RUST_PIPELINE_USAGES_JSON
+extern size_t cbm_rs_pipeline_usages_local_name_len_v1(const char *json);
+extern size_t cbm_rs_pipeline_usages_local_name_copy_v1(const char *json, char *out,
+                                                        size_t out_size);
+#endif
+int cbm_pipeline_is_checked_exception(const char *name);
 
 /* Read file into heap buffer. Caller must free(). */
 static char *read_file(const char *path, int *out_len) {
@@ -78,6 +82,11 @@ static bool is_checked_exception(const char *name) {
     if (!name) {
         return false;
     }
+#ifdef CBM_USE_RUST_PIPELINE_CHECKED_EXCEPTION
+    return cbm_rs_pipeline_is_checked_exception_v1(name) != 0;
+#elif defined(CBM_USE_RUST_PIPELINE_CHECKED_EXCEPTION_ONLY)
+    return cbm_pipeline_is_checked_exception(name) != 0;
+#endif
     if (strstr(name, "Error") || strstr(name, "Panic") || strstr(name, "error") ||
         strstr(name, "panic")) {
         return false;
@@ -145,6 +154,23 @@ static int build_import_map_from_edges(cbm_pipeline_ctx_t *ctx, const char *rel_
             continue;
         }
 
+#ifdef CBM_USE_RUST_PIPELINE_USAGES_JSON
+        size_t local_name_len = cbm_rs_pipeline_usages_local_name_len_v1(e->properties_json);
+        if (local_name_len != SIZE_MAX) {
+            char *local_name = malloc(local_name_len + SKIP_ONE);
+            if (!local_name) {
+                continue;
+            }
+            if (cbm_rs_pipeline_usages_local_name_copy_v1(
+                    e->properties_json, local_name, local_name_len + SKIP_ONE) != local_name_len) {
+                free(local_name);
+                continue;
+            }
+            keys[count] = local_name;
+            vals[count] = target->qualified_name;
+            count++;
+        }
+#else
         const char *start = strstr(e->properties_json, "\"local_name\":\"");
         if (start) {
             start += strlen("\"local_name\":\"");
@@ -155,6 +181,7 @@ static int build_import_map_from_edges(cbm_pipeline_ctx_t *ctx, const char *rel_
                 count++;
             }
         }
+#endif
     }
 
     *out_keys = keys;
@@ -363,7 +390,7 @@ int cbm_pipeline_pass_usages(cbm_pipeline_ctx_t *ctx, const cbm_file_info_t *fil
         build_import_map(ctx, rel, result, &imp_keys, &imp_vals, &imp_count);
 
         char *module_qn = cbm_pipeline_fqn_module_dir(ctx->project_name, rel,
-                                                      pu_module_is_dir(files[i].language));
+                                                      cbm_lang_module_is_dir(files[i].language));
 
         usage_resolved +=
             resolve_usage_edges(ctx, result, rel, module_qn, imp_keys, imp_vals, imp_count);

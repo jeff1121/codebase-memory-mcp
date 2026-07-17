@@ -26,6 +26,7 @@
 #define CBM_PIPELINE_PASS_LSP_CROSS_H
 
 #include "cbm.h"
+#include "pipeline/lsp_cross_classifiers.h"
 /* CBMLSPDef historically lives in lsp/go_lsp.h (not lsp/type_rep.h)
  * — type_rep.h covers the type-representation primitives while
  * go_lsp.h was where the project-wide def descriptor landed first. */
@@ -36,9 +37,6 @@
 #include "lsp/ts_lsp.h" /* cbm_ts_build_cross_registry / cbm_run_ts_lsp_cross_with_registry */
 #include "pipeline/pipeline_internal.h"
 #include <stdbool.h>
-
-/* True iff this language has a cbm_run_X_lsp_cross resolver wired up. */
-bool cbm_pxc_has_cross_lsp(CBMLanguage lang);
 
 /* Collect a project-wide CBMLSPDef[] from every cached file result.
  * def_modules[i] receives the module QN for files[i] (malloc'd; the
@@ -52,9 +50,8 @@ CBMLSPDef *cbm_pxc_collect_all_defs(CBMFileResult **cache, const cbm_file_info_t
                                     int file_count, const char *project_name, char **def_modules,
                                     int *out_count);
 
-/* Detect TS dialect flags from a relative path. */
-void cbm_pxc_ts_modes(CBMLanguage lang, const char *rel_path, bool *out_js, bool *out_jsx,
-                      bool *out_dts);
+/* cbm_pxc_has_cross_lsp 表示 pipeline eligibility。C# 需使用預建的 cs registry；
+ * cbm_pxc_run_one fallback 不承諾 C# dispatch。 */
 
 /* ── Per-module def index (the gopls "package summary" pattern) ──
  *

@@ -8,7 +8,14 @@
 #include "foundation/compat_thread.h"
 
 #include <pthread.h>
+#include <stdbool.h>
 #include <stdlib.h>
+
+#if defined(CBM_USE_RUST_COMPAT_THREAD) || defined(CBM_USE_RUST_COMPAT_THREAD_ONLY)
+extern size_t cbm_rs_compat_thread_effective_stack_size(size_t stack_size);
+extern bool cbm_rs_compat_aligned_alloc_precheck(size_t alignment, size_t size,
+                                                 size_t pointer_size);
+#endif
 
 /* Default 8MB stack for all threads. macOS ARM64 default is only 512KB,
  * which is too small for deep pipeline passes (configlink, etc.). */
@@ -34,9 +41,13 @@ static DWORD WINAPI win_thread_wrapper(LPVOID lpParam) {
 }
 
 int cbm_thread_create(cbm_thread_t *t, size_t stack_size, void *(*fn)(void *), void *arg) {
+#if defined(CBM_USE_RUST_COMPAT_THREAD) || defined(CBM_USE_RUST_COMPAT_THREAD_ONLY)
+    stack_size = cbm_rs_compat_thread_effective_stack_size(stack_size);
+#else
     if (stack_size == 0) {
         stack_size = CBM_DEFAULT_STACK_SIZE;
     }
+#endif
     win_thread_arg_t *a = (win_thread_arg_t *)malloc(sizeof(win_thread_arg_t));
     if (!a) {
         return CBM_NOT_FOUND;
@@ -71,9 +82,13 @@ int cbm_thread_detach(cbm_thread_t *t) {
 #else /* POSIX */
 
 int cbm_thread_create(cbm_thread_t *t, size_t stack_size, void *(*fn)(void *), void *arg) {
+#if defined(CBM_USE_RUST_COMPAT_THREAD) || defined(CBM_USE_RUST_COMPAT_THREAD_ONLY)
+    stack_size = cbm_rs_compat_thread_effective_stack_size(stack_size);
+#else
     if (stack_size == 0) {
         stack_size = CBM_DEFAULT_STACK_SIZE;
     }
+#endif
     pthread_attr_t attr;
     pthread_attr_init(&attr);
     pthread_attr_setstacksize(&attr, stack_size);
@@ -145,6 +160,11 @@ void cbm_mutex_destroy(cbm_mutex_t *m) {
 #ifdef _WIN32
 
 int cbm_aligned_alloc(void **ptr, size_t alignment, size_t size) {
+#if defined(CBM_USE_RUST_COMPAT_THREAD) || defined(CBM_USE_RUST_COMPAT_THREAD_ONLY)
+    if (!cbm_rs_compat_aligned_alloc_precheck(alignment, size, sizeof(void *))) {
+        return -1;
+    }
+#endif
     *ptr = _aligned_malloc(size, alignment);
     return *ptr ? 0 : -1;
 }
@@ -156,6 +176,11 @@ void cbm_aligned_free(void *ptr) {
 #else /* POSIX */
 
 int cbm_aligned_alloc(void **ptr, size_t alignment, size_t size) {
+#if defined(CBM_USE_RUST_COMPAT_THREAD) || defined(CBM_USE_RUST_COMPAT_THREAD_ONLY)
+    if (!cbm_rs_compat_aligned_alloc_precheck(alignment, size, sizeof(void *))) {
+        return -1;
+    }
+#endif
     return posix_memalign(ptr, alignment, size);
 }
 

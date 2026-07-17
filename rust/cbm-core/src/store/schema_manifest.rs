@@ -30,6 +30,7 @@ pub const CONNECTION_MODE_WRITE: u32 = 1 << 1;
 pub const CONNECTION_MODE_READ_ONLY: u32 = 1 << 2;
 pub const CONNECTION_MODE_BULK_BEGIN: u32 = 1 << 3;
 pub const CONNECTION_MODE_BULK_END: u32 = 1 << 4;
+pub const CONNECTION_MODE_CHECKPOINT: u32 = 1 << 5;
 
 pub const CONNECTION_FLAG_REQUIRED: u32 = 1 << 0;
 pub const CONNECTION_FLAG_NO_CREATE: u32 = 1 << 1;
@@ -753,6 +754,24 @@ pub static CONNECTION_MANIFEST_V1: &[ConnectionManifestEntryV1] = &[
         b"pragma.optimize\0",
         (b"PRAGMA optimize;\0", EMPTY),
     ),
+    connection_entry(
+        CONNECTION_KIND_PRAGMA,
+        CONNECTION_FLAG_REQUIRED | CONNECTION_FLAG_WRITES_DB_OR_WAL,
+        CONNECTION_MODE_CHECKPOINT,
+        10,
+        0,
+        b"checkpoint.passive.api\0",
+        (b"SQLITE_CHECKPOINT_PASSIVE\0", EMPTY),
+    ),
+    connection_entry(
+        CONNECTION_KIND_PRAGMA,
+        CONNECTION_FLAG_REQUIRED,
+        CONNECTION_MODE_CHECKPOINT,
+        20,
+        0,
+        b"checkpoint.optimize\0",
+        (b"PRAGMA optimize;\0", EMPTY),
+    ),
 ];
 
 pub fn entries() -> &'static [ManifestEntry] {
@@ -795,6 +814,24 @@ pub fn connection_write_pragma_count_v1() -> usize {
             entry.kind == CONNECTION_KIND_PRAGMA
                 && (entry.flags & CONNECTION_FLAG_WRITES_DB_OR_WAL) != 0
         })
+        .count()
+}
+
+pub fn connection_entries_for_mode_v1(
+    mode_mask: u32,
+) -> impl Iterator<Item = &'static ConnectionManifestEntryV1> {
+    CONNECTION_MANIFEST_V1
+        .iter()
+        .filter(move |entry| (entry.mode_mask & mode_mask) != 0)
+}
+
+pub fn connection_entry_count_for_mode_v1(mode_mask: u32) -> usize {
+    connection_entries_for_mode_v1(mode_mask).count()
+}
+
+pub fn connection_write_entry_count_for_mode_v1(mode_mask: u32) -> usize {
+    connection_entries_for_mode_v1(mode_mask)
+        .filter(|entry| (entry.flags & CONNECTION_FLAG_WRITES_DB_OR_WAL) != 0)
         .count()
 }
 
@@ -876,8 +913,8 @@ mod tests {
 
     #[test]
     fn connection_manifest_captures_open_and_pragma_contract() {
-        assert_eq!(connection_entries_v1().len(), 16);
-        assert_eq!(connection_write_pragma_count_v1(), 4);
+        assert_eq!(connection_entries_v1().len(), 18);
+        assert_eq!(connection_write_pragma_count_v1(), 5);
 
         let readonly = connection_entries_v1()
             .iter()
@@ -915,5 +952,56 @@ mod tests {
             .unwrap();
         assert_eq!(bulk.value_i64, -65_536);
         assert_eq!(bulk.mode_mask, CONNECTION_MODE_BULK_BEGIN);
+    }
+
+    #[test]
+    fn connection_manifest_filters_by_operation_mode() {
+        assert_eq!(
+            connection_entry_count_for_mode_v1(CONNECTION_MODE_MEMORY),
+            4
+        );
+        assert_eq!(
+            connection_entry_count_for_mode_v1(CONNECTION_MODE_READ_ONLY),
+            7
+        );
+        assert_eq!(
+            connection_write_entry_count_for_mode_v1(CONNECTION_MODE_READ_ONLY),
+            0
+        );
+        assert_eq!(
+            connection_entry_count_for_mode_v1(CONNECTION_MODE_BULK_BEGIN),
+            2
+        );
+        assert_eq!(
+            connection_entry_count_for_mode_v1(CONNECTION_MODE_BULK_END),
+            2
+        );
+        assert_eq!(
+            connection_entry_count_for_mode_v1(CONNECTION_MODE_CHECKPOINT),
+            2
+        );
+        assert_eq!(
+            connection_write_entry_count_for_mode_v1(CONNECTION_MODE_CHECKPOINT),
+            1
+        );
+
+        let checkpoint: Vec<&str> = connection_entries_for_mode_v1(CONNECTION_MODE_CHECKPOINT)
+            .map(|entry| text(entry.name))
+            .collect();
+        assert_eq!(
+            checkpoint,
+            ["checkpoint.passive.api", "checkpoint.optimize"]
+        );
+        let passive = connection_entries_for_mode_v1(CONNECTION_MODE_CHECKPOINT)
+            .find(|entry| text(entry.name) == "checkpoint.passive.api")
+            .unwrap();
+        assert_ne!(passive.flags & CONNECTION_FLAG_WRITES_DB_OR_WAL, 0);
+        assert_eq!(passive.flags & CONNECTION_FLAG_BEST_EFFORT, 0);
+
+        let open_time = connection_entries_v1()
+            .iter()
+            .find(|entry| text(entry.name) == "pragma.wal_checkpoint.passive")
+            .unwrap();
+        assert_ne!(open_time.flags & CONNECTION_FLAG_BEST_EFFORT, 0);
     }
 }

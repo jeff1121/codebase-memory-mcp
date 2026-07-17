@@ -120,14 +120,16 @@ TEST(cypher_lex_number) {
 
 TEST(cypher_lex_operators) {
     cbm_lex_result_t r = {0};
-    int rc = cbm_lex("= =~ >= <= ..", &r);
+    int rc = cbm_lex("= =~ >= <= .. != <>", &r);
     ASSERT_EQ(rc, 0);
-    ASSERT_GTE(r.count, 5);
+    ASSERT_GTE(r.count, 7);
     ASSERT_EQ(r.tokens[0].type, TOK_EQ);
     ASSERT_EQ(r.tokens[1].type, TOK_EQTILDE);
     ASSERT_EQ(r.tokens[2].type, TOK_GTE);
     ASSERT_EQ(r.tokens[3].type, TOK_LTE);
     ASSERT_EQ(r.tokens[4].type, TOK_DOTDOT);
+    ASSERT_EQ(r.tokens[5].type, TOK_NEQ);
+    ASSERT_EQ(r.tokens[6].type, TOK_NEQ);
 
     cbm_lex_free(&r);
     PASS();
@@ -160,6 +162,25 @@ TEST(cypher_lex_pipe_and_star) {
     ASSERT_EQ(r.tokens[7].type, TOK_DOTDOT);
     ASSERT_EQ(r.tokens[8].type, TOK_NUMBER);
     ASSERT_STR_EQ(r.tokens[8].text, "3");
+
+    cbm_lex_free(&r);
+    PASS();
+}
+
+TEST(cypher_lex_all_single_char_tokens) {
+    static const cbm_token_type_t expected[] = {
+        TOK_LPAREN, TOK_RPAREN, TOK_LBRACKET, TOK_RBRACKET, TOK_DASH,  TOK_GT, TOK_LT,   TOK_COLON,
+        TOK_DOT,    TOK_LBRACE, TOK_RBRACE,   TOK_STAR,     TOK_COMMA, TOK_EQ, TOK_PIPE,
+    };
+    cbm_lex_result_t r = {0};
+    int rc = cbm_lex("( ) [ ] - > < : . { } * , = |", &r);
+    ASSERT_EQ(rc, 0);
+    ASSERT_EQ(r.count, (int)(sizeof(expected) / sizeof(expected[0])) + 1);
+
+    for (int i = 0; i < (int)(sizeof(expected) / sizeof(expected[0])); i++) {
+        ASSERT_EQ(r.tokens[i].type, expected[i]);
+    }
+    ASSERT_EQ(r.tokens[r.count - 1].type, TOK_EOF);
 
     cbm_lex_free(&r);
     PASS();
@@ -2534,6 +2555,7 @@ SUITE(cypher) {
     RUN_TEST(cypher_lex_operators);
     RUN_TEST(cypher_lex_keywords_case_insensitive);
     RUN_TEST(cypher_lex_pipe_and_star);
+    RUN_TEST(cypher_lex_all_single_char_tokens);
     RUN_TEST(cypher_lex_full_query);
     /* Parser */
     RUN_TEST(cypher_parse_simple_node);

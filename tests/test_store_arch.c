@@ -337,6 +337,55 @@ TEST(arch_languages) {
     PASS();
 }
 
+TEST(arch_language_aliases) {
+    cbm_store_t *s = cbm_store_open_memory();
+    ASSERT_NOT_NULL(s);
+    ASSERT_EQ(cbm_store_upsert_project(s, "aliases", "/tmp/aliases"), CBM_STORE_OK);
+
+    const char *files[] = {
+        "native.cc", "native.cxx", "ui.jsx", "ui.tsx", "config.yaml", "config.yml", "skip.txt",
+    };
+    for (size_t i = 0; i < sizeof(files) / sizeof(files[0]); i++) {
+        char qn[64];
+        snprintf(qn, sizeof(qn), "aliases.%s", files[i]);
+        cbm_node_t node = {.project = "aliases",
+                           .label = "File",
+                           .name = files[i],
+                           .qualified_name = qn,
+                           .file_path = files[i]};
+        cbm_store_upsert_node(s, &node);
+    }
+
+    cbm_architecture_info_t info;
+    memset(&info, 0, sizeof(info));
+    const char *aspects[] = {"languages"};
+    ASSERT_EQ(cbm_store_get_architecture(s, "aliases", NULL, aspects, 1, &info), CBM_STORE_OK);
+    ASSERT_EQ(info.language_count, 4);
+
+    int cpp_count = 0;
+    int javascript_count = 0;
+    int typescript_count = 0;
+    int yaml_count = 0;
+    for (int i = 0; i < info.language_count; i++) {
+        if (strcmp(info.languages[i].language, "C++") == 0)
+            cpp_count = info.languages[i].file_count;
+        if (strcmp(info.languages[i].language, "JavaScript") == 0)
+            javascript_count = info.languages[i].file_count;
+        if (strcmp(info.languages[i].language, "TypeScript") == 0)
+            typescript_count = info.languages[i].file_count;
+        if (strcmp(info.languages[i].language, "YAML") == 0)
+            yaml_count = info.languages[i].file_count;
+    }
+    ASSERT_EQ(cpp_count, 2);
+    ASSERT_EQ(javascript_count, 1);
+    ASSERT_EQ(typescript_count, 1);
+    ASSERT_EQ(yaml_count, 2);
+
+    cbm_store_architecture_free(&info);
+    cbm_store_close(s);
+    PASS();
+}
+
 TEST(arch_routes) {
     cbm_store_t *s = setup_arch_test_store();
     cbm_architecture_info_t info;
@@ -1370,6 +1419,7 @@ SUITE(store_arch) {
     RUN_TEST(arch_path_scoping);
     RUN_TEST(arch_empty_project);
     RUN_TEST(arch_languages);
+    RUN_TEST(arch_language_aliases);
     RUN_TEST(arch_routes);
     RUN_TEST(arch_hotspots);
     RUN_TEST(arch_boundaries);

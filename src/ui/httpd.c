@@ -43,6 +43,12 @@ typedef int cbm_sock_t;
 #define CBM_SEND_FLAGS 0
 #endif
 
+#ifdef CBM_USE_RUST_UI_HTTPD_HELPERS
+extern int cbm_rs_ui_httpd_header_name_is_v1(const char *line, size_t name_len, const char *name);
+extern int cbm_rs_ui_httpd_copy_header_value_v1(const char *value, size_t value_len, char *out,
+                                               size_t outsz);
+#endif
+
 struct cbm_httpd {
     cbm_sock_t fd;
     int port;
@@ -228,15 +234,22 @@ size_t cbm_http_conn_response_bytes(const cbm_http_conn_t *c) {
 /* ── Head parsing ─────────────────────────────────────────────── */
 
 static bool header_name_is(const char *line, size_t name_len, const char *name) {
+#ifdef CBM_USE_RUST_UI_HTTPD_HELPERS
+    return cbm_rs_ui_httpd_header_name_is_v1(line, name_len, name) != 0;
+#else
     for (size_t i = 0; i < name_len; i++) {
         if (tolower((unsigned char)line[i]) != name[i])
             return false;
     }
     return name[name_len] == '\0' ? true : false;
+#endif
 }
 
 /* Copy a trimmed header value into out. */
 static void copy_header_value(const char *val, const char *val_end, char *out, size_t outsz) {
+#ifdef CBM_USE_RUST_UI_HTTPD_HELPERS
+    (void)cbm_rs_ui_httpd_copy_header_value_v1(val, (size_t)(val_end - val), out, outsz);
+#else
     while (val < val_end && (*val == ' ' || *val == '\t'))
         val++;
     while (val_end > val && (val_end[-1] == ' ' || val_end[-1] == '\t'))
@@ -248,6 +261,7 @@ static void copy_header_value(const char *val, const char *val_end, char *out, s
     }
     memcpy(out, val, n);
     out[n] = '\0';
+#endif
 }
 
 int cbm_http_parse_head(const char *data, size_t len, cbm_http_req_t *req, size_t *body_offset,

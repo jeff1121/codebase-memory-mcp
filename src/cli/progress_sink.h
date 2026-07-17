@@ -16,4 +16,10 @@ void cbm_progress_sink_init(FILE *out);
 void cbm_progress_sink_fini(void);
 void cbm_progress_sink_fn(const char *line);
 
+#ifdef CBM_USE_RUST_PROGRESS_SINK
+void cbm_rs_progress_sink_init(FILE *out);
+void cbm_rs_progress_sink_fini(void);
+void cbm_rs_progress_sink_fn(const char *line);
+#endif
+
 #endif

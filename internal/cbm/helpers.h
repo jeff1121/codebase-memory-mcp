@@ -136,6 +136,8 @@ char *cbm_fqn_module(CBMArena *a, const char *project, const char *rel_path);
 // stem is NOT baked in): `Outer.java` at root -> "proj", `myapp/db/conn.go` ->
 // "proj.myapp.db". For every OTHER language this returns exactly what
 // cbm_fqn_module returns (no behavior change).
+bool cbm_lang_module_is_dir(CBMLanguage lang);
+
 char *cbm_fqn_module_source_lang(CBMArena *a, const char *project, const char *rel_path,
                                  CBMLanguage lang);
 

@@ -24,6 +24,7 @@ enum { GH_RING = 4, GH_RING_MASK = 3, GH_INIT_CAP = 16, GH_MIN_COMMITS = 3, GH_M
 #include "foundation/compat.h"
 #include "foundation/compat_fs.h"
 #include "foundation/str_util.h"
+#include "pipeline/trackable_file.h"
 
 /* Minimum coupling score to create an edge */
 #define MIN_COUPLING_SCORE 0.3
@@ -41,45 +42,7 @@ static const char *itoa_log(int val) {
     return bufs[i];
 }
 
-static bool ends_with(const char *s, size_t slen, const char *suffix) {
-    size_t sflen = strlen(suffix);
-    return slen >= sflen && strcmp(s + slen - sflen, suffix) == 0;
-}
-
-bool cbm_is_trackable_file(const char *path) {
-    if (!path) {
-        return false;
-    }
-    /* Skip directory prefixes */
-#define LEN_NODE_MODULES_SLASH 13 /* strlen("node_modules/") */
-    if (strncmp(path, ".git/", SLEN(".git/")) == 0 ||
-        strncmp(path, "node_modules/", LEN_NODE_MODULES_SLASH) == 0 ||
-        strncmp(path, "vendor/", SLEN("vendor/")) == 0 ||
-        strncmp(path, "__pycache__/", SLEN("__pycache__/")) == 0 ||
-        strncmp(path, ".cache/", SLEN(".cache/")) == 0) {
-        return false;
-    }
-    /* Skip lock/generated file names */
-    const char *base = strrchr(path, '/');
-    base = base ? base + SKIP_ONE : path;
-    if (strcmp(base, "package-lock.json") == 0 || strcmp(base, "yarn.lock") == 0 ||
-        strcmp(base, "pnpm-lock.yaml") == 0 || strcmp(base, "Cargo.lock") == 0 ||
-        strcmp(base, "poetry.lock") == 0 || strcmp(base, "composer.lock") == 0 ||
-        strcmp(base, "Gemfile.lock") == 0 || strcmp(base, "Pipfile.lock") == 0) {
-        return false;
-    }
-    /* Skip non-source file extensions */
-    size_t len = strlen(path);
-    if (ends_with(path, len, ".lock") || ends_with(path, len, ".sum") ||
-        ends_with(path, len, ".min.js") || ends_with(path, len, ".min.css") ||
-        ends_with(path, len, ".map") || ends_with(path, len, ".wasm") ||
-        ends_with(path, len, ".png") || ends_with(path, len, ".jpg") ||
-        ends_with(path, len, ".gif") || ends_with(path, len, ".ico") ||
-        ends_with(path, len, ".svg")) {
-        return false;
-    }
-    return true;
-}
+/* cbm_is_trackable_file：見 trackable_file.c（true-source selectable CU） */
 
 /* ── Commit parsing ───────────────────────────────────────────────── */
 

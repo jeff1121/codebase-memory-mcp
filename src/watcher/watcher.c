@@ -61,11 +61,6 @@ struct cbm_watcher {
 #define NS_PER_SEC 1000000000LL
 #define US_PER_MS 1000000LL
 
-/* Adaptive poll interval parameters (ms) */
-#define POLL_BASE_MS 5000
-#define POLL_FILE_STEP 500 /* add 1s per this many files */
-#define POLL_MAX_MS 60000
-
 /* Sleep chunk for responsive shutdown (ms) */
 #define SLEEP_CHUNK_MS 500
 
@@ -75,16 +70,6 @@ static int64_t now_ns(void) {
     struct timespec ts;
     cbm_clock_gettime(CLOCK_MONOTONIC, &ts);
     return ((int64_t)ts.tv_sec * NS_PER_SEC) + ts.tv_nsec;
-}
-
-/* ── Adaptive interval ──────────────────────────────────────────── */
-
-int cbm_watcher_poll_interval_ms(int file_count) {
-    int ms = POLL_BASE_MS + ((file_count / POLL_FILE_STEP) * CBM_MSEC_PER_SEC);
-    if (ms > POLL_MAX_MS) {
-        ms = POLL_MAX_MS;
-    }
-    return ms;
 }
 
 /* ── Git helpers ────────────────────────────────────────────────── */
@@ -228,7 +213,7 @@ static project_state_t *state_new(const char *name, const char *root_path) {
     }
     s->project_name = strdup(name);
     s->root_path = strdup(root_path);
-    s->interval_ms = POLL_BASE_MS;
+    s->interval_ms = cbm_watcher_poll_interval_ms(0);
     return s;
 }
 
@@ -523,7 +508,7 @@ int cbm_watcher_run(cbm_watcher_t *w, int base_interval_ms) {
         return CBM_NOT_FOUND;
     }
     if (base_interval_ms <= 0) {
-        base_interval_ms = POLL_BASE_MS;
+        base_interval_ms = cbm_watcher_poll_interval_ms(0);
     }
 
     cbm_log_info("watcher.start", "interval_ms", base_interval_ms > 999 ? "multi-sec" : "fast");

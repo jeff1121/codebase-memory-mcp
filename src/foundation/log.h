@@ -67,6 +67,15 @@ CBMLogFormat cbm_log_get_format(void);
  */
 void cbm_log(CBMLogLevel level, const char *msg, ...);
 
+/* Fixed-arity bridge used by Rust's dump verification direct ABI. */
+void cbm_log_dump_verify_invalid_ratio(const char *value);
+
+/* Rust system-info direct ABI 使用的固定 arity worker 環境變數 warning bridge。 */
+void cbm_log_workers_env_invalid(const char *value);
+
+/* 以固定參數 bridge 輸出 profiling elapsed log，供 Rust direct slice 使用。 */
+void cbm_log_profile_elapsed(const char *phase, const char *sub, long ms, long us, long items);
+
 /* Convenience macros. */
 #define cbm_log_debug(msg, ...) cbm_log(CBM_LOG_DEBUG, msg, ##__VA_ARGS__, NULL)
 #define cbm_log_info(msg, ...) cbm_log(CBM_LOG_INFO, msg, ##__VA_ARGS__, NULL)

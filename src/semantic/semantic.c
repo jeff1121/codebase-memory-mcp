@@ -6,6 +6,8 @@
  * Uses xxHash for deterministic random vectors. Pure C, zero dependencies.
  */
 #include "semantic/semantic.h"
+#include "semantic/camel_break.h"
+#include "semantic/token_delim.h"
 #include "foundation/constants.h"
 #include "foundation/hash_table.h"
 #include "foundation/log.h"
@@ -106,6 +108,8 @@ enum { BASE_DECIMAL = 10 };
 
 /* ── Configuration ───────────────────────────────────────────────── */
 
+#ifndef CBM_USE_RUST_SEMANTIC_CONFIG_ONLY
+
 cbm_sem_config_t cbm_sem_get_config(void) {
     cbm_sem_config_t cfg = {
         .w_tfidf = CBM_SEM_W_TFIDF,
@@ -136,23 +140,11 @@ bool cbm_sem_is_enabled(void) {
     return val && val[0] == '1';
 }
 
+#endif
+
 /* ── Token extraction ────────────────────────────────────────────── */
 
-/* True for characters that terminate a token regardless of case. */
-static bool is_token_delim(char c) {
-    return c == '.' || c == '/' || c == '_' || c == '-' || c == ' ' || c == '(' || c == ')' ||
-           c == ',' || c == ':';
-}
-
-/* True for a camelCase transition: uppercase letter preceded by a lowercase. */
-static bool is_camel_break(const char *name, int i) {
-    if (i <= 0) {
-        return false;
-    }
-    char c = name[i];
-    char p = name[i - SKIP_ONE];
-    return c >= 'A' && c <= 'Z' && p >= 'a' && p <= 'z';
-}
+#ifndef CBM_USE_RUST_SEMANTIC_TOKENIZE_ONLY
 
 /* Flush the current buffer as a token into out[]. */
 static void flush_token(char *buf, int *blen, char **out, int *count, int max_out) {
@@ -173,8 +165,8 @@ int cbm_sem_tokenize(const char *name, char **out, int max_out) {
 
     for (int i = 0; name[i] && count < max_out; i++) {
         char c = name[i];
-        bool split = is_token_delim(c);
-        bool camel = is_camel_break(name, i);
+        bool split = cbm_semantic_is_token_delim((unsigned char)c);
+        bool camel = cbm_semantic_is_camel_break(name, i);
         if (split || camel) {
             flush_token(buf, &blen, out, &count, max_out);
             if (split) {
@@ -367,7 +359,11 @@ int cbm_sem_tokenize(const char *name, char **out, int max_out) {
     return count;
 }
 
+#endif
+
 /* ── Dense vector operations ─────────────────────────────────────── */
+
+#ifndef CBM_USE_RUST_SEMANTIC_VECTOR_ONLY
 
 float cbm_sem_cosine(const cbm_sem_vec_t *a, const cbm_sem_vec_t *b) {
     if (!a || !b) {
@@ -387,6 +383,8 @@ float cbm_sem_cosine(const cbm_sem_vec_t *a, const cbm_sem_vec_t *b) {
     }
     return dot / denom;
 }
+
+#endif
 
 /* Pretrained token lookup table — built lazily on first use. */
 static CBMHashTable *g_pretrained_map = NULL;
@@ -465,6 +463,8 @@ void cbm_sem_random_index(const char *token, cbm_sem_vec_t *out) {
     }
 }
 
+#ifndef CBM_USE_RUST_SEMANTIC_VECTOR_ONLY
+
 void cbm_sem_normalize(cbm_sem_vec_t *v) {
     if (!v) {
         return;
@@ -491,6 +491,8 @@ void cbm_sem_vec_add_scaled(cbm_sem_vec_t *dst, const cbm_sem_vec_t *src, float 
         dst->v[i] += scale * src->v[i];
     }
 }
+
+#endif
 
 /* ── Corpus (IDF + Random Indexing enrichment) ───────────────────── */
 
@@ -1516,6 +1518,8 @@ void cbm_sem_corpus_free(cbm_sem_corpus_t *corpus) {
 
 /* ── Combined scoring ────────────────────────────────────────────── */
 
+#ifndef CBM_USE_RUST_SEMANTIC_PROXIMITY_ONLY
+
 float cbm_sem_proximity(const char *path_a, const char *path_b) {
     if (!path_a || !path_b) {
         return CBM_SEM_UNIT_POS;
@@ -1551,6 +1555,8 @@ float cbm_sem_proximity(const char *path_a, const char *path_b) {
     /* Same file = 1.10, same dir = 1.05, distant = 1.00 */
     return CBM_SEM_UNIT_POS + (ratio * CBM_SEM_PROX_MAX_BOOST);
 }
+
+#endif
 
 /* Cosine similarity for small float arrays (AST profile). */
 static float small_cosine(const float *a, const float *b, int dims) {

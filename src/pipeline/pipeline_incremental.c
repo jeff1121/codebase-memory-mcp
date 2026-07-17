@@ -18,6 +18,9 @@ enum { INCR_RING_BUF = 4, INCR_RING_MASK = 3, INCR_TS_BUF = 24, INCR_WAL_BUF = 1
 #include <stdio.h>
 #include <time.h>
 #include "pipeline/pipeline_internal.h"
+
+#include "pipeline/incremental_edge_type.h"
+#include "pipeline/incremental_registry_label.h"
 #include "store/store.h"
 #include "graph_buffer/graph_buffer.h"
 #include "discover/discover.h"
@@ -356,16 +359,11 @@ typedef struct {
  * IMPLEMENTS) are deduped on re-link, while structural containment edges
  * (CONTAINS_FILE, CONTAINS_FOLDER) — which the full-only structure pass does
  * NOT regenerate incrementally — are preserved precisely by this snapshot. */
-static bool incr_edge_type_is_recomputed(const char *type) {
-    return type && (strcmp(type, "SIMILAR_TO") == 0 || strcmp(type, "SEMANTICALLY_RELATED") == 0 ||
-                    strcmp(type, "FILE_CHANGES_WITH") == 0 || strcmp(type, "DATA_FLOWS") == 0);
-}
-
 /* cbm_gbuf_foreach_edge visitor: snapshot inbound cross-file edges into
  * changed files so they survive the purge and can be re-linked afterward. */
 static void incr_capture_inbound_edge(const cbm_gbuf_edge_t *edge, void *userdata) {
     cbm_edge_capture_t *cap = (cbm_edge_capture_t *)userdata;
-    if (incr_edge_type_is_recomputed(edge->type)) {
+    if (cbm_pipeline_incremental_edge_type_is_recomputed(edge->type)) {
         return;
     }
     const cbm_gbuf_node_t *src = cbm_gbuf_find_by_id(cap->gbuf, edge->source_id);
@@ -512,29 +510,19 @@ static void persist_hashes(cbm_store_t *store, const char *project, cbm_file_inf
  * container nodes (File / Module / Folder / ...) lets a type usage like `Word`
  * resolve to the same-named Module node instead of the Class node. Only
  * callable / declared symbols belong in the registry. */
-static bool incr_label_is_registry_symbol(const char *label) {
-    /* Mirror pass_definitions.c / pass_parallel.c registry seeding EXACTLY:
-     * callables + every type-like container (Class/Struct/Interface/Enum/Type/
-     * Trait) + Variable/Field. Struct included so an incremental re-resolve seeds
-     * the same struct type nodes a full reindex would. */
-    return label && (strcmp(label, "Function") == 0 || strcmp(label, "Method") == 0 ||
-                     cbm_label_is_type_like(label) || strcmp(label, "Variable") == 0 ||
-                     strcmp(label, "Field") == 0);
-}
-
 /* Callback for cbm_gbuf_foreach_node: seed the registry with the existing
  * project's definition symbols so the resolver can match cross-file symbols
  * during incremental. Mirrors the full-index registry contents exactly so an
  * incremental re-resolve picks the same nodes a full reindex would. */
 static void registry_visitor(const cbm_gbuf_node_t *node, void *userdata) {
     cbm_registry_t *r = (cbm_registry_t *)userdata;
-    if (!incr_label_is_registry_symbol(node->label)) {
+    if (!cbm_pipeline_incremental_label_is_registry_symbol(node->label)) {
         return;
     }
     cbm_registry_add(r, node->name, node->qualified_name, node->label);
 }
 
-#ifdef CBM_USE_RUST_PIPELINE_PLAN
+#if defined(CBM_USE_RUST_PIPELINE_PLAN) || defined(CBM_USE_RUST_PIPELINE_PLAN_ONLY)
 typedef struct {
     int kind;
     const char *name;
@@ -634,8 +622,12 @@ static void incr_extract_free_cache(incr_extract_dispatch_t *dispatch) {
     dispatch->cache = NULL;
 }
 
-static bool run_rust_incremental_extract_step(int kind, incr_extract_dispatch_t *dispatch) {
+static bool run_rust_incremental_extract_step(int kind, incr_extract_dispatch_t *dispatch,
+                                              int *out_rc) {
     struct timespec t;
+    if (out_rc) {
+        *out_rc = 0;
+    }
     switch (kind) {
     case CBM_RS_PLAN_STEP_INCREMENTAL_DEFINITIONS:
         cbm_pipeline_pass_definitions(dispatch->ctx, dispatch->changed_files,
@@ -673,26 +665,39 @@ static bool run_rust_incremental_extract_step(int kind, incr_extract_dispatch_t 
         return true;
     case CBM_RS_PLAN_STEP_INCREMENTAL_RESOLVE:
         if (!dispatch->cache) {
+            if (out_rc) {
+                *out_rc = CBM_NOT_FOUND;
+            }
             return false;
         }
         cbm_clock_gettime(CLOCK_MONOTONIC, &t);
         cbm_log_info("incremental.lsp_cross", "mode", "skipped", "reason", "no_cross_lsp_prebuild");
-        cbm_parallel_resolve(dispatch->ctx, dispatch->changed_files, dispatch->changed_count,
-                             dispatch->cache, &dispatch->shared_ids, dispatch->worker_count, NULL,
-                             0, NULL, NULL /* module_def_index */,
-                             NULL /* incremental 會跳過 Tier 2 cross registry prebuild */);
+        int rc =
+            cbm_parallel_resolve(dispatch->ctx, dispatch->changed_files, dispatch->changed_count,
+                                 dispatch->cache, &dispatch->shared_ids, dispatch->worker_count,
+                                 NULL, 0, NULL, NULL /* module_def_index */,
+                                 NULL /* incremental 會跳過 Tier 2 cross registry prebuild */);
         cbm_gbuf_set_next_id(dispatch->ctx->gbuf, atomic_load(&dispatch->shared_ids));
         cbm_log_info("pass.timing", "pass", "incr_resolve", "elapsed_ms",
                      itoa_buf((int)elapsed_ms(t)));
+        if (rc != 0 || (dispatch->ctx->cancelled && atomic_load(dispatch->ctx->cancelled) != 0)) {
+            if (out_rc) {
+                *out_rc = rc != 0 ? rc : CBM_NOT_FOUND;
+            }
+            return false;
+        }
         return true;
     default:
+        if (out_rc) {
+            *out_rc = CBM_NOT_FOUND;
+        }
         return false;
     }
 }
 
-static bool run_rust_incremental_extract_dispatch(cbm_pipeline_ctx_t *ctx,
-                                                  cbm_file_info_t *changed_files, int ci,
-                                                  bool use_parallel, int worker_count) {
+static int run_rust_incremental_extract_dispatch(cbm_pipeline_ctx_t *ctx,
+                                                 cbm_file_info_t *changed_files, int ci,
+                                                 bool use_parallel, int worker_count) {
     cbm_rs_pipeline_plan_step_v2_t rust_steps[CBM_RS_PLAN_V2_MAX_STEPS];
     int rust_step_count = 0;
     char rust_plan[CBM_RS_PLAN_INCREMENTAL_POST_BUF];
@@ -700,7 +705,7 @@ static bool run_rust_incremental_extract_dispatch(cbm_pipeline_ctx_t *ctx,
                                 ci, rust_steps, CBM_RS_PLAN_V2_MAX_STEPS, &rust_step_count) ||
         !decode_rust_incremental_extract_steps(use_parallel, rust_steps, rust_step_count, rust_plan,
                                                sizeof(rust_plan))) {
-        return false;
+        return CBM_NOT_FOUND;
     }
 
     cbm_log_info("rust_plan.dispatch", "phase", "incremental_extract_resolve", "passes",
@@ -719,15 +724,15 @@ static bool run_rust_incremental_extract_dispatch(cbm_pipeline_ctx_t *ctx,
         .worker_count = worker_count,
         .cache = NULL,
     };
-    bool ok = true;
+    int rc = 0;
     for (int i = 0; i < rust_step_count; i++) {
-        if (!run_rust_incremental_extract_step(rust_steps[i].kind, &dispatch)) {
-            ok = false;
-            break;
+        if (!run_rust_incremental_extract_step(rust_steps[i].kind, &dispatch, &rc)) {
+            incr_extract_free_cache(&dispatch);
+            return rc != 0 ? rc : CBM_NOT_FOUND;
         }
     }
     incr_extract_free_cache(&dispatch);
-    return ok;
+    return 0;
 }
 #endif
 
@@ -794,30 +799,48 @@ static void run_c_incremental_extract_resolve(cbm_pipeline_ctx_t *ctx,
 }
 
 /* 對 changed files 執行 parallel 或 sequential extract+resolve。 */
-static void run_extract_resolve(cbm_pipeline_ctx_t *ctx, cbm_file_info_t *changed_files, int ci) {
+static int run_extract_resolve(cbm_pipeline_ctx_t *ctx, cbm_file_info_t *changed_files, int ci) {
     /* per-file LSP 在所有模式都會執行；incremental 一律停用 cross-file LSP，
      * 下方會以 NULL cross_registries 呼叫 cbm_parallel_resolve。 */
 
 #define MIN_FILES_FOR_PARALLEL_INCR 50
     int worker_count = cbm_default_worker_count(true);
     bool c_use_parallel = (worker_count > SKIP_ONE && ci > MIN_FILES_FOR_PARALLEL_INCR);
-#ifdef CBM_USE_RUST_PIPELINE_PLAN
+#if defined(CBM_USE_RUST_PIPELINE_PLAN) || defined(CBM_USE_RUST_PIPELINE_PLAN_ONLY)
     bool rust_use_parallel = false;
     if (cbm_rust_plan_extracts_parallel(ctx->mode, worker_count, ci, &rust_use_parallel)) {
-        if (run_rust_incremental_extract_dispatch(ctx, changed_files, ci, rust_use_parallel,
-                                                  worker_count)) {
-            return;
+        int rc = run_rust_incremental_extract_dispatch(ctx, changed_files, ci, rust_use_parallel,
+                                                       worker_count);
+        if (rc == 0) {
+            return 0;
         }
+        if (rc != CBM_NOT_FOUND) {
+            return rc;
+        }
+#if defined(CBM_USE_RUST_PIPELINE_PLAN_ONLY)
+        cbm_log_error("rust_plan.err", "phase", "incremental_extract_resolve", "path",
+                      "rust_plan_only");
+        return CBM_NOT_FOUND;
+#else
         cbm_log_warn("rust_plan.fallback", "phase", "incremental_extract_resolve", "reason",
                      "typed_v2_unavailable", "path", "c_heuristic");
+#endif
     } else {
+#if defined(CBM_USE_RUST_PIPELINE_PLAN_ONLY)
+        cbm_log_error("rust_plan.err", "phase", "incremental_extract_resolve", "path",
+                      "rust_plan_only");
+        return CBM_NOT_FOUND;
+#else
         cbm_log_warn("rust_plan.fallback", "phase", "incremental_extract_resolve", "reason",
                      "choice_unavailable", "path", "c_heuristic");
+#endif
     }
 #endif
     run_c_incremental_extract_resolve(ctx, changed_files, ci, c_use_parallel, worker_count);
+    return 0;
 }
 
+#if !defined(CBM_USE_RUST_PIPELINE_PLAN_ONLY)
 /* Run post-extraction passes (tests, decorator tags, configlink). */
 static void run_postpasses(cbm_pipeline_ctx_t *ctx, cbm_file_info_t *changed_files, int ci,
                            const char *project) {
@@ -850,6 +873,7 @@ static void run_postpasses(cbm_pipeline_ctx_t *ctx, cbm_file_info_t *changed_fil
                      itoa_buf((int)elapsed_ms(t)));
     }
 }
+#endif
 
 static void run_incremental_edge_relink(cbm_gbuf_t *gbuf, cbm_edge_capture_t *edge_cap) {
     struct timespec t;
@@ -924,7 +948,7 @@ static int incr_replace_db_with_temp(const char *tmp_path, const char *db_path) 
 #endif
 }
 
-#ifdef CBM_USE_RUST_PIPELINE_PLAN
+#if defined(CBM_USE_RUST_PIPELINE_PLAN) || defined(CBM_USE_RUST_PIPELINE_PLAN_ONLY)
 typedef void (*incr_post_pass_fn)(incr_post_dispatch_t *);
 
 typedef struct {
@@ -1084,7 +1108,7 @@ static void run_incremental_tail_fixed(incr_post_dispatch_t *dispatch) {
     run_incremental_tail_step(CBM_RS_INCR_POST_ARTIFACT_EXPORT, dispatch);
 }
 
-#ifdef CBM_USE_RUST_PIPELINE_PLAN
+#if defined(CBM_USE_RUST_PIPELINE_PLAN) || defined(CBM_USE_RUST_PIPELINE_PLAN_ONLY)
 static const incr_post_pass_def_t incr_post_passes[] = {
     {incr_post_k8s, "k8s", CBM_RS_INCR_POST_K8S, CBM_RS_PLAN_POLICY_IGNORE_ERR, false},
     {incr_post_tests, "incr_tests", CBM_RS_INCR_POST_TESTS, CBM_RS_PLAN_POLICY_IGNORE_ERR, false},
@@ -1357,7 +1381,7 @@ int cbm_pipeline_run_incremental(cbm_pipeline_t *p, const char *db_path, cbm_fil
         }
     }
 
-    run_extract_resolve(&ctx, changed_files, ci);
+    (void)run_extract_resolve(&ctx, changed_files, ci);
     incr_post_dispatch_t tail_dispatch = {
         .ctx = &ctx,
         .changed_files = changed_files,
@@ -1375,14 +1399,20 @@ int cbm_pipeline_run_incremental(cbm_pipeline_t *p, const char *db_path, cbm_fil
         .status = 0,
     };
     bool tail_done = false;
-#ifdef CBM_USE_RUST_PIPELINE_PLAN
+#if defined(CBM_USE_RUST_PIPELINE_PLAN) || defined(CBM_USE_RUST_PIPELINE_PLAN_ONLY)
     if (run_rust_incremental_postpasses(&ctx, &tail_dispatch)) {
         tail_done = true;
     } else {
+#if defined(CBM_USE_RUST_PIPELINE_PLAN_ONLY)
+        cbm_log_error("rust_plan.err", "phase", "incremental_post", "path", "rust_plan_only");
+        tail_dispatch.status = CBM_NOT_FOUND;
+        tail_done = true;
+#else
         cbm_log_warn("rust_plan.fallback", "phase", "incremental_post", "reason",
                      "typed_steps_unavailable", "path", "c_postpasses");
         cbm_pipeline_pass_k8s(&ctx, changed_files, ci);
         run_postpasses(&ctx, changed_files, ci, project);
+#endif
     }
 #else
     cbm_pipeline_pass_k8s(&ctx, changed_files, ci);

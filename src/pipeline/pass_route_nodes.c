@@ -30,6 +30,11 @@ enum {
 
 #define SLEN(s) (sizeof(s) - 1)
 #include "pipeline/pipeline_internal.h"
+#include "pipeline/json_prop.h"
+#include "pipeline/route_node_classifiers.h"
+#include "pipeline/sveltekit_file_kind.h"
+#include "pipeline/sveltekit_server_method.h"
+#include "pipeline/url_path.h"
 #include <stdint.h>
 #include "graph_buffer/graph_buffer.h"
 #include "foundation/log.h"
@@ -39,10 +44,16 @@ enum {
 
 bool cbm_service_pattern_is_http_route_literal(const char *literal, const char *callee_name);
 
+#if defined(CBM_USE_RUST_PIPELINE_ROUTE_CANON) || defined(CBM_USE_RUST_PIPELINE_ROUTE_CANON_ONLY)
+extern size_t cbm_rs_pipeline_route_canon_path_v1(char *buf, size_t bufsize, const char *input);
+#endif
+
 /* True for characters that may appear in a ":name" route parameter. */
+#if !defined(CBM_USE_RUST_PIPELINE_ROUTE_CANON_ONLY)
 static inline bool is_route_ident_char(char c) {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
 }
+#endif
 
 /* Canonicalize route-path parameter placeholders to a single "{}" token so that
  * client call sites and server handlers rendezvous on the same Route QN
@@ -66,6 +77,16 @@ const char *cbm_route_canon_path(const char *in, char *out, size_t out_sz) {
         // cppcheck-suppress uninitvar
         return out;
     }
+#if defined(CBM_USE_RUST_PIPELINE_ROUTE_CANON) || defined(CBM_USE_RUST_PIPELINE_ROUTE_CANON_ONLY)
+    size_t rust_len = cbm_rs_pipeline_route_canon_path_v1(out, out_sz, in);
+    if (rust_len != SIZE_MAX) {
+        return out;
+    }
+#endif
+#if defined(CBM_USE_RUST_PIPELINE_ROUTE_CANON_ONLY)
+    return out;
+#endif
+#if !defined(CBM_USE_RUST_PIPELINE_ROUTE_CANON_ONLY)
     if (in == NULL) {
         out[0] = '\0';
         return out;
@@ -126,6 +147,7 @@ const char *cbm_route_canon_path(const char *in, char *out, size_t out_sz) {
     }
     out[oi] = '\0';
     return out;
+#endif
 }
 
 /* Extract a JSON string value by key from properties.
@@ -224,36 +246,10 @@ static void route_edge_visitor(const cbm_gbuf_edge_t *edge, void *userdata) {
      * the Route via: caller → HTTP_CALLS(url_path="/api/x") + Route("/api/x"). */
 }
 
-/* Extract URL path from full URL: "https://host/path/" → "/path/" */
-static const char *url_path(const char *url) {
-    if (!url) {
-        return NULL;
-    }
-    const char *scheme_end = strstr(url, "://");
-    if (!scheme_end) {
-        return url; /* Already a path */
-    }
-    const char *path = strchr(scheme_end + RN_SCHEME_SKIP, '/');
-    return path ? path : "/";
-}
-
 /* Check if a trailing dash-segment is a hash/project-number (strippable).
  * Returns true if the segment is short alphanumeric but not a meaningful word. */
 static bool is_hash_segment(const char *seg, size_t slen) {
-    if (slen > RN_MAX_SCHEME || slen == 0) {
-        return false;
-    }
-    int has_letter = 0;
-    for (size_t si = 0; si < slen; si++) {
-        if (!((seg[si] >= '0' && seg[si] <= '9') || (seg[si] >= 'a' && seg[si] <= 'z'))) {
-            return false;
-        }
-        if (seg[si] >= 'a' && seg[si] <= 'z') {
-            has_letter = SKIP_ONE;
-        }
-    }
-    /* Don't strip meaningful words (>=3 chars with letters like "api", "endpoint") */
-    return !(has_letter && slen >= RN_MIN_SCHEME);
+    return cbm_pipeline_is_hash_segment((const unsigned char *)seg, slen) != 0;
 }
 
 /* Strip up to 2 trailing hash/project-number segments from a Cloud Run hostname. */
@@ -306,19 +302,7 @@ static const char *extract_service_name(const char *url, char *buf, int bufsz) {
 /* Phase 2: Match infra Route URLs to handler Route nodes by URL path + service name. */
 /* Check if a Route QN indicates an infra/async/broker Route (not a handler). */
 static bool is_broker_route(const char *qn) {
-    static const char *const prefixes[] = {
-        "__route__infra__", "__route__pubsub__",          "__route__cloud_tasks__",
-        "__route__async__", "__route__cloud_scheduler__", "__route__kafka__",
-        "__route__sqs__"};
-    if (!qn) {
-        return false;
-    }
-    for (int i = 0; i < (int)(sizeof(prefixes) / sizeof(prefixes[0])); i++) {
-        if (strstr(qn, prefixes[i]) == qn) {
-            return true;
-        }
-    }
-    return false;
+    return cbm_pipeline_is_broker_route(qn) != 0;
 }
 
 /* Try to match a single infra Route to a handler Route and create HANDLES bridge.
@@ -387,7 +371,7 @@ static void match_infra_routes(cbm_gbuf_t *gb) {
             continue;
         }
 
-        const char *infra_path = url_path(infra->name);
+        const char *infra_path = cbm_pipeline_url_path(infra->name);
         char svc_buf[CBM_SZ_128];
         const char *svc_name = extract_service_name(infra->name, svc_buf, sizeof(svc_buf));
         if (!infra_path || !svc_name) {
@@ -408,29 +392,7 @@ static void match_infra_routes(cbm_gbuf_t *gb) {
  * During incremental indexing, only changed files get Route nodes from extraction.
  * This pass scans ALL Function/Method nodes and creates missing Route+HANDLES. */
 /* Extract a JSON string property value into buf. Returns true if found. */
-static bool extract_json_prop(const char *json, const char *key, char *buf, int bufsz) {
-    if (!json) {
-        return false;
-    }
-    char pattern[CBM_SZ_64];
-    snprintf(pattern, sizeof(pattern), "\"%s\":\"", key);
-    const char *p = strstr(json, pattern);
-    if (!p) {
-        return false;
-    }
-    p += strlen(pattern);
-    const char *end = strchr(p, '"');
-    if (!end || end <= p) {
-        return false;
-    }
-    int len = (int)(end - p);
-    if (len >= bufsz) {
-        return false;
-    }
-    memcpy(buf, p, (size_t)len);
-    buf[len] = '\0';
-    return true;
-}
+/* JSON property extract — 公開 bridge 見 pipeline/json_prop.h */
 
 /* Process a single Function/Method node: create Route+HANDLES if it has route_path.
  * Returns 1 if a new HANDLES edge was created, 0 otherwise. */
@@ -440,7 +402,7 @@ static int ensure_one_decorator_route(cbm_gbuf_t *gb, const cbm_gbuf_node_t *fun
     }
 
     char path[CBM_SZ_256];
-    if (!extract_json_prop(func->properties_json, "route_path", path, sizeof(path))) {
+    if (!cbm_pipeline_extract_json_prop(func->properties_json, "route_path", path, sizeof(path))) {
         return 0;
     }
     if (path[0] != '/') {
@@ -448,7 +410,7 @@ static int ensure_one_decorator_route(cbm_gbuf_t *gb, const cbm_gbuf_node_t *fun
     }
 
     char method[CBM_SZ_16] = "ANY";
-    extract_json_prop(func->properties_json, "route_method", method, sizeof(method));
+    cbm_pipeline_extract_json_prop(func->properties_json, "route_method", method, sizeof(method));
 
     char route_qn[CBM_ROUTE_QN_SIZE];
     char cpath[CBM_SZ_256];
@@ -940,33 +902,6 @@ enum {
     SKR_NAME_BUF = 64,
 };
 
-/* Detect the SvelteKit kind of a file path. Returns 1 for +server,
- * 2 for +page.server, 3 for +layout.server; 0 if not a SvelteKit
- * server-side route file. */
-static int sveltekit_file_kind(const char *file_path) {
-    if (!file_path) {
-        return 0;
-    }
-    /* The basename must match one of the three patterns. We also require
-     * a "/routes/" segment somewhere in the path so we don't snag files
-     * in unrelated directories that happen to be named "+server.ts". */
-    if (!strstr(file_path, "/routes/")) {
-        return 0;
-    }
-    const char *slash = strrchr(file_path, '/');
-    const char *base = slash ? slash + 1 : file_path;
-    if (strcmp(base, "+server.ts") == 0 || strcmp(base, "+server.js") == 0) {
-        return 1;
-    }
-    if (strcmp(base, "+page.server.ts") == 0 || strcmp(base, "+page.server.js") == 0) {
-        return 2;
-    }
-    if (strcmp(base, "+layout.server.ts") == 0 || strcmp(base, "+layout.server.js") == 0) {
-        return 3;
-    }
-    return 0;
-}
-
 /* Compute the URL route path for a SvelteKit file path. Writes into
  * `out` (caller-provided buffer) and returns the buffer or NULL on
  * error. The leading "/" is always present; "/" is used for the root
@@ -1057,28 +992,6 @@ static const char *sveltekit_route_path(const char *file_path, char *out, int ou
     return out;
 }
 
-/* Returns the HTTP method string a function name maps to for a +server
- * file, or NULL if the function isn't a SvelteKit REST handler. The set
- * mirrors SvelteKit's documented HTTP verb exports. */
-static const char *sveltekit_server_method(const char *name) {
-    if (!name) {
-        return NULL;
-    }
-    static const char *const verbs[] = {
-        "GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD",
-    };
-    for (size_t i = 0; i < sizeof(verbs) / sizeof(verbs[0]); i++) {
-        if (strcmp(name, verbs[i]) == 0) {
-            return verbs[i];
-        }
-    }
-    /* `fallback` catches any verb not explicitly exported. */
-    if (strcmp(name, "fallback") == 0) {
-        return "ANY";
-    }
-    return NULL;
-}
-
 typedef struct {
     cbm_gbuf_t *gb;
     int routes_created;
@@ -1094,7 +1007,7 @@ static void sveltekit_file_visitor(const cbm_gbuf_node_t *node, void *userdata) 
     if (!node || !node->label || strcmp(node->label, "File") != 0) {
         return;
     }
-    int kind = sveltekit_file_kind(node->file_path);
+    int kind = cbm_pipeline_sveltekit_file_kind(node->file_path);
     if (kind == 0) {
         return;
     }
@@ -1128,7 +1041,7 @@ static void sveltekit_file_visitor(const cbm_gbuf_node_t *node, void *userdata) 
         const char *method = NULL;
         bool is_actions = false;
         if (kind == 1) {
-            method = sveltekit_server_method(child->name);
+            method = cbm_pipeline_sveltekit_server_method(child->name);
         } else if (kind == 2) {
             if (is_fn && strcmp(child->name, "load") == 0) {
                 method = "LOAD";

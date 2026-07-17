@@ -1,5 +1,10 @@
 # Rust 重構 Golden Fixtures
 
+> **Fixture 說明，不是目前交接或完整測試證據（2026-07-16）**：目前重構狀態請讀
+> [../../../docs/rust-refactor-current-handoff.md](../../../docs/rust-refactor-current-handoff.md)。
+> fixture 成功只代表該 fixture 的公開行為比對成功，不能取代單一 opt-in、direct source
+> exclusion、完整 CI 或 release gate。
+
 本目錄保存 Rust 重構期間用來比對公開行為的第一批 golden fixtures。
 
 使用方式：

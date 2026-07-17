@@ -90,6 +90,15 @@ static char *ha_read_stdin(void) {
  * to embed in a regex (name_pattern) with no escaping. Returns false when
  * the pattern has no usable token (path globs, short/regex-only patterns) —
  * the caller then no-ops, which keeps the common cheap case cheap. */
+#if defined(CBM_USE_RUST_CLI_HOOK_TOKEN_ONLY)
+extern bool cbm_cli_hook_extract_token(const char *pattern, char *out, size_t out_sz);
+#define ha_extract_token cbm_cli_hook_extract_token
+#elif defined(CBM_USE_RUST_CLI_HOOK_TOKEN)
+extern int cbm_rs_cli_hook_extract_token_v1(const char *pattern, char *out, size_t out_sz);
+static bool ha_extract_token(const char *pattern, char *out, size_t out_sz) {
+    return cbm_rs_cli_hook_extract_token_v1(pattern, out, out_sz) != 0;
+}
+#else
 static bool ha_extract_token(const char *pattern, char *out, size_t out_sz) {
     if (!pattern) {
         return false;
@@ -125,6 +134,7 @@ static bool ha_extract_token(const char *pattern, char *out, size_t out_sz) {
     out[best_len] = '\0';
     return true;
 }
+#endif
 
 /* ── JSON helpers ─────────────────────────────────────────────────── */
 

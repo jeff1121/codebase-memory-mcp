@@ -22,6 +22,8 @@
 #include <stdio.h>
 #include <ctype.h>
 
+/* jaccard / hex：見 minhash_jaccard.c（true-source selectable CU） */
+
 /* ── AST node type normalisation ─────────────────────────────────── */
 
 /* Maximum trigram string length: 3 node types × max 40 chars each + separators */
@@ -29,9 +31,6 @@ enum { TRIGRAM_BUF_LEN = 160 };
 
 /* Maximum AST body nodes to walk (stack depth). */
 enum { AST_WALK_CAP = 2048 };
-
-/* Hex encoding constants */
-enum { HEX_CHARS_PER_U32 = 8, HEX_BASE = 16 };
 
 /* Trigram constants */
 enum { TRIGRAM_WINDOW = 2 };
@@ -262,55 +261,6 @@ bool cbm_minhash_compute(TSNode func_body, const char *source, int language, cbm
 
     int unique_structural = hash_trigrams(tokens, token_count, out);
     return unique_structural >= MIN_UNIQUE_TRIGRAMS;
-}
-
-/* ── Jaccard similarity ──────────────────────────────────────────── */
-
-double cbm_minhash_jaccard(const cbm_minhash_t *a, const cbm_minhash_t *b) {
-    if (!a || !b) {
-        return 0.0;
-    }
-    int matching = 0;
-    for (int i = 0; i < CBM_MINHASH_K; i++) {
-        if (a->values[i] == b->values[i]) {
-            matching++;
-        }
-    }
-    return (double)matching / (double)CBM_MINHASH_K;
-}
-
-/* ── Hex encoding/decoding ───────────────────────────────────────── */
-
-void cbm_minhash_to_hex(const cbm_minhash_t *fp, char *buf, int bufsize) {
-    if (!fp || !buf || bufsize < CBM_MINHASH_HEX_BUF) {
-        if (buf && bufsize > 0) {
-            buf[0] = '\0';
-        }
-        return;
-    }
-    int pos = 0;
-    for (int i = 0; i < CBM_MINHASH_K; i++) {
-        pos += snprintf(buf + pos, (size_t)(bufsize - pos), "%08x", fp->values[i]);
-    }
-}
-
-bool cbm_minhash_from_hex(const char *hex, cbm_minhash_t *out) {
-    if (!hex || !out) {
-        return false;
-    }
-    size_t len = strlen(hex);
-    if ((int)len != CBM_MINHASH_HEX_LEN) {
-        return false;
-    }
-    for (int i = 0; i < CBM_MINHASH_K; i++) {
-        char chunk[HEX_CHARS_PER_U32 + SKIP_ONE];
-        ptrdiff_t offset = (ptrdiff_t)i * HEX_CHARS_PER_U32;
-        memcpy(chunk, hex + offset, HEX_CHARS_PER_U32);
-        chunk[HEX_CHARS_PER_U32] = '\0';
-        unsigned long val = strtoul(chunk, NULL, HEX_BASE);
-        out->values[i] = (uint32_t)val;
-    }
-    return true;
 }
 
 /* ── LSH index ───────────────────────────────────────────────────── */

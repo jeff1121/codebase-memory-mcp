@@ -9,10 +9,18 @@
 #include "test_framework.h"
 #include "test_helpers.h"
 #include "pipeline/artifact.h"
+#include "pipeline/json_prop.h"
+#include "pipeline/lsp_cross_classifiers.h"
 #include "pipeline/pipeline.h"
 #include "pipeline/pipeline_internal.h"
+#include "pipeline/sveltekit_file_kind.h"
+#include "pipeline/sveltekit_server_method.h"
+#include "pipeline/url_path.h"
 #include "store/store.h"
 #include "git/git_context.h"
+#include "git/json_escaped_len.h"
+#include "git/path_absolute.h"
+#include "git/trim_newlines.h"
 #include "foundation/dump_verify.h"
 #include "foundation/log.h"
 
@@ -142,6 +150,220 @@ TEST(pipeline_cancel_null) {
 TEST(pipeline_run_null) {
     int rc = cbm_pipeline_run(NULL);
     ASSERT_EQ(rc, -1);
+    PASS();
+}
+
+TEST(pipeline_sveltekit_server_method_contract) {
+    const char *const verbs[] = {"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"};
+
+    for (size_t i = 0; i < sizeof(verbs) / sizeof(verbs[0]); i++) {
+        ASSERT_STR_EQ(cbm_pipeline_sveltekit_server_method(verbs[i]), verbs[i]);
+    }
+    ASSERT_STR_EQ(cbm_pipeline_sveltekit_server_method("fallback"), "ANY");
+    ASSERT_NULL(cbm_pipeline_sveltekit_server_method("CONNECT"));
+    ASSERT_NULL(cbm_pipeline_sveltekit_server_method(NULL));
+    PASS();
+}
+
+TEST(pipeline_sveltekit_file_kind_contract) {
+    ASSERT_EQ(cbm_pipeline_sveltekit_file_kind("apps/x/src/routes/+server.ts"), 1);
+    ASSERT_EQ(cbm_pipeline_sveltekit_file_kind("apps/x/src/routes/foo/+server.js"), 1);
+    ASSERT_EQ(cbm_pipeline_sveltekit_file_kind("apps/x/src/routes/foo/+page.server.ts"), 2);
+    ASSERT_EQ(cbm_pipeline_sveltekit_file_kind("apps/x/src/routes/foo/+page.server.js"), 2);
+    ASSERT_EQ(cbm_pipeline_sveltekit_file_kind("apps/x/src/routes/foo/+layout.server.ts"), 3);
+    ASSERT_EQ(cbm_pipeline_sveltekit_file_kind("apps/x/src/routes/foo/+layout.server.js"), 3);
+    ASSERT_EQ(cbm_pipeline_sveltekit_file_kind("apps/x/src/+server.ts"), 0);
+    ASSERT_EQ(cbm_pipeline_sveltekit_file_kind("apps/x/src/routes/+server.jsx"), 0);
+    ASSERT_EQ(cbm_pipeline_sveltekit_file_kind(NULL), 0);
+    PASS();
+}
+
+TEST(pipeline_url_path_contract) {
+    char plain[] = "/api/items";
+    ASSERT_STR_EQ(cbm_pipeline_url_path(plain), "/api/items");
+    ASSERT(cbm_pipeline_url_path(plain) == plain);
+
+    char root_path[] = "https://host/";
+    ASSERT_STR_EQ(cbm_pipeline_url_path(root_path), "/");
+    ASSERT(cbm_pipeline_url_path(root_path) == strrchr(root_path, '/'));
+
+    ASSERT_STR_EQ(cbm_pipeline_url_path("https://host/api?x=1"), "/api?x=1");
+    ASSERT_STR_EQ(cbm_pipeline_url_path("https://host"), "/");
+    ASSERT_STR_EQ(cbm_pipeline_url_path("://host/path"), "/path");
+    ASSERT_STR_EQ(cbm_pipeline_url_path("https:/host/path"), "https:/host/path");
+    ASSERT_STR_EQ(cbm_pipeline_url_path("http:///path"), "/path");
+    ASSERT_STR_EQ(cbm_pipeline_url_path("https://host?next=/query"), "/query");
+    ASSERT_NULL(cbm_pipeline_url_path(NULL));
+    PASS();
+}
+
+TEST(pipeline_lsp_cross_classifiers_contract) {
+    bool js = true;
+    bool jsx = true;
+    bool dts = true;
+
+    cbm_pxc_ts_modes(CBM_LANG_JAVASCRIPT, "src/app.js", &js, &jsx, &dts);
+    ASSERT_TRUE(js);
+    ASSERT_FALSE(jsx);
+    ASSERT_FALSE(dts);
+
+    cbm_pxc_ts_modes(CBM_LANG_JAVASCRIPT, "src/app.jsx", &js, &jsx, &dts);
+    ASSERT_TRUE(js);
+    ASSERT_TRUE(jsx);
+    ASSERT_FALSE(dts);
+
+    cbm_pxc_ts_modes(CBM_LANG_TYPESCRIPT, "src/app.ts", &js, &jsx, &dts);
+    ASSERT_FALSE(js);
+    ASSERT_FALSE(jsx);
+    ASSERT_FALSE(dts);
+
+    cbm_pxc_ts_modes(CBM_LANG_TYPESCRIPT, "src/types.d.ts", &js, &jsx, &dts);
+    ASSERT_FALSE(js);
+    ASSERT_FALSE(jsx);
+    ASSERT_TRUE(dts);
+
+    cbm_pxc_ts_modes(CBM_LANG_TSX, "src/component.tsx", &js, &jsx, &dts);
+    ASSERT_FALSE(js);
+    ASSERT_TRUE(jsx);
+    ASSERT_FALSE(dts);
+
+    cbm_pxc_ts_modes(CBM_LANG_JAVASCRIPT, NULL, &js, &jsx, &dts);
+    ASSERT_TRUE(js);
+    ASSERT_FALSE(jsx);
+    ASSERT_FALSE(dts);
+
+    cbm_pxc_ts_modes((CBMLanguage)-1, "src/app.jsx", &js, &jsx, &dts);
+    ASSERT_FALSE(js);
+    ASSERT_FALSE(jsx);
+    ASSERT_FALSE(dts);
+
+    static const CBMLanguage cross_lsp_languages[] = {
+        CBM_LANG_GO,     CBM_LANG_C,          CBM_LANG_CPP,   CBM_LANG_CUDA,
+        CBM_LANG_PYTHON, CBM_LANG_JAVASCRIPT, CBM_LANG_TYPESCRIPT,
+        CBM_LANG_TSX,    CBM_LANG_PHP,        CBM_LANG_CSHARP,
+        CBM_LANG_JAVA,   CBM_LANG_KOTLIN,     CBM_LANG_RUST,
+    };
+    for (size_t i = 0; i < sizeof(cross_lsp_languages) / sizeof(cross_lsp_languages[0]); i++) {
+        ASSERT_TRUE(cbm_pxc_has_cross_lsp(cross_lsp_languages[i]));
+    }
+    ASSERT_FALSE(cbm_pxc_has_cross_lsp(CBM_LANG_BASH));
+    ASSERT_FALSE(cbm_pxc_has_cross_lsp((CBMLanguage)-1));
+
+    static const char *const allowed_labels[] = {
+        "Class", "Struct", "Interface", "Enum", "Type", "Trait", "Protocol", "Function",
+        "Method",
+    };
+    for (size_t i = 0; i < sizeof(allowed_labels) / sizeof(allowed_labels[0]); i++) {
+        ASSERT(cbm_pxc_map_label(allowed_labels[i]) == allowed_labels[i]);
+    }
+    ASSERT_NULL(cbm_pxc_map_label(NULL));
+    ASSERT_NULL(cbm_pxc_map_label("class"));
+    const char high_byte_label[] = {'C', 'l', 'a', 's', 's', (char)0xe9, '\0'};
+    ASSERT_NULL(cbm_pxc_map_label(high_byte_label));
+    const char embedded_nul_label[] = {'S', 't', 'r', 'u', 'c', 't', '\0', 'x', '\0'};
+    ASSERT(cbm_pxc_map_label(embedded_nul_label) == embedded_nul_label);
+    PASS();
+}
+
+TEST(pipeline_json_prop_contract) {
+    char sentinel[8] = "keep";
+    ASSERT_FALSE(cbm_pipeline_extract_json_prop(NULL, "key", sentinel, (int)sizeof(sentinel)));
+    ASSERT_STR_EQ(sentinel, "keep");
+    ASSERT_FALSE(cbm_pipeline_extract_json_prop("{\"key\":\"value\"}", NULL, sentinel,
+                                                (int)sizeof(sentinel)));
+    ASSERT_STR_EQ(sentinel, "keep");
+    ASSERT_FALSE(cbm_pipeline_extract_json_prop("{\"key\":\"value\"}", "key", NULL, 8));
+    ASSERT_FALSE(cbm_pipeline_extract_json_prop("{\"key\":\"value\"}", "key", sentinel, 0));
+    ASSERT_STR_EQ(sentinel, "keep");
+    ASSERT_FALSE(cbm_pipeline_extract_json_prop("{\"key\":\"value\"}", "key", sentinel, -1));
+    ASSERT_STR_EQ(sentinel, "keep");
+
+    char empty_key[2];
+    ASSERT_TRUE(cbm_pipeline_extract_json_prop("{\"\":\"v\"}", "", empty_key,
+                                               (int)sizeof(empty_key)));
+    ASSERT_STR_EQ(empty_key, "v");
+
+    ASSERT_FALSE(cbm_pipeline_extract_json_prop("{\"empty\":\"\"}", "empty", sentinel,
+                                                (int)sizeof(sentinel)));
+    ASSERT_STR_EQ(sentinel, "keep");
+
+    char exact[6];
+    ASSERT_TRUE(cbm_pipeline_extract_json_prop("{\"key\":\"value\"}", "key", exact,
+                                               (int)sizeof(exact)));
+    ASSERT_STR_EQ(exact, "value");
+    char short_buf[5] = "keep";
+    ASSERT_FALSE(cbm_pipeline_extract_json_prop("{\"key\":\"value\"}", "key", short_buf,
+                                                (int)sizeof(short_buf)));
+    ASSERT_STR_EQ(short_buf, "keep");
+
+    char key59[60];
+    memset(key59, 'k', sizeof(key59) - 1);
+    key59[sizeof(key59) - 1] = '\0';
+    char json59[128];
+    snprintf(json59, sizeof(json59), "{\"%s\":\"ok\"}", key59);
+    char value59[3];
+    ASSERT_TRUE(cbm_pipeline_extract_json_prop(json59, key59, value59, (int)sizeof(value59)));
+    ASSERT_STR_EQ(value59, "ok");
+
+    char key60[61];
+    memset(key60, 'k', sizeof(key60) - 1);
+    key60[sizeof(key60) - 1] = '\0';
+    char json60[128];
+    snprintf(json60, sizeof(json60), "{\"%s\":\"ok\"}", key60);
+    char long_key_sentinel[8] = "keep";
+    ASSERT_FALSE(cbm_pipeline_extract_json_prop(json60, key60, long_key_sentinel,
+                                                (int)sizeof(long_key_sentinel)));
+    ASSERT_STR_EQ(long_key_sentinel, "keep");
+
+    ASSERT_FALSE(cbm_pipeline_extract_json_prop("{\"key\": \"value\"}", "key", sentinel,
+                                                (int)sizeof(sentinel)));
+    ASSERT_STR_EQ(sentinel, "keep");
+    PASS();
+}
+
+TEST(git_trim_newlines_contract) {
+    char crlf[] = "output\r\n";
+    cbm_git_trim_newlines(crlf);
+    ASSERT_STR_EQ(crlf, "output");
+
+    char cr[] = "value\r";
+    cbm_git_trim_newlines(cr);
+    ASSERT_STR_EQ(cr, "value");
+
+    char only_newlines[] = "\r\n";
+    cbm_git_trim_newlines(only_newlines);
+    ASSERT_STR_EQ(only_newlines, "");
+
+    char empty[] = "";
+    cbm_git_trim_newlines(empty);
+    ASSERT_STR_EQ(empty, "");
+    cbm_git_trim_newlines(NULL);
+    PASS();
+}
+
+TEST(git_path_absolute_contract) {
+    ASSERT_FALSE(cbm_git_path_is_absolute(NULL));
+    ASSERT_FALSE(cbm_git_path_is_absolute(""));
+    ASSERT_TRUE(cbm_git_path_is_absolute("/"));
+    ASSERT_TRUE(cbm_git_path_is_absolute("/tmp/project"));
+    ASSERT_TRUE(cbm_git_path_is_absolute("//server"));
+    ASSERT_FALSE(cbm_git_path_is_absolute("relative/project"));
+    ASSERT_FALSE(cbm_git_path_is_absolute("\\root"));
+
+#ifdef _WIN32
+    ASSERT_TRUE(cbm_git_path_is_absolute("C:"));
+    ASSERT_TRUE(cbm_git_path_is_absolute("C:project"));
+    ASSERT_TRUE(cbm_git_path_is_absolute("z:/project"));
+    ASSERT_TRUE(cbm_git_path_is_absolute("z:\\project"));
+    ASSERT_FALSE(cbm_git_path_is_absolute("1:/project"));
+    ASSERT_FALSE(cbm_git_path_is_absolute("\xC4:project"));
+    ASSERT_FALSE(cbm_git_path_is_absolute("\\\\server\\share"));
+#else
+    ASSERT_FALSE(cbm_git_path_is_absolute("C:"));
+    ASSERT_FALSE(cbm_git_path_is_absolute("C:project"));
+    ASSERT_FALSE(cbm_git_path_is_absolute("z:/project"));
+    ASSERT_FALSE(cbm_git_path_is_absolute("z:\\project"));
+#endif
     PASS();
 }
 
@@ -1118,7 +1340,12 @@ TEST(testdetect_is_test_file) {
 
 TEST(testdetect_is_test_function) {
     /* Test function patterns */
+    ASSERT_TRUE(cbm_is_test_func_name("Test"));        /* Go */
     ASSERT_TRUE(cbm_is_test_func_name("TestCreate"));  /* Go */
+    ASSERT_TRUE(cbm_is_test_func_name("Benchmark"));   /* Go */
+    ASSERT_TRUE(cbm_is_test_func_name("BenchmarkParse"));
+    ASSERT_TRUE(cbm_is_test_func_name("Example"));     /* Go */
+    ASSERT_TRUE(cbm_is_test_func_name("ExampleReader"));
     ASSERT_TRUE(cbm_is_test_func_name("test_create")); /* Python/Rust/Lua */
     ASSERT_TRUE(cbm_is_test_func_name("test"));        /* JS/TS */
     ASSERT_TRUE(cbm_is_test_func_name("describe"));    /* JS/TS */
@@ -1130,7 +1357,22 @@ TEST(testdetect_is_test_function) {
     ASSERT_FALSE(cbm_is_test_func_name("create"));
     ASSERT_FALSE(cbm_is_test_func_name("handleRequest"));
     ASSERT_FALSE(cbm_is_test_func_name("process"));
+    ASSERT_FALSE(cbm_is_test_func_name("Testable"));
+    ASSERT_FALSE(cbm_is_test_func_name("Benchmarkable"));
+    ASSERT_FALSE(cbm_is_test_func_name("Examplefoo"));
 
+    PASS();
+}
+
+TEST(testdetect_node_is_test_property) {
+    ASSERT_TRUE(cbm_pipeline_test_node_is_test("{\"is_test\":true}"));
+    ASSERT_TRUE(
+        cbm_pipeline_test_node_is_test("{\"name\":\"case\",\"is_test\":true,\"other\":false}"));
+    ASSERT_FALSE(cbm_pipeline_test_node_is_test("{\"is_test\":false}"));
+    ASSERT_FALSE(cbm_pipeline_test_node_is_test("{\"is_test\": true}"));
+    ASSERT_FALSE(cbm_pipeline_test_node_is_test("{\"is_test\":TRUE}"));
+    ASSERT_FALSE(cbm_pipeline_test_node_is_test("{}"));
+    ASSERT_FALSE(cbm_pipeline_test_node_is_test(NULL));
     PASS();
 }
 
@@ -2514,6 +2756,19 @@ TEST(git_context_non_git_path) {
     PASS();
 }
 
+TEST(git_context_props_json_escapes_control_chars) {
+    char value[] = "root\"\\\n\r\t\x01";
+    cbm_git_context_t ctx = {
+        .root_exists = true,
+        .canonical_root = value,
+    };
+    char json[512];
+    ASSERT_EQ(cbm_git_json_escaped_len(value), 20);
+    ASSERT_GT(cbm_git_context_props_json(&ctx, json, sizeof(json)), 0);
+    ASSERT_NOT_NULL(strstr(json, "\"canonical_root\":\"root\\\"\\\\\\n\\r\\t\\u0001\""));
+    PASS();
+}
+
 TEST(git_context_linked_worktree) {
     if (!git_available()) {
         FAIL("git unavailable");
@@ -2606,6 +2861,12 @@ TEST(gitdiff_parse_range_with_count) {
     cbm_parse_range("10,5", &start, &count);
     ASSERT_EQ(start, 10);
     ASSERT_EQ(count, 5);
+    cbm_parse_range("1, 1", &start, &count);
+    ASSERT_EQ(start, 1);
+    ASSERT_EQ(count, 1);
+    cbm_parse_range("x,5", &start, &count);
+    ASSERT_EQ(start, 0);
+    ASSERT_EQ(count, 5);
     PASS();
 }
 
@@ -2665,6 +2926,22 @@ TEST(gitdiff_parse_name_status_filters_untrackable) {
 
     ASSERT_EQ(n, 1);
     ASSERT_STR_EQ(files[0].path, "src/main.go");
+    PASS();
+}
+
+TEST(gitdiff_parse_name_status_filters_after_c_buffer_truncation) {
+    char input[528];
+    memset(input, 'a', sizeof(input));
+    input[0] = 'M';
+    input[1] = '\t';
+    memcpy(input + 510, ".png\n", 6);
+
+    cbm_changed_file_t files[1];
+    int n = cbm_parse_name_status(input, files, 1);
+
+    ASSERT_EQ(n, 1);
+    ASSERT_EQ((int)strlen(files[0].path), 511);
+    ASSERT_STR_EQ(files[0].path + 508, ".pn");
     PASS();
 }
 
@@ -3318,6 +3595,106 @@ TEST(compile_commands_split_command) {
     PASS();
 }
 
+TEST(compile_commands_split_command_contract) {
+    char sentinel0[] = "sentinel-0";
+    char sentinel1[] = "sentinel-1";
+    char sentinel2[] = "sentinel-2";
+    char sentinel3[] = "sentinel-3";
+    char *sentinels[4] = {sentinel0, sentinel1, sentinel2, sentinel3};
+
+    ASSERT_EQ(cbm_split_command(NULL, sentinels, 4), 0);
+    ASSERT(sentinels[0] == sentinel0 && sentinels[1] == sentinel1 &&
+           sentinels[2] == sentinel2 && sentinels[3] == sentinel3);
+    ASSERT_EQ(cbm_split_command("ignored", NULL, 4), 0);
+    ASSERT_EQ(cbm_split_command("ignored", sentinels, 0), 0);
+    ASSERT_EQ(cbm_split_command("ignored", sentinels, -1), 0);
+    ASSERT(sentinels[0] == sentinel0 && sentinels[1] == sentinel1 &&
+           sentinels[2] == sentinel2 && sentinels[3] == sentinel3);
+
+    char *empty[1] = {sentinel0};
+    ASSERT_EQ(cbm_split_command("", empty, 1), 0);
+    ASSERT(empty[0] == sentinel0);
+
+    char *basic[4] = {NULL};
+    int count = cbm_split_command(" gcc\t-c main.c ", basic, 4);
+    ASSERT_EQ(count, 3);
+    ASSERT_STR_EQ(basic[0], "gcc");
+    ASSERT_STR_EQ(basic[1], "-c");
+    ASSERT_STR_EQ(basic[2], "main.c");
+    for (int i = 0; i < count; i++)
+        free(basic[i]);
+
+    char *quoted[4] = {NULL};
+    count = cbm_split_command("cc -I\"include path\" '' \"file name.c\"", quoted, 4);
+    ASSERT_EQ(count, 3);
+    ASSERT_STR_EQ(quoted[0], "cc");
+    ASSERT_STR_EQ(quoted[1], "-Iinclude path");
+    ASSERT_STR_EQ(quoted[2], "file name.c");
+    for (int i = 0; i < count; i++)
+        free(quoted[i]);
+
+    char *unclosed[3] = {NULL};
+    count = cbm_split_command("cc 'file name.c", unclosed, 3);
+    ASSERT_EQ(count, 2);
+    ASSERT_STR_EQ(unclosed[0], "cc");
+    ASSERT_STR_EQ(unclosed[1], "file name.c");
+    for (int i = 0; i < count; i++)
+        free(unclosed[i]);
+
+    char *backslash[3] = {NULL};
+    count = cbm_split_command("cc a\\ b", backslash, 3);
+    ASSERT_EQ(count, 3);
+    ASSERT_STR_EQ(backslash[0], "cc");
+    ASSERT_STR_EQ(backslash[1], "a\\");
+    ASSERT_STR_EQ(backslash[2], "b");
+    for (int i = 0; i < count; i++)
+        free(backslash[i]);
+
+    char *newline[2] = {NULL};
+    count = cbm_split_command("cc a\nb", newline, 2);
+    ASSERT_EQ(count, 2);
+    ASSERT_STR_EQ(newline[0], "cc");
+    ASSERT_STR_EQ(newline[1], "a\nb");
+    for (int i = 0; i < count; i++)
+        free(newline[i]);
+
+    char untouched[] = "untouched";
+    char *limited[3] = {NULL, NULL, untouched};
+    count = cbm_split_command("a b c", limited, 2);
+    ASSERT_EQ(count, 2);
+    ASSERT_STR_EQ(limited[0], "a");
+    ASSERT_STR_EQ(limited[1], "b");
+    ASSERT(limited[2] == untouched);
+    free(limited[0]);
+    free(limited[1]);
+
+    const char nul_command[] = {'a', ' ', 'b', '\0', ' ', 'c', '\0'};
+    char *nul_out[3] = {NULL};
+    count = cbm_split_command(nul_command, nul_out, 3);
+    ASSERT_EQ(count, 2);
+    ASSERT_STR_EQ(nul_out[0], "a");
+    ASSERT_STR_EQ(nul_out[1], "b");
+    free(nul_out[0]);
+    free(nul_out[1]);
+
+    for (size_t input_len = 4094; input_len <= 4096; input_len++) {
+        char *long_command = malloc(input_len + 1);
+        ASSERT_NOT_NULL(long_command);
+        for (size_t i = 0; i < input_len; i++)
+            long_command[i] = 'x';
+        long_command[input_len] = '\0';
+
+        char *long_out[1] = {NULL};
+        count = cbm_split_command(long_command, long_out, 1);
+        ASSERT_EQ(count, 1);
+        size_t expected_len = input_len < 4095 ? input_len : 4095;
+        ASSERT(strlen(long_out[0]) == expected_len);
+        free(long_out[0]);
+        free(long_command);
+    }
+    PASS();
+}
+
 TEST(compile_commands_extract_flags) {
     const char *args[] = {"g++",          "-I",    "/abs/include", "-I/rel/include", "-isystem",
                           "/sys/include", "-DFOO", "-DBAR=42",     "-std=c++20",     "-O2",
@@ -3455,6 +3832,7 @@ TEST(infra_is_dockerfile) {
     ASSERT(cbm_is_dockerfile("dockerfile"));
     ASSERT(cbm_is_dockerfile("Dockerfile.prod"));
     ASSERT(cbm_is_dockerfile("app.dockerfile"));
+    ASSERT(!cbm_is_dockerfile(".dockerfile"));
     ASSERT(!cbm_is_dockerfile("docker-compose.yml"));
     ASSERT(!cbm_is_dockerfile("main.go"));
     PASS();
@@ -3510,6 +3888,28 @@ TEST(infra_clean_json_brackets) {
 
     cbm_clean_json_brackets("[\"./app\", \"--flag\", \"value\"]", out, sizeof(out));
     ASSERT_STR_EQ(out, "./app --flag value");
+
+    cbm_clean_json_brackets("[ \t\"python\" ,\t \"main.py\" \t]", out, sizeof(out));
+    ASSERT_STR_EQ(out, "python main.py");
+
+    cbm_clean_json_brackets("[]", out, sizeof(out));
+    ASSERT_STR_EQ(out, "");
+
+    cbm_clean_json_brackets("[\"unterminated\"", out, sizeof(out));
+    ASSERT_STR_EQ(out, "[\"unterminated\"");
+
+    char short_out[4];
+    cbm_clean_json_brackets("[\"abcd\"]", short_out, sizeof(short_out));
+    ASSERT_STR_EQ(short_out, "abc");
+    cbm_clean_json_brackets("abcdef", short_out, sizeof(short_out));
+    ASSERT_STR_EQ(short_out, "abc");
+
+    char sentinel[16] = "sentinel";
+    cbm_clean_json_brackets(NULL, sentinel, sizeof(sentinel));
+    ASSERT_STR_EQ(sentinel, "sentinel");
+    cbm_clean_json_brackets("value", NULL, sizeof(sentinel));
+    cbm_clean_json_brackets("value", sentinel, 0);
+    ASSERT_STR_EQ(sentinel, "sentinel");
 
     PASS();
 }
@@ -4421,6 +4821,57 @@ TEST(k8s_extract_manifest_multidoc) {
     /* At least one def, no more than one (only first document processed) */
     ASSERT(r->defs.count >= 1);
     cbm_free_result(r);
+    PASS();
+}
+
+/* `pass_k8s` 會以基底檔名分流 Helm 與相依清單。這固定預設 C 路徑的
+ * 完整 pipeline 結果，並供 K8s 檔案分類器 Rust opt-in 使用同一回歸案例。 */
+TEST(pipeline_k8s_file_classifiers_end_to_end) {
+    const char *files[] = {"charts/yaml/Chart.yaml", "charts/yml/Chart.yml", "go.mod",
+                           "requirements.txt"};
+    const char *contents[] = {
+        "apiVersion: v2\n"
+        "name: chart-yaml\n"
+        "version: 1.0.0\n"
+        "dependencies:\n"
+        "  - name: yaml-dependency\n",
+        "apiVersion: v2\n"
+        "name: chart-yml\n"
+        "version: 1.0.0\n"
+        "dependencies:\n"
+        "  - name: yml-dependency\n",
+        "module example.com/classifiers\n"
+        "\n"
+        "go 1.21\n"
+        "\n"
+        "require example.com/go-dependency v1.0.0\n",
+        "requests==2.32.0\n",
+    };
+    if (setup_lang_repo(files, contents, 4) != 0) {
+        FAIL("tmpdir");
+    }
+
+    char db_path[512];
+    snprintf(db_path, sizeof(db_path), "%s/test.db", g_lang_tmpdir);
+    cbm_pipeline_t *pipeline = cbm_pipeline_new(g_lang_tmpdir, db_path, CBM_MODE_FULL);
+    ASSERT_NOT_NULL(pipeline);
+    ASSERT_EQ(cbm_pipeline_run(pipeline), 0);
+
+    cbm_store_t *store = cbm_store_open_path(db_path);
+    ASSERT_NOT_NULL(store);
+    const char *project = cbm_pipeline_project_name(pipeline);
+
+    ASSERT_TRUE(named_edge_exists(store, project, "DEFINES", "Chart.yaml", "chart-yaml"));
+    ASSERT_TRUE(named_edge_exists(store, project, "DEPENDS_ON", "chart-yaml", "yaml-dependency"));
+    ASSERT_TRUE(named_edge_exists(store, project, "DEFINES", "Chart.yml", "chart-yml"));
+    ASSERT_TRUE(named_edge_exists(store, project, "DEPENDS_ON", "chart-yml", "yml-dependency"));
+    ASSERT_TRUE(
+        named_edge_exists(store, project, "DEPENDS_ON", "go.mod", "example.com/go-dependency"));
+    ASSERT_TRUE(named_edge_exists(store, project, "DEPENDS_ON", "requirements.txt", "requests"));
+
+    cbm_store_close(store);
+    cbm_pipeline_free(pipeline);
+    teardown_lang_repo();
     PASS();
 }
 
@@ -5391,6 +5842,11 @@ TEST(pipeline_rust_plan_sequential_trace_observed) {
     const char *logs = rust_plan_capture_end();
 
     const char *trace[] = {
+        ("msg=rust_plan.dispatch phase=full_pipeline passes=12 "
+         "plan=macro_extraction,userconfig_load,discover,try_incremental_or_delete_db,"
+         "structure,extraction_dispatch,tests,githistory,predump,dump,persist_hashes,"
+         "artifact_export source=top_v1"),
+        "msg=rust_plan.dispatch phase=extraction_choice decision=sequential source=top_v1",
         "msg=pipeline.mode mode=sequential",
         ("msg=rust_plan.dispatch phase=sequential_extract passes=6 "
          "plan=definitions,k8s,lsp_cross,calls,usages,semantic source=typed_v2"),
@@ -5451,6 +5907,11 @@ TEST(pipeline_rust_plan_parallel_trace_observed) {
     }
 
     const char *trace[] = {
+        ("msg=rust_plan.dispatch phase=full_pipeline passes=12 "
+         "plan=macro_extraction,userconfig_load,discover,try_incremental_or_delete_db,"
+         "structure,extraction_dispatch,tests,githistory,predump,dump,persist_hashes,"
+         "artifact_export source=top_v1"),
+        "msg=rust_plan.dispatch phase=extraction_choice decision=parallel source=top_v1",
         "msg=pipeline.mode mode=parallel",
         ("msg=rust_plan.dispatch phase=parallel_extract passes=7 "
          "plan=parallel_extract,registry_build,lsp_cross_prepare,parallel_resolve,"
@@ -5475,6 +5936,67 @@ TEST(pipeline_rust_plan_parallel_trace_observed) {
     ASSERT_TRUE(created);
     ASSERT_EQ(rc, 0);
     ASSERT_TRUE(trace_ok);
+
+    cleanup_incremental_repo();
+    PASS();
+#endif
+}
+
+TEST(pipeline_rust_plan_parallel_resolve_failure_short_circuit) {
+#ifndef CBM_USE_RUST_PIPELINE_PLAN
+    PASS();
+#else
+    if (setup_incremental_repo() != 0) {
+        FAIL("setup failed");
+    }
+
+    for (int i = 0; i < 52; i++) {
+        char path[512];
+        snprintf(path, sizeof(path), "%s/par_%02d.go", g_incr_tmpdir, i);
+        FILE *f = fopen(path, "w");
+        if (!f) {
+            cleanup_incremental_repo();
+            FAIL("write parallel fixture");
+        }
+        fprintf(f, "package main\n\nfunc Par%02d() int {\n\treturn %d\n}\n", i, i);
+        fclose(f);
+    }
+
+    const char *old_workers = getenv("CBM_WORKERS");
+    char *old_workers_copy = old_workers ? strdup(old_workers) : NULL;
+    if (old_workers && !old_workers_copy) {
+        cleanup_incremental_repo();
+        FAIL("strdup");
+    }
+    int setenv_rc = cbm_setenv("CBM_WORKERS", "2", 1);
+
+    cbm_pipeline_test_fail_next_parallel_resolve(-37);
+
+    cbm_pipeline_t *p = cbm_pipeline_new(g_incr_tmpdir, g_incr_dbpath, CBM_MODE_FULL);
+    bool created = p != NULL;
+    int rc = -1;
+    const char *logs = "";
+    if (p) {
+        rust_plan_capture_start();
+        rc = cbm_pipeline_run(p);
+        cbm_pipeline_free(p);
+        logs = rust_plan_capture_end();
+    }
+
+    if (old_workers_copy) {
+        (void)cbm_setenv("CBM_WORKERS", old_workers_copy, 1);
+        free(old_workers_copy);
+    } else {
+        (void)cbm_unsetenv("CBM_WORKERS");
+    }
+
+    ASSERT_EQ(setenv_rc, 0);
+    ASSERT_TRUE(created);
+    ASSERT_EQ(rc, -37);
+    ASSERT_TRUE(strstr(logs, "pass=parallel_resolve elapsed_ms") != NULL);
+    ASSERT_TRUE(strstr(logs, "pass=infra_routes elapsed_ms") == NULL);
+    ASSERT_TRUE(strstr(logs, "pass=infra_bindings elapsed_ms") == NULL);
+    ASSERT_TRUE(strstr(logs, "pass=k8s elapsed_ms") == NULL);
 
     cleanup_incremental_repo();
     PASS();
@@ -5739,6 +6261,91 @@ TEST(incremental_rust_plan_parallel_extract_dispatch_observed) {
     cbm_store_close(s);
 
     free(project);
+    cleanup_incremental_repo();
+    PASS();
+#endif
+}
+
+TEST(incremental_rust_plan_parallel_resolve_failure_short_circuit) {
+#ifndef CBM_USE_RUST_PIPELINE_PLAN
+    PASS();
+#else
+    if (setup_incremental_repo() != 0) {
+        FAIL("setup failed");
+    }
+
+    for (int i = 0; i < 52; i++) {
+        char path[512];
+        snprintf(path, sizeof(path), "%s/incr_par_%02d.go", g_incr_tmpdir, i);
+        FILE *f = fopen(path, "w");
+        if (!f) {
+            cleanup_incremental_repo();
+            FAIL("write incremental parallel seed fixture");
+        }
+        fprintf(f, "package main\n\nfunc IncrParSeed%02d() int {\n\treturn %d\n}\n", i, i);
+        fclose(f);
+    }
+
+    cbm_pipeline_t *p = cbm_pipeline_new(g_incr_tmpdir, g_incr_dbpath, CBM_MODE_FULL);
+    ASSERT_NOT_NULL(p);
+    ASSERT_EQ(cbm_pipeline_run(p), 0);
+    cbm_pipeline_free(p);
+
+    for (int i = 0; i < 52; i++) {
+        char path[512];
+        snprintf(path, sizeof(path), "%s/incr_par_%02d.go", g_incr_tmpdir, i);
+        FILE *f = fopen(path, "w");
+        if (!f) {
+            cleanup_incremental_repo();
+            FAIL("rewrite incremental parallel fixture");
+        }
+        if (i == 0) {
+            fprintf(f, "package main\n\n"
+                       "func IncrParCallee() int {\n\treturn 23\n}\n\n"
+                       "func IncrParCaller() int {\n\treturn IncrParCallee()\n}\n\n"
+                       "func IncrParUsage() {\n\tfn := IncrParCallee\n\t_ = fn\n}\n");
+        } else {
+            fprintf(f, "package main\n\nfunc IncrPar%02d() int {\n\treturn %d\n}\n", i, i + 100);
+        }
+        fclose(f);
+    }
+
+    const char *old_workers = getenv("CBM_WORKERS");
+    char *old_workers_copy = old_workers ? strdup(old_workers) : NULL;
+    if (old_workers && !old_workers_copy) {
+        cleanup_incremental_repo();
+        FAIL("strdup");
+    }
+    int setenv_rc = cbm_setenv("CBM_WORKERS", "2", 1);
+    cbm_pipeline_test_fail_next_parallel_resolve(-37);
+
+    p = cbm_pipeline_new(g_incr_tmpdir, g_incr_dbpath, CBM_MODE_FULL);
+    bool created = p != NULL;
+    int rc = -1;
+    const char *logs = "";
+    if (p) {
+        rust_plan_capture_start();
+        rc = cbm_pipeline_run(p);
+        cbm_pipeline_free(p);
+        logs = rust_plan_capture_end();
+    }
+
+    if (old_workers_copy) {
+        (void)cbm_setenv("CBM_WORKERS", old_workers_copy, 1);
+        free(old_workers_copy);
+    } else {
+        (void)cbm_unsetenv("CBM_WORKERS");
+    }
+
+    ASSERT_EQ(setenv_rc, 0);
+    ASSERT_TRUE(created);
+    ASSERT_EQ(rc, -37);
+    ASSERT_TRUE(strstr(logs, "msg=incremental.mode mode=parallel workers=2 changed=52") != NULL);
+    ASSERT_TRUE(strstr(logs, "pass=incr_resolve elapsed_ms") != NULL);
+    ASSERT_TRUE(strstr(logs, "phase=incremental_post") == NULL);
+    ASSERT_TRUE(strstr(logs, "pass=incr_tests elapsed_ms") == NULL);
+    ASSERT_TRUE(strstr(logs, "pass=incremental.dump") == NULL);
+
     cleanup_incremental_repo();
     PASS();
 #endif
@@ -6367,10 +6974,15 @@ TEST(test_path_suffix_patterns) {
 
 TEST(test_func_name_go_patterns) {
     /* Go test function names: Test + uppercase char */
+    ASSERT_TRUE(cbm_is_test_func_name("Test"));
     ASSERT_TRUE(cbm_is_test_func_name("TestFoo"));
     ASSERT_TRUE(cbm_is_test_func_name("TestHTTPHandler"));
-    /* Non-test: "Test" alone or Test + lowercase */
+    ASSERT_TRUE(cbm_is_test_func_name("Benchmark"));
+    ASSERT_TRUE(cbm_is_test_func_name("Example"));
+    /* Non-test: Test/Benchmark/Example + lowercase */
     ASSERT_FALSE(cbm_is_test_func_name("Testable")); /* lowercase 'a' after Test */
+    ASSERT_FALSE(cbm_is_test_func_name("Benchmarkable"));
+    ASSERT_FALSE(cbm_is_test_func_name("Examplefoo"));
     PASS();
 }
 
@@ -6819,6 +7431,13 @@ SUITE(pipeline) {
     RUN_TEST(pipeline_cancel);
     RUN_TEST(pipeline_cancel_null);
     RUN_TEST(pipeline_run_null);
+    RUN_TEST(pipeline_sveltekit_server_method_contract);
+    RUN_TEST(pipeline_sveltekit_file_kind_contract);
+    RUN_TEST(pipeline_url_path_contract);
+    RUN_TEST(pipeline_lsp_cross_classifiers_contract);
+    RUN_TEST(pipeline_json_prop_contract);
+    RUN_TEST(git_trim_newlines_contract);
+    RUN_TEST(git_path_absolute_contract);
     /* File persistence */
     RUN_TEST(store_file_persistence);
     RUN_TEST(store_bulk_persistence);
@@ -6850,6 +7469,7 @@ SUITE(pipeline) {
     /* Test detection */
     RUN_TEST(testdetect_is_test_file);
     RUN_TEST(testdetect_is_test_function);
+    RUN_TEST(testdetect_node_is_test_property);
     /* Implements pass (graph buffer based) */
     RUN_TEST(implements_creates_override);
     RUN_TEST(implements_no_match);
@@ -6881,6 +7501,7 @@ SUITE(pipeline) {
     RUN_TEST(project_name_from_path);
     RUN_TEST(project_name_drive_letter_case_insensitive_issue394);
     RUN_TEST(git_context_non_git_path);
+    RUN_TEST(git_context_props_json_escapes_control_chars);
     RUN_TEST(git_context_linked_worktree);
     RUN_TEST(project_name_uniqueness);
     /* Git diff helpers */
@@ -6890,6 +7511,7 @@ SUITE(pipeline) {
     RUN_TEST(gitdiff_parse_range_large);
     RUN_TEST(gitdiff_parse_name_status);
     RUN_TEST(gitdiff_parse_name_status_filters_untrackable);
+    RUN_TEST(gitdiff_parse_name_status_filters_after_c_buffer_truncation);
     RUN_TEST(gitdiff_parse_hunks);
     RUN_TEST(gitdiff_parse_hunks_no_newline_marker);
     RUN_TEST(gitdiff_parse_hunks_mode_change);
@@ -6912,6 +7534,7 @@ SUITE(pipeline) {
     RUN_TEST(decorator_tags_java_class_methods);
     /* Compile commands helpers */
     RUN_TEST(compile_commands_split_command);
+    RUN_TEST(compile_commands_split_command_contract);
     RUN_TEST(compile_commands_extract_flags);
     RUN_TEST(compile_commands_parse_json);
     RUN_TEST(compile_commands_parse_empty);
@@ -6958,6 +7581,7 @@ SUITE(pipeline) {
     RUN_TEST(k8s_extract_manifest);
     RUN_TEST(k8s_extract_manifest_no_name);
     RUN_TEST(k8s_extract_manifest_multidoc);
+    RUN_TEST(pipeline_k8s_file_classifiers_end_to_end);
     /* Env URL scanning */
     RUN_TEST(envscan_dockerfile_env_urls);
     RUN_TEST(envscan_shell_env_urls);
@@ -7008,9 +7632,11 @@ SUITE(pipeline) {
     RUN_TEST(pipeline_rust_plan_sequential_trace_observed);
     RUN_TEST(pipeline_rust_plan_predump_full_trace_observed);
     RUN_TEST(pipeline_rust_plan_parallel_trace_observed);
+    RUN_TEST(pipeline_rust_plan_parallel_resolve_failure_short_circuit);
     RUN_TEST(pipeline_rust_plan_predump_fast_trace_observed);
     RUN_TEST(incremental_rust_plan_postpasses_dispatch_observed);
     RUN_TEST(incremental_rust_plan_parallel_extract_dispatch_observed);
+    RUN_TEST(incremental_rust_plan_parallel_resolve_failure_short_circuit);
     RUN_TEST(incremental_persistence_creates_artifact_without_existing_artifact);
     RUN_TEST(incremental_dump_failure_fails_run_and_skips_followup_tail);
     RUN_TEST(incremental_fast_preserves_mode_skipped_tools_dir);

@@ -31,7 +31,11 @@ class AllowEntry:
 
 PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("unsafe_allow", re.compile(r"allow\s*\(\s*unsafe_code\s*\)")),
-    ("unsafe", re.compile(r"\bunsafe\b")),
+    # 只辨識 Rust 關鍵字的實際語法，避免文件或 JSON 字串的自然語言誤報。
+    (
+        "unsafe",
+        re.compile(r"\bunsafe\b(?=\s*(?:\{|(?:extern|fn|impl|trait)\b))"),
+    ),
     ("process", re.compile(r"\bstd::process\b|\bCommand::|\bCommand\b")),
     ("network", re.compile(r"\bstd::net\b|\bTcp(Stream|Listener)\b|\bUdpSocket\b")),
     (

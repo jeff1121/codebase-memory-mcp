@@ -6,6 +6,7 @@
 #include "../src/foundation/compat.h"
 #include "test_framework.h"
 #include "discover/discover.h"
+#include "discover/language_markers.h"
 
 /* ── Extension-based detection ─────────────────────────────────── */
 
@@ -319,6 +320,10 @@ TEST(lang_ext_prc) {
 }
 TEST(lang_ext_magma) {
     ASSERT_EQ(cbm_language_for_extension(".mag"), CBM_LANG_MAGMA);
+    ASSERT_EQ(cbm_discover_language_marker("intrinsic callable(", 2), 1);
+    ASSERT_EQ(cbm_discover_language_marker("intrinsic \xE9(", 2), 0);
+    ASSERT_EQ(cbm_discover_language_marker("procedure callable ", 2), 0);
+    ASSERT_EQ(cbm_discover_language_marker("intrinsic (", 2), 0);
     PASS();
 }
 TEST(lang_ext_magma2) {
@@ -557,6 +562,28 @@ TEST(lang_name_csharp) {
 }
 TEST(lang_name_unknown) {
     ASSERT_STR_EQ(cbm_language_name(CBM_LANG_COUNT), "Unknown");
+    PASS();
+}
+TEST(lang_name_negative) {
+    ASSERT_STR_EQ(cbm_language_name((CBMLanguage)-1), "Unknown");
+    PASS();
+}
+TEST(lang_name_after_count) {
+    ASSERT_STR_EQ(cbm_language_name((CBMLanguage)(CBM_LANG_COUNT + 1)), "Unknown");
+    PASS();
+}
+TEST(lang_name_cfml_duplicate) {
+    ASSERT_STR_EQ(cbm_language_name(CBM_LANG_CFSCRIPT), "CFML");
+    ASSERT_STR_EQ(cbm_language_name(CBM_LANG_CFML), "CFML");
+    PASS();
+}
+TEST(lang_name_borrowed_static) {
+    const char *first = cbm_language_name(CBM_LANG_GO);
+    const char *second = cbm_language_name(CBM_LANG_GO);
+
+    ASSERT_NOT_NULL(first);
+    ASSERT_TRUE(first == second);
+    ASSERT_STR_EQ(first, "Go");
     PASS();
 }
 
@@ -1041,11 +1068,12 @@ TEST(lang_ext_sosl) {
 
 /* --- Ported from lang_test.go: TestForLanguage --- */
 TEST(lang_all_have_names) {
-    /* Every language enum value from 0 to CBM_LANG_COUNT-1
-     * should have a non-"Unknown" name. */
+    /* Every current enum slot is named. If a future table deliberately has a
+     * hole, add an explicit "Unknown" expectation for that enum instead. */
     for (int i = 0; i < CBM_LANG_COUNT; i++) {
         const char *name = cbm_language_name((CBMLanguage)i);
         ASSERT_NOT_NULL(name);
+        ASSERT_TRUE(name[0] != '\0');
         ASSERT_TRUE(strcmp(name, "Unknown") != 0);
     }
     PASS();
@@ -1198,6 +1226,10 @@ SUITE(language) {
     RUN_TEST(lang_name_cpp);
     RUN_TEST(lang_name_csharp);
     RUN_TEST(lang_name_unknown);
+    RUN_TEST(lang_name_negative);
+    RUN_TEST(lang_name_after_count);
+    RUN_TEST(lang_name_cfml_duplicate);
+    RUN_TEST(lang_name_borrowed_static);
 
     /* .m disambiguation */
     RUN_TEST(lang_m_objc);

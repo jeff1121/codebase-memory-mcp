@@ -450,6 +450,46 @@ TEST(resolve_suffix_match) {
     PASS();
 }
 
+TEST(registry_test_qn_contract) {
+    extern bool cbm_pipeline_registry_is_test_qn(const char *qn);
+    const char *positives[] = {"Test", "test", "Mock", "mock", "Stub", "stub", "Fake",
+                               "fake", "Fixture", "spec"};
+
+    ASSERT_FALSE(cbm_pipeline_registry_is_test_qn(NULL));
+    ASSERT_FALSE(cbm_pipeline_registry_is_test_qn(""));
+    ASSERT_FALSE(cbm_pipeline_registry_is_test_qn("TEST"));
+    ASSERT_FALSE(cbm_pipeline_registry_is_test_qn("fixture"));
+    ASSERT_FALSE(cbm_pipeline_registry_is_test_qn("SPEC"));
+    ASSERT_TRUE(cbm_pipeline_registry_is_test_qn("contest"));
+
+    for (size_t i = 0; i < sizeof(positives) / sizeof(positives[0]); i++) {
+        ASSERT_TRUE(cbm_pipeline_registry_is_test_qn(positives[i]));
+    }
+
+    const char non_utf8_with_spec[] = "pkg.\xff"
+                                      "spec.Anchor";
+    const char non_utf8_without_needle[] = "pkg.\xff"
+                                         "plain.Anchor";
+    ASSERT_TRUE(cbm_pipeline_registry_is_test_qn(non_utf8_with_spec));
+    ASSERT_FALSE(cbm_pipeline_registry_is_test_qn(non_utf8_without_needle));
+    PASS();
+}
+
+TEST(resolve_prefers_non_test_qn) {
+    cbm_registry_t *r = cbm_registry_new();
+    ASSERT_NOT_NULL(r);
+    cbm_registry_add(r, "RegistryParityAnchor", "proj.test.RegistryParityAnchor", "Function");
+    cbm_registry_add(r, "RegistryParityAnchor", "proj.prod.RegistryParityAnchor", "Function");
+
+    cbm_resolution_t res =
+        cbm_registry_resolve(r, "RegistryParityAnchor", "proj.caller", NULL, NULL, 0);
+    ASSERT_STR_EQ(res.qualified_name, "proj.prod.RegistryParityAnchor");
+    ASSERT_STR_EQ(res.strategy, "suffix_match");
+
+    cbm_registry_free(r);
+    PASS();
+}
+
 /* A name with more than REG_MAX_CANDIDATES (256) registered definitions is
  * unresolvable by name alone: the candidate penalty floors its confidence to
  * ~3/count (noise), while walking the candidate array per file dominated
@@ -813,6 +853,8 @@ SUITE(registry) {
     RUN_TEST(confidence_band_speculative);
     /* Suffix match + import map suffix */
     RUN_TEST(resolve_suffix_match);
+    RUN_TEST(registry_test_qn_contract);
+    RUN_TEST(resolve_prefers_non_test_qn);
     RUN_TEST(resolve_caps_unresolvably_ambiguous_names);
     RUN_TEST(resolve_import_map_suffix);
     /* Import reachability */

@@ -10,7 +10,16 @@
 #include <ctype.h>
 #include <string.h>
 
+#ifdef CBM_USE_RUST_PIPELINE_CONFIGURES
+extern int cbm_rs_pipeline_is_env_var_name_v1(const char *s);
+extern int cbm_rs_pipeline_normalize_config_key_v1(const char *key, char *norm_out, size_t norm_sz);
+extern int cbm_rs_pipeline_has_config_extension_v1(const char *path);
+#endif
+
 bool cbm_is_env_var_name(const char *s) {
+#ifdef CBM_USE_RUST_PIPELINE_CONFIGURES
+    return cbm_rs_pipeline_is_env_var_name_v1(s) != 0;
+#else
     if (!s) {
         return false;
     }
@@ -31,8 +40,10 @@ bool cbm_is_env_var_name(const char *s) {
         }
     }
     return has_upper;
+#endif
 }
 
+#ifndef CBM_USE_RUST_PIPELINE_CONFIGURES
 /* Emit a camelCase-split word (lowercased) into the output buffer.
  * Prepends '_' if out_pos > 0. Returns updated out_pos and token_count. */
 static void emit_camel_words(const char *part, size_t plen, char *norm_out, size_t norm_sz,
@@ -60,8 +71,12 @@ static void emit_camel_words(const char *part, size_t plen, char *norm_out, size
     }
     (*token_count)++;
 }
+#endif
 
 int cbm_normalize_config_key(const char *key, char *norm_out, size_t norm_sz) {
+#ifdef CBM_USE_RUST_PIPELINE_CONFIGURES
+    return cbm_rs_pipeline_normalize_config_key_v1(key, norm_out, norm_sz);
+#else
     if (!key || !norm_out || norm_sz == 0) {
         return 0;
     }
@@ -94,9 +109,13 @@ int cbm_normalize_config_key(const char *key, char *norm_out, size_t norm_sz) {
 
     norm_out[out_pos] = '\0';
     return token_count;
+#endif
 }
 
 bool cbm_has_config_extension(const char *path) {
+#ifdef CBM_USE_RUST_PIPELINE_CONFIGURES
+    return cbm_rs_pipeline_has_config_extension_v1(path) != 0;
+#else
     if (!path) {
         return false;
     }
@@ -128,4 +147,5 @@ bool cbm_has_config_extension(const char *path) {
         }
     }
     return false;
+#endif
 }

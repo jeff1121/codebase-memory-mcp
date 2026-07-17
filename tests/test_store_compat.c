@@ -6,6 +6,7 @@
 #include <store/store.h>
 #include <sqlite3.h>
 #include <string.h>
+#include <sys/stat.h>
 
 static const char *USER_INDEXES[] = {
     "idx_nodes_label",       "idx_nodes_name",
@@ -261,6 +262,126 @@ static int sql_scalar_text_bound(sqlite3 *db, const char *sql, const char *value
     return ok;
 }
 
+static void store_compat_db_path(char *buf, size_t n, const char *suffix) {
+    snprintf(buf, n, "%s/cbm_store_compat_%d_%s.db", cbm_tmpdir(), (int)getpid(), suffix);
+}
+
+TEST(store_compat_dump_to_file_side_effect_contract) {
+    char db_path[256];
+    char tmp_path[300];
+    char wal_path[300];
+    char shm_path[300];
+    store_compat_db_path(db_path, sizeof(db_path), "dump_side_effect");
+    snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", db_path);
+    snprintf(wal_path, sizeof(wal_path), "%s-wal", db_path);
+    snprintf(shm_path, sizeof(shm_path), "%s-shm", db_path);
+    unlink(db_path);
+    unlink(tmp_path);
+    unlink(wal_path);
+    unlink(shm_path);
+
+    cbm_store_t *memory = cbm_store_open_memory();
+    ASSERT_NOT_NULL(memory);
+    ASSERT_EQ(cbm_store_upsert_project(memory, "dump-side-effect", "/tmp/dump-side-effect"),
+              CBM_STORE_OK);
+
+    cbm_node_t node = {.project = "dump-side-effect",
+                       .label = "Function",
+                       .name = "HelloDump",
+                       .qualified_name = "dump-side-effect.HelloDump",
+                       .file_path = "main.go",
+                       .start_line = 1,
+                       .end_line = 7,
+                       .properties_json = "{\"source\":\"contract\"}"};
+    ASSERT_GT(cbm_store_upsert_node(memory, &node), 0);
+    ASSERT_EQ(cbm_store_dump_to_file(memory, db_path), CBM_STORE_OK);
+    cbm_store_close(memory);
+
+    struct stat st;
+    ASSERT_TRUE(stat(tmp_path, &st) != 0);
+
+    sqlite3 *db = NULL;
+    ASSERT_EQ(sqlite3_open(db_path, &db), SQLITE_OK);
+    char mode[32];
+    ASSERT_EQ(sql_scalar_text(db, "PRAGMA journal_mode;", mode, sizeof(mode)), 0);
+    ASSERT_STR_EQ(mode, "wal");
+    sqlite3_close(db);
+
+    cbm_store_t *reader = cbm_store_open_path_query(db_path);
+    ASSERT_NOT_NULL(reader);
+    cbm_node_t found = {0};
+    ASSERT_EQ(cbm_store_find_node_by_qn(reader, "dump-side-effect",
+                                        "dump-side-effect.HelloDump", &found),
+              CBM_STORE_OK);
+    ASSERT_STR_EQ(found.name, "HelloDump");
+    cbm_node_free_fields(&found);
+    ASSERT_EQ(cbm_store_exec(reader,
+                             "INSERT INTO projects(name,indexed_at,root_path) "
+                             "VALUES('readonly-dump','now','/tmp/readonly-dump');"),
+              CBM_STORE_ERR);
+    cbm_store_close(reader);
+
+    unlink(db_path);
+    unlink(wal_path);
+    unlink(shm_path);
+    PASS();
+}
+
+TEST(store_compat_delete_nodes_by_file_cascades_edges) {
+    cbm_store_t *s = cbm_store_open_memory();
+    ASSERT_NOT_NULL(s);
+    ASSERT_EQ(cbm_store_upsert_project(s, "cascade-contract", "/tmp/cascade-contract"),
+              CBM_STORE_OK);
+
+    cbm_node_t source = {.project = "cascade-contract",
+                         .label = "Function",
+                         .name = "Source",
+                         .qualified_name = "cascade.Source",
+                         .file_path = "a.go",
+                         .start_line = 1,
+                         .end_line = 3,
+                         .properties_json = "{}"};
+    cbm_node_t target = {.project = "cascade-contract",
+                         .label = "Function",
+                         .name = "Target",
+                         .qualified_name = "cascade.Target",
+                         .file_path = "b.go",
+                         .start_line = 5,
+                         .end_line = 7,
+                         .properties_json = "{}"};
+    int64_t source_id = cbm_store_upsert_node(s, &source);
+    int64_t target_id = cbm_store_upsert_node(s, &target);
+    ASSERT_GT(source_id, 0);
+    ASSERT_GT(target_id, 0);
+
+    cbm_edge_t outbound = {.project = "cascade-contract",
+                           .source_id = source_id,
+                           .target_id = target_id,
+                           .type = "CALLS",
+                           .properties_json = "{}"};
+    cbm_edge_t inbound = {.project = "cascade-contract",
+                          .source_id = target_id,
+                          .target_id = source_id,
+                          .type = "USAGE",
+                          .properties_json = "{}"};
+    ASSERT_GT(cbm_store_insert_edge(s, &outbound), 0);
+    ASSERT_GT(cbm_store_insert_edge(s, &inbound), 0);
+    ASSERT_EQ(cbm_store_count_edges(s, "cascade-contract"), 2);
+
+    ASSERT_EQ(cbm_store_delete_nodes_by_file(s, "cascade-contract", "a.go"), CBM_STORE_OK);
+    ASSERT_EQ(cbm_store_count_nodes(s, "cascade-contract"), 1);
+    ASSERT_EQ(cbm_store_count_edges(s, "cascade-contract"), 0);
+
+    cbm_node_t remaining = {0};
+    ASSERT_EQ(cbm_store_find_node_by_qn(s, "cascade-contract", "cascade.Target", &remaining),
+              CBM_STORE_OK);
+    ASSERT_STR_EQ(remaining.file_path, "b.go");
+    cbm_node_free_fields(&remaining);
+
+    cbm_store_close(s);
+    PASS();
+}
+
 static int explain_plan_mentions(sqlite3 *db, const char *sql, const char *needle) {
     sqlite3_stmt *stmt = NULL;
     int found = 0;
@@ -505,6 +626,44 @@ TEST(store_compat_bulk_pragmas_preserve_wal_contract) {
     PASS();
 }
 
+TEST(store_compat_checkpoint_preserves_wal_size_contract) {
+    enum { N_ROWS = 80 };
+    char db_path[512];
+    char wal_path[560];
+    make_temp_store_path(db_path, sizeof(db_path), "checkpoint_wal");
+    snprintf(wal_path, sizeof(wal_path), "%s-wal", db_path);
+    cleanup_store_files(db_path);
+
+    cbm_store_t *s = cbm_store_open_path(db_path);
+    ASSERT_NOT_NULL(s);
+    ASSERT_EQ(cbm_store_upsert_project(s, "checkpoint-contract", "/tmp/checkpoint-contract"),
+              CBM_STORE_OK);
+
+    for (int i = 0; i < N_ROWS; i++) {
+        char sql[256];
+        snprintf(sql, sizeof(sql),
+                 "INSERT INTO nodes(project, label, name, qualified_name, file_path) "
+                 "VALUES('checkpoint-contract', 'Function', 'fn', "
+                 "'checkpoint.fn_%d', 'checkpoint.c');",
+                 i);
+        ASSERT_EQ(cbm_store_exec(s, sql), CBM_STORE_OK);
+    }
+
+    struct stat st_before;
+    ASSERT_EQ(stat(wal_path, &st_before), 0);
+    ASSERT_TRUE(st_before.st_size > 0);
+
+    ASSERT_EQ(cbm_store_checkpoint(s), CBM_STORE_OK);
+
+    struct stat st_after;
+    ASSERT_EQ(stat(wal_path, &st_after), 0);
+    ASSERT_TRUE(st_after.st_size > 0);
+
+    cbm_store_close(s);
+    cleanup_store_files(db_path);
+    PASS();
+}
+
 TEST(store_compat_url_path_project_scoped_substring) {
     cbm_store_t *s = cbm_store_open_memory();
     ASSERT_NOT_NULL(s);
@@ -724,6 +883,9 @@ SUITE(store_compat) {
     RUN_TEST(store_compat_path_open_uses_wal_journal_mode);
     RUN_TEST(store_compat_query_open_reads_existing_wal_and_rejects_write);
     RUN_TEST(store_compat_bulk_pragmas_preserve_wal_contract);
+    RUN_TEST(store_compat_checkpoint_preserves_wal_size_contract);
+    RUN_TEST(store_compat_dump_to_file_side_effect_contract);
+    RUN_TEST(store_compat_delete_nodes_by_file_cascades_edges);
     RUN_TEST(store_compat_url_path_project_scoped_substring);
     RUN_TEST(store_compat_url_path_generated_column_index_plan);
     RUN_TEST(store_compat_camel_split_exact_contract);

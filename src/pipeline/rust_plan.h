@@ -177,14 +177,15 @@ _Static_assert(offsetof(cbm_rs_pipeline_top_step_v1_t, effect_flags) == 24,
 _Static_assert(offsetof(cbm_rs_pipeline_top_step_v1_t, nested_plan_kind) == 28,
                "PipelineTopStepV1.nested_plan_kind offset drift");
 
-#ifdef CBM_USE_RUST_PIPELINE_PLAN
+#if defined(CBM_USE_RUST_PIPELINE_PLAN) || defined(CBM_USE_RUST_PIPELINE_PLAN_ONLY)
 
 enum {
     CBM_RS_PLAN_CHOICE_BUF = 16,
     CBM_RS_PLAN_SEQUENTIAL_BUF = 256,
     CBM_RS_PLAN_PARALLEL_BUF = 256,
     CBM_RS_PLAN_PREDUMP_BUF = 256,
-    CBM_RS_PLAN_INCREMENTAL_POST_BUF = 512
+    CBM_RS_PLAN_INCREMENTAL_POST_BUF = 512,
+    CBM_RS_PLAN_TOP_BUF = 512
 };
 
 extern int cbm_rs_pipeline_incremental_post_step_count(int mode);
@@ -193,6 +194,9 @@ extern int cbm_rs_pipeline_incremental_post_steps(int mode, cbm_rs_pipeline_plan
 extern int cbm_rs_pipeline_plan_step_count_v2(int kind, int mode, int worker_count, int file_count);
 extern int cbm_rs_pipeline_plan_steps_v2(int kind, int mode, int worker_count, int file_count,
                                          cbm_rs_pipeline_plan_step_v2_t *out, int cap);
+extern int cbm_rs_pipeline_full_plan_step_count_v1(int mode, int worker_count, int file_count);
+extern int cbm_rs_pipeline_full_plan_steps_v1(int mode, int worker_count, int file_count,
+                                              cbm_rs_pipeline_top_step_v1_t *out, int cap);
 
 static inline bool cbm_rust_plan_incremental_post_steps(int mode, cbm_rs_pipeline_plan_step_t *out,
                                                         int cap, int *out_count) {
@@ -222,6 +226,24 @@ static inline bool cbm_rust_plan_steps_v2(int kind, int mode, int worker_count, 
         return false;
     }
     int rc = cbm_rs_pipeline_plan_steps_v2(kind, mode, worker_count, file_count, out, cap);
+    if (rc != count) {
+        return false;
+    }
+    *out_count = count;
+    return true;
+}
+
+static inline bool cbm_rust_full_plan_steps(int mode, int worker_count, int file_count,
+                                            cbm_rs_pipeline_top_step_v1_t *out, int cap,
+                                            int *out_count) {
+    if (!out || cap <= 0 || !out_count) {
+        return false;
+    }
+    int count = cbm_rs_pipeline_full_plan_step_count_v1(mode, worker_count, file_count);
+    if (count < 0 || count > cap) {
+        return false;
+    }
+    int rc = cbm_rs_pipeline_full_plan_steps_v1(mode, worker_count, file_count, out, cap);
     if (rc != count) {
         return false;
     }

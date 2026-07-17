@@ -465,6 +465,33 @@ TEST(cypher_contract_with_post_where_ast_shape) {
     PASS();
 }
 
+TEST(cypher_contract_multiarg_function_projection) {
+    cbm_store_t *s = setup_cypher_contract_store();
+    ASSERT_NOT_NULL(s);
+    cbm_cypher_result_t r = {0};
+
+    int rc = cbm_cypher_execute(
+        s,
+        "MATCH (f:Function) WHERE f.name = \"Alpha\" "
+        "RETURN substring(f.name, 0, 2), left(f.name, 3), "
+        "right(f.name, 2), replace(f.name, \"Al\", \"Om\"), "
+        "coalesce(f.missing, \"fallback\")",
+        "contract", 0, &r);
+    ASSERT_EQ(rc, 0);
+    ASSERT_NULL(r.error);
+    ASSERT_EQ(r.row_count, 1);
+    ASSERT_EQ(r.col_count, 5);
+    ASSERT_STR_EQ(r.rows[0][0], "Al");
+    ASSERT_STR_EQ(r.rows[0][1], "Alp");
+    ASSERT_STR_EQ(r.rows[0][2], "ha");
+    ASSERT_STR_EQ(r.rows[0][3], "Ompha");
+    ASSERT_STR_EQ(r.rows[0][4], "fallback");
+
+    cbm_cypher_result_free(&r);
+    cbm_store_close(s);
+    PASS();
+}
+
 TEST(cypher_contract_limit_zero_keeps_columns) {
     cbm_store_t *s = setup_cypher_contract_store();
     ASSERT_NOT_NULL(s);
@@ -567,6 +594,7 @@ SUITE(cypher_contract) {
     RUN_TEST(cypher_contract_aggregation_count_distinct);
     RUN_TEST(cypher_contract_aggregation_edge_properties_numeric);
     RUN_TEST(cypher_contract_with_post_where_ast_shape);
+    RUN_TEST(cypher_contract_multiarg_function_projection);
     RUN_TEST(cypher_contract_limit_zero_keeps_columns);
     RUN_TEST(cypher_contract_exact_unknown_function_error);
     RUN_TEST(cypher_contract_exact_create_error);

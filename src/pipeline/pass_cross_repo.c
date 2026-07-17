@@ -24,6 +24,15 @@
 #include <string.h>
 #include <time.h>
 
+#ifdef CBM_USE_RUST_PIPELINE_CROSS_REPO_JSON
+extern int cbm_rs_pipeline_cross_repo_json_str_prop_v1(const char *json, const char *key, char *buf,
+                                                       size_t bufsz);
+extern size_t cbm_rs_pipeline_cross_repo_build_props_v1(
+    char *buf, size_t bufsz, const char *target_project, const char *target_function,
+    const char *target_file, const char *url_or_channel, const char *extra_key,
+    const char *extra_val);
+#endif
+
 /* ── Constants ───────────────────────────────────────────────────── */
 
 enum {
@@ -61,6 +70,9 @@ static void cr_db_path(const char *project, char *buf, size_t bufsz) {
 /* Extract a JSON string property from properties_json.
  * Writes into buf, returns buf on success, NULL on miss. */
 static const char *json_str_prop(const char *json, const char *key, char *buf, size_t bufsz) {
+#ifdef CBM_USE_RUST_PIPELINE_CROSS_REPO_JSON
+    return cbm_rs_pipeline_cross_repo_json_str_prop_v1(json, key, buf, bufsz) != 0 ? buf : NULL;
+#else
     if (!json || !key) {
         return NULL;
     }
@@ -82,6 +94,7 @@ static const char *json_str_prop(const char *json, const char *key, char *buf, s
     memcpy(buf, start, len);
     buf[len] = '\0';
     return buf;
+#endif
 }
 
 /* Build CROSS_* edge properties JSON. */
@@ -89,6 +102,11 @@ static void build_cross_props(char *buf, size_t bufsz, const char *target_projec
                               const char *target_function, const char *target_file,
                               const char *url_or_channel, const char *extra_key,
                               const char *extra_val) {
+#ifdef CBM_USE_RUST_PIPELINE_CROSS_REPO_JSON
+    (void)cbm_rs_pipeline_cross_repo_build_props_v1(buf, bufsz, target_project, target_function,
+                                                    target_file, url_or_channel, extra_key,
+                                                    extra_val);
+#else
     int n = snprintf(buf, bufsz,
                      "{\"target_project\":\"%s\",\"target_function\":\"%s\","
                      "\"target_file\":\"%s\"",
@@ -103,6 +121,7 @@ static void build_cross_props(char *buf, size_t bufsz, const char *target_projec
                       extra_key ? "transport" : "method", extra_val);
     }
     snprintf(buf + n, bufsz - (size_t)n, "}");
+#endif
 }
 
 /* Delete all CROSS_* edges for a project from a store. */

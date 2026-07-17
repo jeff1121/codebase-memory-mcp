@@ -40,8 +40,9 @@ enum { DEFAULT_CORES = 1, MIN_WORKERS = 1, CBM_WORKERS_MAX = 256 };
 #include <unistd.h>
 #endif
 
-#if defined(CBM_USE_RUST_PLATFORM_CGROUP) && !defined(_WIN32) && !defined(__APPLE__) && \
-    !defined(__NetBSD__) && !defined(__FreeBSD__) && !defined(__OpenBSD__)
+#if (defined(CBM_USE_RUST_PLATFORM_CGROUP) || defined(CBM_USE_RUST_PLATFORM_CGROUP_ONLY)) &&    \
+    !defined(_WIN32) && !defined(__APPLE__) && !defined(__NetBSD__) && !defined(__FreeBSD__) && \
+    !defined(__OpenBSD__)
 extern int cbm_rs_detect_cgroup_cpus(const char *cgroup_root);
 extern size_t cbm_rs_detect_cgroup_mem(const char *cgroup_root);
 #endif
@@ -117,6 +118,7 @@ static cbm_system_info_t detect_system_bsd(void) {
 
 #elif !defined(_WIN32) /* Linux */
 
+#if !defined(CBM_USE_RUST_PLATFORM_CGROUP_ONLY)
 /* Read up to (bufsz-1) bytes from `path` into `buf`, NUL-terminate, and strip
  * trailing whitespace. Returns the (stripped) byte count, or -1 if the file
  * could not be opened or read. */
@@ -133,10 +135,11 @@ static int read_small_file(const char *path, char *buf, size_t bufsz) {
     buf[n] = '\0';
     return (int)n;
 }
+#endif
 
 /* Effective CPU count from a cgroup file tree. See header for contract. */
 int cbm_detect_cgroup_cpus(const char *cgroup_root) {
-#ifdef CBM_USE_RUST_PLATFORM_CGROUP
+#if defined(CBM_USE_RUST_PLATFORM_CGROUP) || defined(CBM_USE_RUST_PLATFORM_CGROUP_ONLY)
     return cbm_rs_detect_cgroup_cpus(cgroup_root);
 #else
     char path[CBM_PATH_MAX];
@@ -184,7 +187,7 @@ int cbm_detect_cgroup_cpus(const char *cgroup_root) {
 
 /* Effective memory limit from a cgroup file tree. See header for contract. */
 size_t cbm_detect_cgroup_mem(const char *cgroup_root) {
-#ifdef CBM_USE_RUST_PLATFORM_CGROUP
+#if defined(CBM_USE_RUST_PLATFORM_CGROUP) || defined(CBM_USE_RUST_PLATFORM_CGROUP_ONLY)
     return cbm_rs_detect_cgroup_mem(cgroup_root);
 #else
     char path[CBM_PATH_MAX];

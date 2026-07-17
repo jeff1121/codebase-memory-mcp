@@ -84,7 +84,11 @@ bash "$ROOT/tests/test_security_strings_allowlist.sh"
 if [ -f "$ROOT/Cargo.toml" ] && [ "${CBM_SKIP_RUST:-0}" != "1" ]; then
     if command -v cargo >/dev/null 2>&1; then
         echo "=== Step 7: Rust refactor parity tests ==="
-        make -f Makefile.cbm rust-test rust-ffi-test rust-foundation-optin-test rust-pipeline-registry-optin-test rust-pipeline-plan-optin-test rust-store-fts-tokenizer-optin-test rust-store-mmap-resolver-optin-test rust-store-immutable-uri-optin-test rust-store-search-pattern-optin-test rust-store-arch-helper-optin-test rust-store-arch-path-scope-optin-test rust-store-file-ext-optin-test rust-mcp-codec-optin-test rust-cypher-scalar-func-optin-test $MAKE_ARGS
+		make -f Makefile.cbm rust-test rust-ffi-test rust-foundation-optin-test rust-yaml-optin-test rust-yaml-only-test rust-traces-optin-test rust-cli-progress-sink-optin-test rust-pipeline-registry-optin-test rust-pipeline-plan-optin-test rust-pipeline-route-canon-optin-test rust-pipeline-infrascan-optin-test rust-pipeline-githistory-optin-test rust-pipeline-gitdiff-range-optin-test rust-pipeline-gitdiff-name-status-optin-test rust-pipeline-gitdiff-hunks-optin-test rust-pipeline-module-dir-optin-test rust-pipeline-route-args-optin-test rust-pipeline-route-node-classifiers-optin-test rust-pipeline-k8s-file-classifiers-optin-test rust-pipeline-test-detect-optin-test rust-pipeline-checked-exception-optin-test rust-pipeline-artifact-path-optin-test rust-pipeline-project-name-optin-test rust-pipeline-configures-optin-test rust-store-fts-tokenizer-optin-test rust-store-mmap-resolver-optin-test rust-store-immutable-uri-optin-test rust-store-search-pattern-optin-test rust-store-arch-helper-optin-test rust-store-arch-path-scope-optin-test rust-store-file-ext-optin-test rust-mcp-codec-optin-test rust-cypher-scalar-func-optin-test rust-cypher-multiarg-func-optin-test rust-cypher-agg-func-optin-test rust-cypher-string-func-optin-test $MAKE_ARGS
+        make -f Makefile.cbm rust-traces-only-test $MAKE_ARGS
+        make -f Makefile.cbm rust-pipeline-configures-only-test $MAKE_ARGS
+		make -f Makefile.cbm rust-cypher-lex-two-char-optin-test $MAKE_ARGS
+		make -f Makefile.cbm rust-store-language-map-optin-test $MAKE_ARGS
     else
         echo "=== Step 7: Rust refactor parity tests skipped (cargo not found) ==="
     fi

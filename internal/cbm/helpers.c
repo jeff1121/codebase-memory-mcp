@@ -7,6 +7,10 @@
 #include "foundation/compat.h" // CBM_TLS
 #include <stdlib.h>            // calloc/free for the symbol-set cache
 
+#if defined(CBM_USE_RUST_PIPELINE_MODULE_DIR) || defined(CBM_USE_RUST_PIPELINE_MODULE_DIR_ONLY)
+extern int cbm_rs_pipeline_is_module_dir_v1(int language);
+#endif
+
 enum {
     MIN_ROUTE_LEN = 3,
     MIN_SYS_PATH_LEN = 4,
@@ -1262,8 +1266,12 @@ char *cbm_fqn_module(CBMArena *a, const char *project, const char *rel_path) {
 // type/method name is appended once — so a class `Outer` in `Outer.java` is
 // `proj.Outer`, not `proj.Outer.Outer`, and a method in `myapp/db/conn.go`
 // belongs to module `proj.myapp.db`, not `proj.myapp.db.conn`.
-static bool cbm_lang_module_is_dir(CBMLanguage lang) {
+bool cbm_lang_module_is_dir(CBMLanguage lang) {
+#if defined(CBM_USE_RUST_PIPELINE_MODULE_DIR) || defined(CBM_USE_RUST_PIPELINE_MODULE_DIR_ONLY)
+    return cbm_rs_pipeline_is_module_dir_v1((int)lang) != 0;
+#else
     return lang == CBM_LANG_JAVA || lang == CBM_LANG_GO;
+#endif
 }
 
 char *cbm_fqn_module_source_lang(CBMArena *a, const char *project, const char *rel_path,

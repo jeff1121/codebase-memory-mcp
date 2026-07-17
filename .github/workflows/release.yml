@@ -54,6 +54,7 @@ jobs:
       broad_platforms: true
 
   # ── 2b. Rust refactor gates (opt-in parity + static checks) ─────
+  # 這些 gate 僅驗證 Rust 質量/相容，未代表預設 runtime 已切換。
   rust:
     needs: [lint]
     uses: ./.github/workflows/_rust.yml

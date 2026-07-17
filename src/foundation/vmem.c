@@ -17,6 +17,10 @@
 #include <stdio.h>  /* snprintf */
 #include <string.h> /* memset */
 
+#ifdef CBM_USE_RUST_VMEM_PAGE_ROUND
+extern size_t cbm_rs_vmem_round_to_page_v1(size_t size, size_t page_size);
+#endif
+
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -51,7 +55,11 @@ static size_t page_size(void) {
 /* Round up to page boundary. */
 static size_t round_to_page(size_t size) {
     size_t ps = page_size();
+#ifdef CBM_USE_RUST_VMEM_PAGE_ROUND
+    return cbm_rs_vmem_round_to_page_v1(size, ps);
+#else
     return (size + ps - SKIP_ONE) & ~(ps - SKIP_ONE);
+#endif
 }
 
 /* ── Pressure logging ──────────────────────────────────────────── */

@@ -29,6 +29,20 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#ifdef CBM_USE_RUST_PIPELINE_PKGMAP_TEXT
+extern int cbm_rs_pipeline_pkgmap_at_prefix_v1(const char *source, size_t available,
+                                               const char *prefix, int prefix_len);
+extern int cbm_rs_pipeline_pkgmap_find_line_value_offset_v1(const char *source, int source_len,
+                                                            const char *prefix);
+extern size_t cbm_rs_pipeline_pkgmap_path_dirname_v1(char *buf, size_t bufsize, const char *path);
+extern size_t cbm_rs_pipeline_pkgmap_strip_extension_v1(char *buf, size_t bufsize,
+                                                        const char *path);
+extern size_t cbm_rs_pipeline_pkgmap_join_and_strip_v1(char *buf, size_t bufsize, const char *dir,
+                                                       const char *entry);
+extern size_t cbm_rs_pipeline_pkgmap_build_entry_path_v1(char *buf, size_t bufsize,
+                                                         const char *rel_path, const char *suffix);
+#endif
 #include <sys/stat.h>
 
 /* Read an entire file into a malloc'd buffer. Returns NULL on failure. */
@@ -90,7 +104,14 @@ static const char *pkgmap_itoa(int val) {
 
 /* Check if src at position p starts with literal str of known length. */
 static bool at_prefix(const char *p, const char *end, const char *prefix, int prefix_len) {
+#ifdef CBM_USE_RUST_PIPELINE_PKGMAP_TEXT
+    if (!p || !end || !prefix || end < p || prefix_len < 0) {
+        return false;
+    }
+    return cbm_rs_pipeline_pkgmap_at_prefix_v1(p, (size_t)(end - p), prefix, prefix_len) != 0;
+#else
     return p + prefix_len <= end && memcmp(p, prefix, (size_t)prefix_len) == 0;
+#endif
 }
 
 /* ── Per-worker collection ─────────────────────────────────────── */
@@ -140,16 +161,41 @@ static const char *path_basename(const char *rel_path) {
 /* Get the directory part of a relative path (without trailing slash).
  * Returns heap-allocated string. For "foo.json" returns "". */
 static char *path_dirname(const char *rel_path) {
+#ifdef CBM_USE_RUST_PIPELINE_PKGMAP_TEXT
+    size_t length = cbm_rs_pipeline_pkgmap_path_dirname_v1(NULL, 0, rel_path);
+    char *result = malloc(length + SKIP_ONE);
+    if (!result) {
+        return NULL;
+    }
+    if (cbm_rs_pipeline_pkgmap_path_dirname_v1(result, length + SKIP_ONE, rel_path) != length) {
+        free(result);
+        return NULL;
+    }
+    return result;
+#else
     const char *last = strrchr(rel_path, '/');
     if (!last) {
         return strdup("");
     }
     return cbm_strndup(rel_path, (size_t)(last - rel_path));
+#endif
 }
 
 /* Strip file extension from a path. Returns heap-allocated string.
  * "src/index.ts" → "src/index", "lib/main" → "lib/main" */
 static char *strip_extension(const char *path) {
+#ifdef CBM_USE_RUST_PIPELINE_PKGMAP_TEXT
+    size_t length = cbm_rs_pipeline_pkgmap_strip_extension_v1(NULL, 0, path);
+    char *result = malloc(length + SKIP_ONE);
+    if (!result) {
+        return NULL;
+    }
+    if (cbm_rs_pipeline_pkgmap_strip_extension_v1(result, length + SKIP_ONE, path) != length) {
+        free(result);
+        return NULL;
+    }
+    return result;
+#else
     size_t len = strlen(path);
     for (size_t i = len; i > 0; i--) {
         if (path[i - SKIP_ONE] == '.') {
@@ -160,11 +206,27 @@ static char *strip_extension(const char *path) {
         }
     }
     return strdup(path);
+#endif
 }
 
 /* Join directory + relative entry path, normalize.
  * "packages/foo" + "src/index.ts" → "packages/foo/src/index" (stripped ext) */
 static char *join_and_strip(const char *dir, const char *entry) {
+#ifdef CBM_USE_RUST_PIPELINE_PKGMAP_TEXT
+    size_t length = cbm_rs_pipeline_pkgmap_join_and_strip_v1(NULL, 0, dir, entry);
+    if (length == SIZE_MAX) {
+        return NULL;
+    }
+    char *result = malloc(length + SKIP_ONE);
+    if (!result) {
+        return NULL;
+    }
+    if (cbm_rs_pipeline_pkgmap_join_and_strip_v1(result, length + SKIP_ONE, dir, entry) != length) {
+        free(result);
+        return NULL;
+    }
+    return result;
+#else
     if (!entry || entry[0] == '\0') {
         return NULL;
     }
@@ -179,6 +241,7 @@ static char *join_and_strip(const char *dir, const char *entry) {
         snprintf(buf, sizeof(buf), "%s/%s", dir, entry);
     }
     return strip_extension(buf);
+#endif
 }
 
 /* Check if a string ends with a suffix. */
@@ -194,6 +257,10 @@ static bool ends_with(const char *s, const char *suffix) {
 /* Find a line starting with a prefix in source. Returns pointer to first char
  * after prefix, or NULL. Handles leading whitespace. */
 static const char *find_line_value(const char *src, int src_len, const char *prefix) {
+#ifdef CBM_USE_RUST_PIPELINE_PKGMAP_TEXT
+    int offset = cbm_rs_pipeline_pkgmap_find_line_value_offset_v1(src, src_len, prefix);
+    return offset < 0 ? NULL : src + offset;
+#else
     size_t plen = strlen(prefix);
     const char *p = src;
     const char *end = src + src_len;
@@ -214,6 +281,7 @@ static const char *find_line_value(const char *src, int src_len, const char *pre
         }
     }
     return NULL;
+#endif
 }
 
 /* Extract a quoted string value from position. Handles both "..." and '...'
@@ -374,11 +442,25 @@ static char *toml_extract_name(const char *section_start, const char *end) {
 
 /* Build entry path: dir/suffix or just suffix if dir is empty. */
 static char *build_entry_path(const char *rel_path, const char *suffix) {
+#ifdef CBM_USE_RUST_PIPELINE_PKGMAP_TEXT
+    size_t length = cbm_rs_pipeline_pkgmap_build_entry_path_v1(NULL, 0, rel_path, suffix);
+    char *result = malloc(length + SKIP_ONE);
+    if (!result) {
+        return NULL;
+    }
+    if (cbm_rs_pipeline_pkgmap_build_entry_path_v1(result, length + SKIP_ONE, rel_path, suffix) !=
+        length) {
+        free(result);
+        return NULL;
+    }
+    return result;
+#else
     char *dir = path_dirname(rel_path);
     char buf[PKGMAP_PATH_BUF];
     snprintf(buf, sizeof(buf), "%s%s%s", dir[0] ? dir : "", dir[0] ? "/" : "", suffix);
     free(dir);
     return strdup(buf);
+#endif
 }
 
 /* Rust: Cargo.toml — [package] name */

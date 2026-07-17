@@ -27,6 +27,7 @@ enum {
 #define SLEN(s) (sizeof(s) - 1)
 #include "pipeline/pipeline.h"
 #include "pipeline/pipeline_internal.h"
+#include "pipeline/test_node_is_test.h"
 #include "graph_buffer/graph_buffer.h"
 #include "foundation/log.h"
 
@@ -34,6 +35,10 @@ enum {
 #include <stdlib.h>
 #include <string.h>
 
+#if defined(CBM_USE_RUST_PIPELINE_TEST_DETECT) || defined(CBM_USE_RUST_PIPELINE_TEST_DETECT_ONLY)
+extern size_t cbm_rs_pipeline_test_to_prod_path_v1(char *buf, size_t bufsize,
+                                                   const char *test_path);
+#endif
 static const char *itoa_log(int val) {
     static char bufs[PT_RING][CBM_SZ_32];
     static int idx = 0;
@@ -41,116 +46,6 @@ static const char *itoa_log(int val) {
     idx = (idx + SKIP_ONE) & PT_RING_MASK;
     snprintf(bufs[i], sizeof(bufs[i]), "%d", val);
     return bufs[i];
-}
-
-/* Check if a node has is_test:true in its properties JSON. */
-static bool node_is_test(const cbm_gbuf_node_t *n) {
-    if (!n || !n->properties_json) {
-        return false;
-    }
-    return strstr(n->properties_json, "\"is_test\":true") != NULL;
-}
-
-/* Helper to check suffix. */
-static bool str_ends_with(const char *s, size_t slen, const char *suffix) {
-    size_t sflen = strlen(suffix);
-    return slen >= sflen && strcmp(s + slen - sflen, suffix) == 0;
-}
-
-/* Check if a file path looks like a test file (language-agnostic). */
-bool cbm_is_test_path(const char *path) {
-    if (!path) {
-        return false;
-    }
-    const char *base = strrchr(path, '/');
-    base = base ? base + SKIP_ONE : path;
-    size_t len = strlen(path);
-
-    /* Prefix-based: Python test_*.py */
-    if (strncmp(base, "test_", SLEN("test_")) == 0) {
-        return true;
-    }
-
-    /* Suffix-based: _test.<ext> pattern (Go, Python, Rust, C++, Lua) */
-    if (str_ends_with(path, len, "_test.go") || str_ends_with(path, len, "_test.py") ||
-        str_ends_with(path, len, "_test.rs") || str_ends_with(path, len, "_test.cpp") ||
-        str_ends_with(path, len, "_test.lua")) {
-        return true;
-    }
-
-    /* .test.<ext> / .spec.<ext> pattern (JS/TS/TSX) */
-    if (strstr(path, ".test.ts") || strstr(path, ".spec.ts") || strstr(path, ".test.js") ||
-        strstr(path, ".spec.js") || strstr(path, ".test.tsx") || strstr(path, ".spec.tsx")) {
-        return true;
-    }
-
-    /* Name ends with "Test" or "Spec" before extension (Java, Kotlin, C#, PHP, Scala) */
-    if (str_ends_with(path, len, "Test.java") || str_ends_with(path, len, "Test.kt") ||
-        str_ends_with(path, len, "Test.cs") || str_ends_with(path, len, "Test.php") ||
-        str_ends_with(path, len, "Spec.scala")) {
-        return true;
-    }
-
-    /* Directory-based: __tests__/, tests/, test/, spec/ */
-    if (strstr(path, "__tests__/") || strstr(path, "/tests/") || strstr(path, "/test/") ||
-        strstr(path, "/spec/")) {
-        return true;
-    }
-    /* Also match if path STARTS with these directories */
-    if (strncmp(path, "tests/", SLEN("tests/")) == 0 ||
-        strncmp(path, "test/", SLEN("test/")) == 0 || strncmp(path, "spec/", SLEN("spec/")) == 0 ||
-        strncmp(path, "__tests__/", SLEN("__tests__/")) == 0) {
-        return true;
-    }
-
-    /* Ruby: _spec.rb suffix */
-    if (str_ends_with(path, len, "_spec.rb")) {
-        return true;
-    }
-
-    return false;
-}
-
-/* Check if a function name looks like a test function (language-agnostic). */
-bool cbm_is_test_func_name(const char *name) {
-    if (!name) {
-        return false;
-    }
-    /* Go: Test/Benchmark/Example + uppercase letter or end-of-string.
-     * "TestFoo" = test, "Testable" = not test (lowercase after prefix). */
-    if (strncmp(name, "Test", SLEN("Test")) == 0 &&
-        (name[PT_TEST_LEN] == '\0' || (name[PT_TEST_LEN] >= 'A' && name[PT_TEST_LEN] <= 'Z'))) {
-        return true;
-    }
-    if (strncmp(name, "Benchmark", SLEN("Benchmark")) == 0 &&
-        (name[PT_DESCRIBE_LEN] == '\0' ||
-         (name[PT_DESCRIBE_LEN] >= 'A' && name[PT_DESCRIBE_LEN] <= 'Z'))) {
-        return true;
-    }
-    if (strncmp(name, "Example", SLEN("Example")) == 0 &&
-        (name[PT_CONTEXT_LEN] == '\0' ||
-         (name[PT_CONTEXT_LEN] >= 'A' && name[PT_CONTEXT_LEN] <= 'Z'))) {
-        return true;
-    }
-    /* Python/Rust/C++/Lua/Java: test_ or test prefix (lowercase) */
-    if (strncmp(name, "test_", SLEN("test_")) == 0) {
-        return true;
-    }
-    if (strncmp(name, "test", SLEN("test")) == 0 && name[PT_TEST_LEN] >= 'A' &&
-        name[PT_TEST_LEN] <= 'Z') {
-        return true;
-    }
-    /* JS/TS: test/it/describe + lifecycle hooks */
-    if (strcmp(name, "test") == 0 || strcmp(name, "it") == 0 || strcmp(name, "describe") == 0 ||
-        strcmp(name, "beforeAll") == 0 || strcmp(name, "afterAll") == 0 ||
-        strcmp(name, "beforeEach") == 0 || strcmp(name, "afterEach") == 0) {
-        return true;
-    }
-    /* Julia: @testset, @test */
-    if (strcmp(name, "@testset") == 0 || strcmp(name, "@test") == 0) {
-        return true;
-    }
-    return false;
 }
 
 /* Assemble dir/name+ext into a heap-allocated path. */
@@ -175,6 +70,20 @@ static char *test_to_prod_path(const char *test_path) {
     if (!test_path) {
         return NULL;
     }
+
+#if defined(CBM_USE_RUST_PIPELINE_TEST_DETECT) || defined(CBM_USE_RUST_PIPELINE_TEST_DETECT_ONLY)
+    size_t test_len = strlen(test_path);
+    char *rust_path = malloc(test_len + SKIP_ONE);
+    if (!rust_path) {
+        return NULL;
+    }
+    size_t rust_len =
+        cbm_rs_pipeline_test_to_prod_path_v1(rust_path, test_len + SKIP_ONE, test_path);
+    if (rust_len != SIZE_MAX) {
+        return rust_path;
+    }
+    free(rust_path);
+#endif
 
     const char *base = strrchr(test_path, '/');
     size_t dir_len = base ? (size_t)(base - test_path) : 0;
@@ -226,14 +135,14 @@ static int create_tests_edges(cbm_pipeline_ctx_t *ctx) {
             continue;
         }
 
-        bool src_is_test =
-            node_is_test(src) || (src->file_path && cbm_is_test_path(src->file_path));
+        bool src_is_test = cbm_pipeline_test_node_is_test(src->properties_json) ||
+                           (src->file_path && cbm_is_test_path(src->file_path));
         if (!src_is_test) {
             continue;
         }
 
-        bool tgt_is_test =
-            node_is_test(tgt) || (tgt->file_path && cbm_is_test_path(tgt->file_path));
+        bool tgt_is_test = cbm_pipeline_test_node_is_test(tgt->properties_json) ||
+                           (tgt->file_path && cbm_is_test_path(tgt->file_path));
         if (tgt_is_test) {
             continue;
         }

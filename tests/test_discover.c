@@ -6,6 +6,10 @@
 #include "test_framework.h"
 #include "test_helpers.h"
 #include "discover/discover.h"
+#include "discover/discover_string_helpers.h"
+#include "discover/local_rel_path.h"
+#include "discover/path_join.h"
+#include "discover/trailing_sep.h"
 
 typedef struct {
     char *home;
@@ -44,6 +48,104 @@ static bool discover_has_rel_path(const cbm_file_info_t *files, int count, const
         }
     }
     return false;
+}
+
+TEST(discover_string_helpers_contract) {
+    const char *const names[] = {"src", "docs", NULL};
+    const char *const empty[] = {NULL};
+    const char *const stopped[] = {"src", NULL, "docs"};
+
+    ASSERT_TRUE(cbm_discover_str_in_list("docs", names));
+    ASSERT_FALSE(cbm_discover_str_in_list("tests", names));
+    ASSERT_FALSE(cbm_discover_str_in_list(NULL, names));
+    ASSERT_FALSE(cbm_discover_str_in_list("src", NULL));
+    ASSERT_FALSE(cbm_discover_str_in_list("src", empty));
+    ASSERT_FALSE(cbm_discover_str_in_list("docs", stopped));
+
+    ASSERT_TRUE(cbm_discover_ends_with("module.pyc", ".pyc"));
+    ASSERT_TRUE(cbm_discover_ends_with("module.pyc", ""));
+    ASSERT_FALSE(cbm_discover_ends_with("module.pyc", ".sqlite"));
+    ASSERT_FALSE(cbm_discover_ends_with(NULL, ".pyc"));
+    ASSERT_FALSE(cbm_discover_ends_with("module.pyc", NULL));
+
+    ASSERT_TRUE(cbm_discover_str_contains("service.pb.go", ".pb."));
+    ASSERT_TRUE(cbm_discover_str_contains("service.pb.go", ""));
+    ASSERT_FALSE(cbm_discover_str_contains("service.pb.go", "mock"));
+    ASSERT_FALSE(cbm_discover_str_contains(NULL, ".pb."));
+    ASSERT_FALSE(cbm_discover_str_contains("service.pb.go", NULL));
+
+    ASSERT_TRUE(cbm_discover_ascii_ieq("ExcludesFile", "excludesfile"));
+    ASSERT_FALSE(cbm_discover_ascii_ieq("core", "cache"));
+    ASSERT_FALSE(cbm_discover_ascii_ieq("\xC0", "\xE0"));
+    ASSERT_FALSE(cbm_discover_ascii_ieq(NULL, "core"));
+    ASSERT_FALSE(cbm_discover_ascii_ieq("core", NULL));
+    PASS();
+}
+
+/* 公開 bridge 契約：NULL/空字串 false；尾端 / 或 \\ true。 */
+TEST(discover_trailing_sep_contract) {
+    ASSERT_TRUE(cbm_discover_has_trailing_sep("src/"));
+    ASSERT_TRUE(cbm_discover_has_trailing_sep("src\\"));
+    ASSERT_FALSE(cbm_discover_has_trailing_sep("src"));
+    ASSERT_FALSE(cbm_discover_has_trailing_sep(""));
+    ASSERT_FALSE(cbm_discover_has_trailing_sep(NULL));
+    PASS();
+}
+
+/* 公開 path_join bridge：caller buffer、NULL 視為空、尾端 sep、截斷。 */
+TEST(discover_path_join_contract) {
+    char out[64];
+    cbm_discover_path_join("/tmp", "file", out, sizeof(out));
+    ASSERT_STR_EQ(out, "/tmp/file");
+    cbm_discover_path_join("/tmp/", "file", out, sizeof(out));
+    ASSERT_STR_EQ(out, "/tmp/file");
+    cbm_discover_path_join(NULL, "file", out, sizeof(out));
+    ASSERT_STR_EQ(out, "file");
+    cbm_discover_path_join("/tmp", NULL, out, sizeof(out));
+    ASSERT_STR_EQ(out, "/tmp");
+    cbm_discover_path_join("C:\\tmp", "file", out, sizeof(out));
+    ASSERT_STR_EQ(out, "C:/tmp/file");
+    cbm_discover_path_join("c:/tmp", "file", out, sizeof(out));
+    ASSERT_STR_EQ(out, "C:/tmp/file");
+    cbm_discover_path_join("c:\\tmp", "file", out, sizeof(out));
+    ASSERT_STR_EQ(out, "C:/tmp/file");
+    cbm_discover_path_join("c:", NULL, out, sizeof(out));
+    ASSERT_STR_EQ(out, "C:");
+    cbm_discover_path_join("c:relative", "file", out, sizeof(out));
+    ASSERT_STR_EQ(out, "c:relative/file");
+    cbm_discover_path_join("c:x", NULL, out, 3);
+    ASSERT_STR_EQ(out, "C:");
+    cbm_discover_path_join("/tmp", "filename", out, 5);
+    ASSERT_STR_EQ(out, "/tmp");
+    out[0] = 'Z';
+    out[1] = 'Q';
+    cbm_discover_path_join("/tmp", "file", out, 0);
+    ASSERT_EQ(out[0], 'Z');
+    ASSERT_EQ(out[1], 'Q');
+    PASS();
+}
+
+/* 公開 local-rel-path bridge：僅接受完整、大小寫相符且以 / 分隔的 prefix。 */
+TEST(discover_local_rel_path_contract) {
+    const char *rel_path = "webapp/src/foo.js";
+    size_t offset = cbm_discover_local_rel_path_offset(rel_path, "webapp");
+
+    ASSERT_EQ(offset, 7);
+    ASSERT_STR_EQ(rel_path + offset, "src/foo.js");
+    ASSERT_EQ(cbm_discover_local_rel_path_offset("webapp", "webapp"), 0);
+    ASSERT_EQ(cbm_discover_local_rel_path_offset("webapp2/src/foo.js", "webapp"), 0);
+    ASSERT_EQ(cbm_discover_local_rel_path_offset("WebApp/src/foo.js", "webapp"), 0);
+    ASSERT_EQ(cbm_discover_local_rel_path_offset("webapp\\src/foo.js", "webapp"), 0);
+
+    rel_path = "webapp/";
+    offset = cbm_discover_local_rel_path_offset(rel_path, "webapp");
+    ASSERT_EQ(offset, 7);
+    ASSERT_STR_EQ(rel_path + offset, "");
+
+    ASSERT_EQ(cbm_discover_local_rel_path_offset("webapp/src/foo.js", ""), 0);
+    ASSERT_EQ(cbm_discover_local_rel_path_offset("webapp/src/foo.js", NULL), 0);
+    ASSERT_EQ(cbm_discover_local_rel_path_offset(NULL, "webapp"), 0);
+    PASS();
 }
 
 /* ── Directory skip (always skipped) ───────────────────────────── */
@@ -295,6 +397,23 @@ TEST(pattern_stories) {
 /* Not matched in full mode */
 TEST(pattern_dts_full) {
     ASSERT_FALSE(cbm_matches_fast_pattern("types.d.ts", CBM_MODE_FULL));
+    PASS();
+}
+
+TEST(filters_null_input) {
+    ASSERT_FALSE(cbm_should_skip_dir(NULL, CBM_MODE_FAST));
+    ASSERT_FALSE(cbm_has_ignored_suffix(NULL, CBM_MODE_FAST));
+    ASSERT_FALSE(cbm_should_skip_filename(NULL, CBM_MODE_FAST));
+    ASSERT_FALSE(cbm_matches_fast_pattern(NULL, CBM_MODE_FAST));
+    PASS();
+}
+
+TEST(filters_nonzero_mode_is_restricted) {
+    cbm_index_mode_t mode = (cbm_index_mode_t)99;
+    ASSERT_TRUE(cbm_should_skip_dir("docs", mode));
+    ASSERT_TRUE(cbm_has_ignored_suffix("archive.zip", mode));
+    ASSERT_TRUE(cbm_should_skip_filename("LICENSE", mode));
+    ASSERT_TRUE(cbm_matches_fast_pattern("types.d.ts", mode));
     PASS();
 }
 
@@ -1043,6 +1162,10 @@ TEST(discover_nested_gitignore_stacks_with_root) {
 /* ── Suite ─────────────────────────────────────────────────────── */
 
 SUITE(discover) {
+    RUN_TEST(discover_string_helpers_contract);
+    RUN_TEST(discover_trailing_sep_contract);
+    RUN_TEST(discover_path_join_contract);
+    RUN_TEST(discover_local_rel_path_contract);
     /* Directory skip — always */
     RUN_TEST(skip_git);
     RUN_TEST(skip_node_modules);
@@ -1111,6 +1234,8 @@ SUITE(discover) {
     RUN_TEST(pattern_spec);
     RUN_TEST(pattern_stories);
     RUN_TEST(pattern_dts_full);
+    RUN_TEST(filters_null_input);
+    RUN_TEST(filters_nonzero_mode_is_restricted);
 
     /* Integration tests (cross-platform) */
     RUN_TEST(discover_simple);

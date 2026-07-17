@@ -4,6 +4,8 @@
  * Writes JSON to /tmp/cbm-diagnostics-<pid>.json every 5 seconds.
  * Atomic: writes .tmp then renames to avoid partial reads.
  */
+#ifndef CBM_USE_RUST_DIAGNOSTICS_ONLY
+
 #include "foundation/constants.h"
 #include "foundation/diagnostics.h"
 #include <stdatomic.h>
@@ -18,6 +20,16 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+
+#ifdef CBM_USE_RUST_DIAGNOSTICS_FORMAT
+extern int cbm_rs_diag_env_enabled_value(const char *value);
+extern int cbm_rs_diag_query_snapshot_values(int count, int errors, long long total_us,
+                                             long long max_us, cbm_diag_query_snapshot_t *out);
+extern int cbm_rs_diag_format_path(char *buf, size_t buf_sz, const char *tmpdir, int pid,
+                                   const char *ext);
+extern int cbm_rs_diag_format_json(char *buf, size_t buf_sz, const cbm_diag_snapshot_t *snapshot);
+extern int cbm_rs_diag_format_ndjson(char *buf, size_t buf_sz, const cbm_diag_snapshot_t *snapshot);
+#endif
 
 #ifdef _WIN32
 #include <process.h>
@@ -44,16 +56,24 @@ static size_t g_diag_ndjson_size = 0;
 
 /* ── 純函式輔助工具 ────────────────────────────────────────────── */
 
+#ifndef CBM_USE_RUST_DIAGNOSTICS_FORMAT_ONLY
 static int diag_format_result(int n, size_t buf_sz) {
     if (n < 0 || (size_t)n >= buf_sz) {
         return CBM_NOT_FOUND;
     }
     return n;
 }
+#endif
 
+#ifndef CBM_USE_RUST_DIAGNOSTICS_FORMAT_ONLY
 bool cbm_diag_env_enabled_value(const char *value) {
+#ifdef CBM_USE_RUST_DIAGNOSTICS_FORMAT
+    return cbm_rs_diag_env_enabled_value(value) != 0;
+#else
     return value != NULL && (strcmp(value, "1") == 0 || strcmp(value, "true") == 0);
+#endif
 }
+#endif
 
 void cbm_diag_query_stats_snapshot(cbm_query_stats_t *stats, cbm_diag_query_snapshot_t *out) {
     if (out == NULL) {
@@ -64,6 +84,15 @@ void cbm_diag_query_stats_snapshot(cbm_query_stats_t *stats, cbm_diag_query_snap
         return;
     }
 
+#ifdef CBM_USE_RUST_DIAGNOSTICS_FORMAT
+    int rust_result = cbm_rs_diag_query_snapshot_values(
+        atomic_load(&stats->count), atomic_load(&stats->errors), atomic_load(&stats->time_us),
+        atomic_load(&stats->max_us), out);
+    if (rust_result == 0) {
+        return;
+    }
+#endif
+
     out->count = atomic_load(&stats->count);
     out->errors = atomic_load(&stats->errors);
     out->total_us = atomic_load(&stats->time_us);
@@ -71,15 +100,30 @@ void cbm_diag_query_stats_snapshot(cbm_query_stats_t *stats, cbm_diag_query_snap
     out->avg_us = out->count > 0 ? out->total_us / out->count : 0;
 }
 
+#ifndef CBM_USE_RUST_DIAGNOSTICS_FORMAT_ONLY
 int cbm_diag_format_path(char *buf, size_t buf_sz, const char *tmpdir, int pid, const char *ext) {
+#ifdef CBM_USE_RUST_DIAGNOSTICS_FORMAT
+    int rust_result = cbm_rs_diag_format_path(buf, buf_sz, tmpdir, pid, ext);
+    if (rust_result >= 0) {
+        return rust_result;
+    }
+#endif
     if (buf == NULL || buf_sz == 0 || tmpdir == NULL || ext == NULL) {
         return CBM_NOT_FOUND;
     }
     int n = snprintf(buf, buf_sz, "%s/cbm-diagnostics-%d.%s", tmpdir, pid, ext);
     return diag_format_result(n, buf_sz);
 }
+#endif
 
+#ifndef CBM_USE_RUST_DIAGNOSTICS_FORMAT_ONLY
 int cbm_diag_format_json(char *buf, size_t buf_sz, const cbm_diag_snapshot_t *snapshot) {
+#ifdef CBM_USE_RUST_DIAGNOSTICS_FORMAT
+    int rust_result = cbm_rs_diag_format_json(buf, buf_sz, snapshot);
+    if (rust_result >= 0) {
+        return rust_result;
+    }
+#endif
     if (buf == NULL || buf_sz == 0 || snapshot == NULL) {
         return CBM_NOT_FOUND;
     }
@@ -106,8 +150,16 @@ int cbm_diag_format_json(char *buf, size_t buf_sz, const cbm_diag_snapshot_t *sn
                      q->avg_us, q->max_us, snapshot->pid);
     return diag_format_result(n, buf_sz);
 }
+#endif
 
+#ifndef CBM_USE_RUST_DIAGNOSTICS_FORMAT_ONLY
 int cbm_diag_format_ndjson(char *buf, size_t buf_sz, const cbm_diag_snapshot_t *snapshot) {
+#ifdef CBM_USE_RUST_DIAGNOSTICS_FORMAT
+    int rust_result = cbm_rs_diag_format_ndjson(buf, buf_sz, snapshot);
+    if (rust_result >= 0) {
+        return rust_result;
+    }
+#endif
     if (buf == NULL || buf_sz == 0 || snapshot == NULL) {
         return CBM_NOT_FOUND;
     }
@@ -119,6 +171,7 @@ int cbm_diag_format_ndjson(char *buf, size_t buf_sz, const cbm_diag_snapshot_t *
                      snapshot->page_faults, snapshot->fd_count, snapshot->queries.count);
     return diag_format_result(n, buf_sz);
 }
+#endif
 
 /* ── Query stats ─────────────────────────────────────────────────── */
 
@@ -318,3 +371,5 @@ void cbm_diag_stop(void) {
                       g_diag_ndjson_path);
     }
 }
+
+#endif

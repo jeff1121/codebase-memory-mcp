@@ -18,6 +18,8 @@
  *     pathological monorepos shows up in the index log.
  */
 
+#ifndef CBM_USE_RUST_PIPELINE_PATH_ALIAS_ONLY
+
 #include "pipeline/path_alias.h"
 
 #include "foundation/compat.h"
@@ -450,3 +452,5 @@ const cbm_path_alias_map_t *cbm_path_alias_find_for_file(const cbm_path_alias_co
     }
     return NULL;
 }
+
+#endif

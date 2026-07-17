@@ -1,3 +1,5 @@
+#ifndef CBM_USE_RUST_DISCOVER_USERCONFIG_ONLY
+
 /*
  * userconfig.c — User-defined extension→language mappings.
  *
@@ -385,3 +387,5 @@ void cbm_userconfig_free(cbm_userconfig_t *cfg) {
     free(cfg->entries);
     free(cfg);
 }
+
+#endif

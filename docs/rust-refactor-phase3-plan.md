@@ -1,5 +1,9 @@
 # Rust 重構 Phase 3 切分計畫
 
+> **歷史設計計畫，不是目前交接狀態（2026-07-16）**：目前完成度、待驗證切片與 source
+> replacement 定義請讀 [rust-refactor-current-handoff.md](rust-refactor-current-handoff.md)。
+> 實際 Store、Cypher、MCP ABI 與 gate 以原始碼、Makefile.cbm、tests 與根目錄重構文件為準。
+
 本文件把 `store`、`cypher`、`mcp` 的 Rust 遷移拆成可驗證切片。Phase 3 的第一步不是直接改寫核心服務，而是先凍結 contract fixture，避免 Rust 實作完成後才發現公開行為或 SQLite 副作用漂移。
 
 ## Store：SQLite Contract 優先

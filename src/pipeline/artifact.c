@@ -16,6 +16,7 @@ enum {
 #define ART_BYTES_PER_MB ((size_t)1024 * 1024)
 
 #include "pipeline/artifact.h"
+#include "pipeline/artifact_path.h"
 #include "store/store.h"
 #include "foundation/platform.h"
 #include "foundation/compat_fs.h"
@@ -112,12 +113,6 @@ static void file_error_set(artifact_file_error_t *out, const char *err, int err_
         out->err = err;
         out->err_no = err_no;
     }
-}
-
-/* Build path: <repo>/.codebase-memory/<name> into caller-owned buf. */
-static bool artifact_path(char *buf, size_t bufsz, const char *repo_path, const char *name) {
-    int n = snprintf(buf, bufsz, "%s/%s/%s", repo_path, CBM_ARTIFACT_DIR, name);
-    return n >= 0 && (size_t)n < bufsz;
 }
 
 /* Read entire file into malloc'd buffer. Sets *out_len. Returns NULL on error. */
@@ -239,7 +234,7 @@ static void iso_timestamp(char *buf, size_t bufsz) {
 /* Read schema_version from artifact.json. Returns -1 if missing/invalid. */
 static int read_metadata_version(const char *repo_path) {
     char meta_path[CBM_SZ_4K];
-    artifact_path(meta_path, sizeof(meta_path), repo_path, CBM_ARTIFACT_META);
+    cbm_pipeline_artifact_path(meta_path, sizeof(meta_path), repo_path, CBM_ARTIFACT_META);
 
     size_t len = 0;
     char *json = read_file_alloc(meta_path, &len);
@@ -263,7 +258,7 @@ static int read_metadata_version(const char *repo_path) {
 /* Read original_size from artifact.json. Returns 0 on error. */
 static size_t read_metadata_original_size(const char *repo_path) {
     char meta_path[CBM_SZ_4K];
-    artifact_path(meta_path, sizeof(meta_path), repo_path, CBM_ARTIFACT_META);
+    cbm_pipeline_artifact_path(meta_path, sizeof(meta_path), repo_path, CBM_ARTIFACT_META);
 
     size_t len = 0;
     char *json = read_file_alloc(meta_path, &len);
@@ -315,7 +310,7 @@ static int write_metadata(const char *repo_path, const char *project_name, int n
     }
 
     char meta_path[CBM_SZ_4K];
-    if (!artifact_path(meta_path, sizeof(meta_path), repo_path, CBM_ARTIFACT_META)) {
+    if (!cbm_pipeline_artifact_path(meta_path, sizeof(meta_path), repo_path, CBM_ARTIFACT_META)) {
         free(json);
         return artifact_export_fail("write_metadata", repo_path, "path_too_long", 0);
     }
@@ -332,7 +327,7 @@ static int write_metadata(const char *repo_path, const char *project_name, int n
 
 static void ensure_gitattributes(const char *repo_path) {
     char ga_path[CBM_SZ_4K];
-    artifact_path(ga_path, sizeof(ga_path), repo_path, ".gitattributes");
+    cbm_pipeline_artifact_path(ga_path, sizeof(ga_path), repo_path, ".gitattributes");
 
     /* Atomic create-only-if-absent: O_EXCL closes the TOCTOU window
      * between checking existence and writing. If the file exists, open
@@ -496,7 +491,7 @@ int cbm_artifact_export(const char *db_path, const char *repo_path, const char *
 
     /* Write compressed artifact */
     char zst_path[CBM_SZ_4K];
-    if (!artifact_path(zst_path, sizeof(zst_path), repo_path, CBM_ARTIFACT_FILENAME)) {
+    if (!cbm_pipeline_artifact_path(zst_path, sizeof(zst_path), repo_path, CBM_ARTIFACT_FILENAME)) {
         free(compressed);
         return artifact_export_fail("write_artifact", repo_path, "path_too_long", 0);
     }
@@ -561,7 +556,7 @@ int cbm_artifact_import(const char *repo_path, const char *cache_db_path) {
 
     /* Read compressed artifact */
     char zst_path[CBM_SZ_4K];
-    artifact_path(zst_path, sizeof(zst_path), repo_path, CBM_ARTIFACT_FILENAME);
+    cbm_pipeline_artifact_path(zst_path, sizeof(zst_path), repo_path, CBM_ARTIFACT_FILENAME);
 
     size_t clen = 0;
     char *compressed = read_file_alloc(zst_path, &clen);
@@ -661,7 +656,7 @@ bool cbm_artifact_exists(const char *repo_path) {
     }
 
     char zst_path[CBM_SZ_4K];
-    artifact_path(zst_path, sizeof(zst_path), repo_path, CBM_ARTIFACT_FILENAME);
+    cbm_pipeline_artifact_path(zst_path, sizeof(zst_path), repo_path, CBM_ARTIFACT_FILENAME);
 
     struct stat st;
     if (stat(zst_path, &st) != 0 || st.st_size == 0) {
@@ -681,7 +676,7 @@ char *cbm_artifact_commit(const char *repo_path) {
     }
 
     char meta_path[CBM_SZ_4K];
-    artifact_path(meta_path, sizeof(meta_path), repo_path, CBM_ARTIFACT_META);
+    cbm_pipeline_artifact_path(meta_path, sizeof(meta_path), repo_path, CBM_ARTIFACT_META);
 
     size_t len = 0;
     char *json = read_file_alloc(meta_path, &len);

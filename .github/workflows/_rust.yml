@@ -1,7 +1,9 @@
 # 可重用 Rust 重構 gate：lint、unit/FFI 與 opt-in parity matrix。
-# 預設產品 build 仍走 C；此 gate 保護 foundation、pipeline registry/plan、
-# Store FTS tokenizer/mmap resolver/immutable URI/search pattern/arch helper、MCP codec 等
-# Rust opt-in，以及 default C path 與 Rust pipeline opt-in 的 language-graph parity。
+# 預設產品 build 仍走 C；此 gate 保護 foundation、discover/filter/yaml、
+# pipeline registry/plan/route/分類器、Store FTS tokenizer
+# /mmap resolver/immutable URI/search pattern/arch helper、MCP codec、traces、CLI progress sink、
+# Cypher helpers 等 Rust opt-in，以及 default C path 與 Rust pipeline opt-in 的
+# language-graph parity。
 # Rust dependency audit 與 dangerous-API allow-list 位於 _security.yml。
 name: Rust
 

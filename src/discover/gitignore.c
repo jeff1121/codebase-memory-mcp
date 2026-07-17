@@ -21,6 +21,8 @@ enum { GI_INIT_CAP = 16, GI_CHAR_IDX1 = 1, GI_CHAR_IDX2 = 2, GI_SKIP3 = 3 };
 #include <stdlib.h>
 #include <string.h>
 
+#ifndef CBM_USE_RUST_DISCOVER_GITIGNORE_ONLY
+
 /* ── Pattern representation ──────────────────────────────────────── */
 
 typedef struct {
@@ -427,3 +429,5 @@ bool cbm_gitignore_merge(cbm_gitignore_t *dst, const cbm_gitignore_t *src) {
     }
     return true;
 }
+
+#endif

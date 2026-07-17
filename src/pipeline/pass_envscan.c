@@ -32,6 +32,8 @@ enum {
 #include <string.h>
 #include <sys/stat.h>
 
+#include "pipeline/envscan_classifiers.h"
+
 /* ── Regex patterns (compiled lazily) ──────────────────────────── */
 
 static cbm_regex_t dockerfile_re;  /* ENV|ARG KEY=VALUE or KEY VALUE */
@@ -72,134 +74,17 @@ static void compile_patterns(void) {
 #undef W
 #undef NW
 
-/* ── File type detection ───────────────────────────────────────── */
-
-static int is_dockerfile_name(const char *name) {
-    /* Case-insensitive check */
-    char lower[CBM_SZ_256];
-    size_t len = strlen(name);
-    if (len >= sizeof(lower)) {
-        return 0;
-    }
-    for (size_t i = 0; i <= len; i++) {
-        lower[i] = (char)tolower((unsigned char)name[i]);
-    }
-
-    if (strcmp(lower, "dockerfile") == 0) {
-        return SKIP_ONE;
-    }
-#define DOCKERFILE_SUFFIX_LEN 11 /* strlen("dockerfile.") == strlen(".dockerfile") */
-    if (strncmp(lower, "dockerfile.", DOCKERFILE_SUFFIX_LEN) == 0) {
-        return SKIP_ONE;
-    }
-    if (len > DOCKERFILE_SUFFIX_LEN &&
-        strcmp(lower + len - DOCKERFILE_SUFFIX_LEN, ".dockerfile") == 0) {
-        return SKIP_ONE;
-    }
-    return 0;
-}
-
-static int is_env_file_name(const char *name) {
-    char lower[CBM_SZ_256];
-    size_t len = strlen(name);
-    if (len >= sizeof(lower)) {
-        return 0;
-    }
-    for (size_t i = 0; i <= len; i++) {
-        lower[i] = (char)tolower((unsigned char)name[i]);
-    }
-
-    if (strcmp(lower, ".env") == 0) {
-        return SKIP_ONE;
-    }
-    if (strncmp(lower, ".env.", SLEN(".env.")) == 0) {
-        return SKIP_ONE;
-    }
-    if (len > ENV_EXT_LEN && strcmp(lower + len - ENV_EXT_LEN, ".env") == 0) {
-        return SKIP_ONE;
-    }
-    return 0;
-}
-
-static int is_secret_file(const char *name) {
-    char lower[CBM_SZ_256];
-    size_t len = strlen(name);
-    if (len >= sizeof(lower)) {
-        return 0;
-    }
-    for (size_t i = 0; i <= len; i++) {
-        lower[i] = (char)tolower((unsigned char)name[i]);
-    }
-
-    static const char *patterns[] = {
-        "service_account", "credentials", "key.json", "key.pem", "id_rsa",
-        "id_ed25519",      ".pem",        ".key",     NULL};
-    for (int i = 0; patterns[i]; i++) {
-        if (strstr(lower, patterns[i])) {
-            return SKIP_ONE;
-        }
-    }
-    return 0;
-}
-
-/* ── Ignored directories ───────────────────────────────────────── */
-
-static int is_ignored_dir(const char *name) {
-    static const char *dirs[] = {
-        ".git",  "node_modules", ".svn", ".hg",   "__pycache__", "vendor", ".terraform", ".cache",
-        ".idea", ".vscode",      "dist", "build", ".next",       ".nuxt",  "target",     NULL};
-    for (int i = 0; dirs[i]; i++) {
-        if (strcmp(name, dirs[i]) == 0) {
-            return SKIP_ONE;
-        }
-    }
-    return 0;
-}
-
-/* ── File type enum ────────────────────────────────────────────── */
-
+/* 檔名／目錄 classifiers：見 envscan_classifiers.c（true-source selectable CU） */
 typedef enum {
-    FT_UNKNOWN = 0,
-    FT_DOCKERFILE,
-    FT_YAML,
-    FT_TERRAFORM,
-    FT_SHELL,
-    FT_ENVFILE,
-    FT_TOML,
-    FT_PROPERTIES,
+    FT_UNKNOWN = CBM_ENVSCAN_FT_UNKNOWN,
+    FT_DOCKERFILE = CBM_ENVSCAN_FT_DOCKERFILE,
+    FT_YAML = CBM_ENVSCAN_FT_YAML,
+    FT_TERRAFORM = CBM_ENVSCAN_FT_TERRAFORM,
+    FT_SHELL = CBM_ENVSCAN_FT_SHELL,
+    FT_ENVFILE = CBM_ENVSCAN_FT_ENVFILE,
+    FT_TOML = CBM_ENVSCAN_FT_TOML,
+    FT_PROPERTIES = CBM_ENVSCAN_FT_PROPERTIES,
 } file_type_t;
-
-static file_type_t detect_file_type(const char *name) {
-    if (is_dockerfile_name(name)) {
-        return FT_DOCKERFILE;
-    }
-    if (is_env_file_name(name)) {
-        return FT_ENVFILE;
-    }
-
-    const char *ext = strrchr(name, '.');
-    if (!ext) {
-        return FT_UNKNOWN;
-    }
-
-    if (strcmp(ext, ".yaml") == 0 || strcmp(ext, ".yml") == 0) {
-        return FT_YAML;
-    }
-    if (strcmp(ext, ".tf") == 0 || strcmp(ext, ".hcl") == 0) {
-        return FT_TERRAFORM;
-    }
-    if (strcmp(ext, ".sh") == 0 || strcmp(ext, ".bash") == 0 || strcmp(ext, ".zsh") == 0) {
-        return FT_SHELL;
-    }
-    if (strcmp(ext, ".toml") == 0) {
-        return FT_TOML;
-    }
-    if (strcmp(ext, ".properties") == 0 || strcmp(ext, ".cfg") == 0 || strcmp(ext, ".ini") == 0) {
-        return FT_PROPERTIES;
-    }
-
-    return FT_UNKNOWN;
-}
 
 /* ── Line scanner ──────────────────────────────────────────────── */
 
@@ -372,17 +257,17 @@ static int process_env_entry(cbm_dirent_t *ent, const char *dir_path, const char
         return 0;
     }
     if (S_ISDIR(st.st_mode)) {
-        if (!is_ignored_dir(ent->name) && *stack_top < CBM_SZ_256) {
+        if (!cbm_pipeline_envscan_is_ignored_dir(ent->name) && *stack_top < CBM_SZ_256) {
             strncpy(path_stack[*stack_top], full_path, sizeof(path_stack[0]) - 1);
             path_stack[*stack_top][sizeof(path_stack[0]) - SKIP_ONE] = '\0';
             (*stack_top)++;
         }
         return 0;
     }
-    if (is_secret_file(ent->name)) {
+    if (cbm_pipeline_envscan_is_secret_file(ent->name)) {
         return 0;
     }
-    file_type_t ft = detect_file_type(ent->name);
+    file_type_t ft = (file_type_t)cbm_pipeline_envscan_detect_file_type(ent->name);
     if (ft == FT_UNKNOWN) {
         return 0;
     }

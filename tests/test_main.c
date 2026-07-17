@@ -99,6 +99,7 @@ extern void suite_traces(void);
 extern void suite_configlink(void);
 extern void suite_infrascan(void);
 extern void suite_cli(void);
+extern void suite_progress_sink(void);
 extern void suite_system_info(void);
 extern void suite_worker_pool(void);
 extern void suite_parallel(void);
@@ -240,6 +241,7 @@ int main(int argc, char **argv) {
 
     /* CLI (install, update, config) */
     RUN_SELECTED_SUITE(cli);
+    RUN_SELECTED_SUITE(progress_sink);
 
     /* System info + worker pool (parallelism) */
     RUN_SELECTED_SUITE(system_info);

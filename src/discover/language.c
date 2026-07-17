@@ -7,16 +7,18 @@
  * before the built-in lookup table.
  */
 #include "discover/discover.h"
+#include "discover/language_markers.h"
 #include "discover/userconfig.h"
 #include "cbm.h" // CBMLanguage, CBM_LANG_*
 
 #include "foundation/constants.h"
 
-enum { LANG_SCAN_PASSES = 2 };
 #define SLEN(s) (sizeof(s) - 1)
 #include <ctype.h>
 #include <stdio.h>
 #include <string.h>
+
+#ifndef CBM_USE_RUST_DISCOVER_LANGUAGE_ONLY
 
 /* ── Extension → Language lookup table ───────────────────────────── */
 
@@ -672,171 +674,6 @@ static const filename_entry_t FILENAME_TABLE[] = {
 
 #define FILENAME_TABLE_SIZE (sizeof(FILENAME_TABLE) / sizeof(FILENAME_TABLE[0]))
 
-/* ── Language names ──────────────────────────────────────────────── */
-
-static const char *LANG_NAMES[CBM_LANG_COUNT] = {
-    [CBM_LANG_GO] = "Go",
-    [CBM_LANG_PYTHON] = "Python",
-    [CBM_LANG_JAVASCRIPT] = "JavaScript",
-    [CBM_LANG_TYPESCRIPT] = "TypeScript",
-    [CBM_LANG_TSX] = "TSX",
-    [CBM_LANG_RUST] = "Rust",
-    [CBM_LANG_JAVA] = "Java",
-    [CBM_LANG_CPP] = "C++",
-    [CBM_LANG_CSHARP] = "C#",
-    [CBM_LANG_PHP] = "PHP",
-    [CBM_LANG_LUA] = "Lua",
-    [CBM_LANG_SCALA] = "Scala",
-    [CBM_LANG_KOTLIN] = "Kotlin",
-    [CBM_LANG_RUBY] = "Ruby",
-    [CBM_LANG_C] = "C",
-    [CBM_LANG_BASH] = "Bash",
-    [CBM_LANG_ZIG] = "Zig",
-    [CBM_LANG_ELIXIR] = "Elixir",
-    [CBM_LANG_HASKELL] = "Haskell",
-    [CBM_LANG_OCAML] = "OCaml",
-    [CBM_LANG_OBJC] = "Objective-C",
-    [CBM_LANG_SWIFT] = "Swift",
-    [CBM_LANG_DART] = "Dart",
-    [CBM_LANG_PERL] = "Perl",
-    [CBM_LANG_GROOVY] = "Groovy",
-    [CBM_LANG_ERLANG] = "Erlang",
-    [CBM_LANG_R] = "R",
-    [CBM_LANG_HTML] = "HTML",
-    [CBM_LANG_CSS] = "CSS",
-    [CBM_LANG_SCSS] = "SCSS",
-    [CBM_LANG_YAML] = "YAML",
-    [CBM_LANG_TOML] = "TOML",
-    [CBM_LANG_HCL] = "HCL",
-    [CBM_LANG_SQL] = "SQL",
-    [CBM_LANG_DOCKERFILE] = "Dockerfile",
-    [CBM_LANG_CLOJURE] = "Clojure",
-    [CBM_LANG_FSHARP] = "F#",
-    [CBM_LANG_JULIA] = "Julia",
-    [CBM_LANG_VIMSCRIPT] = "VimScript",
-    [CBM_LANG_NIX] = "Nix",
-    [CBM_LANG_COMMONLISP] = "Common Lisp",
-    [CBM_LANG_ELM] = "Elm",
-    [CBM_LANG_FORTRAN] = "Fortran",
-    [CBM_LANG_CUDA] = "CUDA",
-    [CBM_LANG_COBOL] = "COBOL",
-    [CBM_LANG_VERILOG] = "Verilog",
-    [CBM_LANG_EMACSLISP] = "Emacs Lisp",
-    [CBM_LANG_JSON] = "JSON",
-    [CBM_LANG_XML] = "XML",
-    [CBM_LANG_MARKDOWN] = "Markdown",
-    [CBM_LANG_MAKEFILE] = "Makefile",
-    [CBM_LANG_CMAKE] = "CMake",
-    [CBM_LANG_PROTOBUF] = "Protobuf",
-    [CBM_LANG_GRAPHQL] = "GraphQL",
-    [CBM_LANG_VUE] = "Vue",
-    [CBM_LANG_SVELTE] = "Svelte",
-    [CBM_LANG_MESON] = "Meson",
-    [CBM_LANG_GLSL] = "GLSL",
-    [CBM_LANG_INI] = "INI",
-    [CBM_LANG_MATLAB] = "MATLAB",
-    [CBM_LANG_LEAN] = "Lean",
-    [CBM_LANG_FORM] = "FORM",
-    [CBM_LANG_MAGMA] = "Magma",
-    [CBM_LANG_WOLFRAM] = "Wolfram",
-    [CBM_LANG_KUSTOMIZE] = "Kustomize",
-    [CBM_LANG_K8S] = "Kubernetes",
-    [CBM_LANG_PINE] = "PineScript",
-    [CBM_LANG_SOLIDITY] = "Solidity",
-    [CBM_LANG_TYPST] = "Typst",
-    [CBM_LANG_GDSCRIPT] = "GDScript",
-    [CBM_LANG_GLEAM] = "Gleam",
-    [CBM_LANG_POWERSHELL] = "PowerShell",
-    [CBM_LANG_PASCAL] = "Pascal",
-    [CBM_LANG_DLANG] = "D",
-    [CBM_LANG_NIM] = "Nim",
-    [CBM_LANG_SCHEME] = "Scheme",
-    [CBM_LANG_FENNEL] = "Fennel",
-    [CBM_LANG_FISH] = "Fish",
-    [CBM_LANG_AWK] = "AWK",
-    [CBM_LANG_ZSH] = "Zsh",
-    [CBM_LANG_TCL] = "Tcl",
-    [CBM_LANG_ADA] = "Ada",
-    [CBM_LANG_AGDA] = "Agda",
-    [CBM_LANG_RACKET] = "Racket",
-    [CBM_LANG_ODIN] = "Odin",
-    [CBM_LANG_RESCRIPT] = "ReScript",
-    [CBM_LANG_PURESCRIPT] = "PureScript",
-    [CBM_LANG_NICKEL] = "Nickel",
-    [CBM_LANG_CRYSTAL] = "Crystal",
-    [CBM_LANG_TEAL] = "Teal",
-    [CBM_LANG_HARE] = "Hare",
-    [CBM_LANG_PONY] = "Pony",
-    [CBM_LANG_LUAU] = "Luau",
-    [CBM_LANG_QML] = "QML",
-    [CBM_LANG_CFSCRIPT] = "CFML",
-    [CBM_LANG_CFML] = "CFML",
-    [CBM_LANG_JANET] = "Janet",
-    [CBM_LANG_SWAY] = "Sway",
-    [CBM_LANG_NASM] = "NASM",
-    [CBM_LANG_ASSEMBLY] = "Assembly",
-    [CBM_LANG_ASTRO] = "Astro",
-    [CBM_LANG_BLADE] = "Blade",
-    [CBM_LANG_JUST] = "Just",
-    [CBM_LANG_GOTEMPLATE] = "Go Template",
-    [CBM_LANG_TEMPL] = "Templ",
-    [CBM_LANG_LIQUID] = "Liquid",
-    [CBM_LANG_JINJA2] = "Jinja2",
-    [CBM_LANG_PRISMA] = "Prisma",
-    [CBM_LANG_HYPRLANG] = "Hyprlang",
-    [CBM_LANG_DOTENV] = "DotEnv",
-    [CBM_LANG_SYSTEMVERILOG] = "SystemVerilog",
-    [CBM_LANG_DIFF] = "Diff",
-    [CBM_LANG_WGSL] = "WGSL",
-    [CBM_LANG_KDL] = "KDL",
-    [CBM_LANG_JSON5] = "JSON5",
-    [CBM_LANG_JSONNET] = "Jsonnet",
-    [CBM_LANG_RON] = "RON",
-    [CBM_LANG_THRIFT] = "Thrift",
-    [CBM_LANG_CAPNP] = "Cap'n Proto",
-    [CBM_LANG_PROPERTIES] = "Properties",
-    [CBM_LANG_SSHCONFIG] = "SSH Config",
-    [CBM_LANG_BIBTEX] = "BibTeX",
-    [CBM_LANG_STARLARK] = "Starlark",
-    [CBM_LANG_BICEP] = "Bicep",
-    [CBM_LANG_CSV] = "CSV",
-    [CBM_LANG_REQUIREMENTS] = "Requirements",
-    [CBM_LANG_HLSL] = "HLSL",
-    [CBM_LANG_VHDL] = "VHDL",
-    [CBM_LANG_DEVICETREE] = "DeviceTree",
-    [CBM_LANG_LINKERSCRIPT] = "Linker Script",
-    [CBM_LANG_GN] = "GN",
-    [CBM_LANG_KCONFIG] = "Kconfig",
-    [CBM_LANG_BITBAKE] = "BitBake",
-    [CBM_LANG_SMALI] = "Smali",
-    [CBM_LANG_TABLEGEN] = "TableGen",
-    [CBM_LANG_ISPC] = "ISPC",
-    [CBM_LANG_CAIRO] = "Cairo",
-    [CBM_LANG_MOVE] = "Move",
-    [CBM_LANG_SQUIRREL] = "Squirrel",
-    [CBM_LANG_FUNC] = "FunC",
-    [CBM_LANG_REGEX] = "Regex",
-    [CBM_LANG_JSDOC] = "JSDoc",
-    [CBM_LANG_RST] = "reStructuredText",
-    [CBM_LANG_BEANCOUNT] = "Beancount",
-    [CBM_LANG_MERMAID] = "Mermaid",
-    [CBM_LANG_PUPPET] = "Puppet",
-    [CBM_LANG_PO] = "PO",
-    [CBM_LANG_GITATTRIBUTES] = "gitattributes",
-    [CBM_LANG_GITIGNORE] = "gitignore",
-    [CBM_LANG_SLANG] = "Slang",
-    [CBM_LANG_LLVM_IR] = "LLVM IR",
-    [CBM_LANG_SMITHY] = "Smithy",
-    [CBM_LANG_WIT] = "WIT",
-    [CBM_LANG_TLAPLUS] = "TLA+",
-    [CBM_LANG_PKL] = "Pkl",
-    [CBM_LANG_GOMOD] = "Go Mod",
-    [CBM_LANG_APEX] = "Apex",
-    [CBM_LANG_SOQL] = "SOQL",
-    [CBM_LANG_SOSL] = "SOSL",
-
-};
-
 /* ── Public API ──────────────────────────────────────────────────── */
 
 CBMLanguage cbm_language_for_extension(const char *ext) {
@@ -922,76 +759,7 @@ CBMLanguage cbm_language_for_filename(const char *filename) {
     return cbm_language_for_extension(last_dot);
 }
 
-const char *cbm_language_name(CBMLanguage lang) {
-    if (lang < 0 || lang >= CBM_LANG_COUNT) {
-        return "Unknown";
-    }
-    return LANG_NAMES[lang] ? LANG_NAMES[lang] : "Unknown";
-}
-
 /* ── .m file disambiguation ──────────────────────────────────────── */
-
-/* Simple substring search helper */
-static bool str_contains(const char *haystack, const char *needle) {
-    return strstr(haystack, needle) != NULL;
-}
-
-static bool has_objc_markers(const char *buf) {
-    return str_contains(buf, "@interface") || str_contains(buf, "@implementation") ||
-           str_contains(buf, "@protocol") || str_contains(buf, "@property") ||
-           str_contains(buf, "#import") || str_contains(buf, "@selector") ||
-           str_contains(buf, "@encode") || str_contains(buf, "@synthesize") ||
-           str_contains(buf, "@dynamic");
-}
-
-static bool has_magma_end_markers(const char *buf) {
-    return str_contains(buf, "end function;") || str_contains(buf, "end procedure;") ||
-           str_contains(buf, "end intrinsic;") || str_contains(buf, "end if;") ||
-           str_contains(buf, "end for;") || str_contains(buf, "end while;");
-}
-
-/* Check for "intrinsic Name(" or "procedure Name(" patterns. */
-static bool has_magma_callable_pattern(const char *buf) {
-    const char *markers[] = {"intrinsic ", "procedure "};
-    for (int i = 0; i < LANG_SCAN_PASSES; i++) {
-        const char *p = strstr(buf, markers[i]);
-        if (!p) {
-            continue;
-        }
-        p += strlen(markers[i]);
-        while (*p && isalpha((unsigned char)*p)) {
-            p++;
-        }
-        if (*p == '(') {
-            return true;
-        }
-    }
-    return false;
-}
-
-/* Scan lines for MATLAB-specific markers (function/classdef/%%). */
-static bool has_matlab_line_markers(const char *buf) {
-    const char *line = buf;
-    while (*line) {
-        const char *p = line;
-        while (*p == ' ' || *p == '\t') {
-            p++;
-        }
-        if (strncmp(p, "function ", SLEN("function ")) == 0 ||
-            strncmp(p, "function\t", SLEN("function\t")) == 0 ||
-            strncmp(p, "classdef ", SLEN("classdef ")) == 0 ||
-            strncmp(p, "classdef\t", SLEN("classdef\t")) == 0 || strncmp(p, "%%", PAIR_LEN) == 0 ||
-            (*p == '%' && *(p + SKIP_ONE) != '{')) {
-            return true;
-        }
-        const char *nl = strchr(line, '\n');
-        if (!nl) {
-            break;
-        }
-        line = nl + SKIP_ONE;
-    }
-    return false;
-}
 
 CBMLanguage cbm_disambiguate_m(const char *path) {
     if (!path) {
@@ -1009,19 +777,20 @@ CBMLanguage cbm_disambiguate_m(const char *path) {
     buf[n] = '\0';
     (void)fclose(f);
 
-    if (has_objc_markers(buf)) {
+    if (cbm_discover_language_marker(buf, 0)) {
         return CBM_LANG_OBJC;
     }
-    if (has_magma_end_markers(buf)) {
+    if (cbm_discover_language_marker(buf, 1)) {
         return CBM_LANG_MAGMA;
     }
-    if ((str_contains(buf, "intrinsic ") || str_contains(buf, "procedure ")) &&
-        has_magma_callable_pattern(buf)) {
+    if (cbm_discover_language_marker(buf, 2)) {
         return CBM_LANG_MAGMA;
     }
-    if (has_matlab_line_markers(buf)) {
+    if (cbm_discover_language_marker(buf, 3)) {
         return CBM_LANG_MATLAB;
     }
 
     return CBM_LANG_MATLAB;
 }
+
+#endif

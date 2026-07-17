@@ -21,6 +21,49 @@ enum { YAML_INIT_CAP = 8, YAML_LIST_PREFIX = 2, YAML_ROOT_INDENT = -1 };
 #include <stdlib.h>
 #include <string.h>
 
+#if defined(CBM_USE_RUST_YAML) || defined(CBM_USE_RUST_YAML_ONLY)
+
+extern cbm_yaml_node_t *cbm_rs_yaml_parse(const char *text, int len);
+extern void cbm_rs_yaml_free(cbm_yaml_node_t *root);
+extern const char *cbm_rs_yaml_get_str(const cbm_yaml_node_t *root, const char *path);
+extern double cbm_rs_yaml_get_float(const cbm_yaml_node_t *root, const char *path,
+                                    double default_val);
+extern bool cbm_rs_yaml_get_bool(const cbm_yaml_node_t *root, const char *path, bool default_val);
+extern int cbm_rs_yaml_get_str_list(const cbm_yaml_node_t *root, const char *path, const char **out,
+                                    int max_out);
+extern bool cbm_rs_yaml_has(const cbm_yaml_node_t *root, const char *path);
+
+cbm_yaml_node_t *cbm_yaml_parse(const char *text, int len) {
+    return cbm_rs_yaml_parse(text, len);
+}
+
+void cbm_yaml_free(cbm_yaml_node_t *root) {
+    cbm_rs_yaml_free(root);
+}
+
+const char *cbm_yaml_get_str(const cbm_yaml_node_t *root, const char *path) {
+    return cbm_rs_yaml_get_str(root, path);
+}
+
+double cbm_yaml_get_float(const cbm_yaml_node_t *root, const char *path, double default_val) {
+    return cbm_rs_yaml_get_float(root, path, default_val);
+}
+
+bool cbm_yaml_get_bool(const cbm_yaml_node_t *root, const char *path, bool default_val) {
+    return cbm_rs_yaml_get_bool(root, path, default_val);
+}
+
+int cbm_yaml_get_str_list(const cbm_yaml_node_t *root, const char *path, const char **out,
+                          int max_out) {
+    return cbm_rs_yaml_get_str_list(root, path, out, max_out);
+}
+
+bool cbm_yaml_has(const cbm_yaml_node_t *root, const char *path) {
+    return cbm_rs_yaml_has(root, path);
+}
+
+#else
+
 /* ── Node types ───────────────────────────────────────────────── */
 
 typedef enum {
@@ -421,3 +464,5 @@ int cbm_yaml_get_str_list(const cbm_yaml_node_t *root, const char *path, const c
 bool cbm_yaml_has(const cbm_yaml_node_t *root, const char *path) {
     return navigate(root, path) != NULL;
 }
+
+#endif

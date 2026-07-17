@@ -24,6 +24,7 @@ enum { PC_RING = 4, PC_RING_MASK = 3, PC_SIG_SCAN = 15, PC_REGEX_GRP = 2 };
 #include "foundation/compat.h"
 #include "foundation/str_util.h"
 #include "cbm.h"
+#include "helpers.h"
 #include "service_patterns.h"
 
 #include "foundation/compat_regex.h"
@@ -33,13 +34,10 @@ enum { PC_RING = 4, PC_RING_MASK = 3, PC_SIG_SCAN = 15, PC_REGEX_GRP = 2 };
 #include <stdlib.h>
 #include <string.h>
 
-/* True for languages whose module QN derives from the CONTAINING DIRECTORY
- * (Java/Go package). MUST match cbm_lang_module_is_dir() (internal/cbm/helpers.c)
- * so same-module callee resolution keys against the directory-based def-node
- * QNs in the registry. */
-static bool pc_module_is_dir(CBMLanguage lang) {
-    return lang == CBM_LANG_JAVA || lang == CBM_LANG_GO;
-}
+#ifdef CBM_USE_RUST_PIPELINE_CALLS_JSON
+extern size_t cbm_rs_pipeline_calls_extract_local_name_v1(char *buf, size_t bufsize,
+                                                          const char *json);
+#endif
 
 /* Read entire file into heap-allocated buffer. Caller must free(). */
 static char *read_file(const char *path, int *out_len) {
@@ -90,6 +88,22 @@ static const char *itoa_log(int val) {
  * Returns parallel arrays of (local_name, module_qn) pairs. Caller frees. */
 /* Parse "local_name":"value" from JSON properties string. Returns strdup'd key or NULL. */
 static char *extract_local_name_from_json(const char *props_json) {
+#ifdef CBM_USE_RUST_PIPELINE_CALLS_JSON
+    size_t length = cbm_rs_pipeline_calls_extract_local_name_v1(NULL, 0, props_json);
+    if (length == SIZE_MAX) {
+        return NULL;
+    }
+    char *result = malloc(length + SKIP_ONE);
+    if (!result) {
+        return NULL;
+    }
+    if (cbm_rs_pipeline_calls_extract_local_name_v1(result, length + SKIP_ONE, props_json) !=
+        length) {
+        free(result);
+        return NULL;
+    }
+    return result;
+#else
     if (!props_json) {
         return NULL;
     }
@@ -103,6 +117,7 @@ static char *extract_local_name_from_json(const char *props_json) {
         return NULL;
     }
     return cbm_strndup(start, end - start);
+#endif
 }
 
 static int build_import_map(cbm_pipeline_ctx_t *ctx, const char *rel_path,
@@ -598,7 +613,7 @@ int cbm_pipeline_pass_calls(cbm_pipeline_ctx_t *ctx, const cbm_file_info_t *file
         /* Compute module QN for same-module resolution (directory-based for
          * Java/Go so it matches their def-node QNs in the registry). */
         char *module_qn = cbm_pipeline_fqn_module_dir(ctx->project_name, rel,
-                                                      pc_module_is_dir(files[i].language));
+                                                      cbm_lang_module_is_dir(files[i].language));
 
         /* Resolve each call */
         for (int c = 0; c < result->calls.count; c++) {
@@ -746,7 +761,7 @@ void cbm_pipeline_pass_fastapi_depends(cbm_pipeline_ctx_t *ctx, const cbm_file_i
         }
 
         char *module_qn = cbm_pipeline_fqn_module_dir(ctx->project_name, files[i].rel_path,
-                                                      pc_module_is_dir(files[i].language));
+                                                      cbm_lang_module_is_dir(files[i].language));
 
         /* Build import map for alias resolution */
         const char **imp_keys = NULL;

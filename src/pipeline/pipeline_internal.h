@@ -9,6 +9,7 @@
 #define CBM_PIPELINE_INTERNAL_H
 
 #include "pipeline/pipeline.h"
+#include "pipeline/split_command.h"
 #include "pipeline/path_alias.h"
 #include "graph_buffer/graph_buffer.h"
 #include "discover/discover.h"
@@ -144,13 +145,16 @@ static inline int cbm_pipeline_check_cancel(const cbm_pipeline_ctx_t *ctx) {
 /* ── Testable helpers ────────────────────────────────────────────── */
 
 /* Check if a file path is worth tracking for git history analysis. */
-bool cbm_is_trackable_file(const char *path);
+#include "pipeline/trackable_file.h"
 
 /* Check if a file path looks like a test file (language-agnostic). */
 bool cbm_is_test_path(const char *path);
 
 /* Check if a function name looks like a test function (language-agnostic). */
 bool cbm_is_test_func_name(const char *name);
+
+/* 檢查節點屬性是否標記為測試。 */
+bool cbm_pipeline_test_node_is_test(const char *properties_json);
 
 /* Coupling result from computeChangeCoupling */
 typedef struct {
@@ -250,10 +254,6 @@ typedef struct {
     int define_count;
     char standard[CBM_SZ_32];
 } cbm_compile_flags_t;
-
-/* Split a shell command string into arguments (handles quoting).
- * Writes args to out[]. Returns count. Caller must free each out[i]. */
-int cbm_split_command(const char *cmd, char **out, int max_out);
 
 /* Extract -I, -isystem, -D, -std= flags from compiler arguments.
  * Caller must free result with cbm_compile_flags_free(). */
@@ -444,6 +444,8 @@ int cbm_parallel_resolve(cbm_pipeline_ctx_t *ctx, const cbm_file_info_t *files, 
                           * Typed as void* here to dodge the typedef/tag ordering
                           * problem — pass_parallel.c casts back to CBMCrossLspRegistries*. */
                          void *cross_registries);
+
+void cbm_pipeline_test_fail_next_parallel_resolve(int rc);
 
 /* Post-merge: create Route nodes for HTTP_CALLS/ASYNC_CALLS edges that
  * have url_path in properties but point to library functions instead of routes.

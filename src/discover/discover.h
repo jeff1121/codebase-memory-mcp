@@ -17,6 +17,7 @@
 
 /* Use the existing CBMLanguage enum from extraction layer */
 #include "cbm.h"
+#include "discover/language_name.h"
 
 /* ── Language detection ──────────────────────────────────────────── */
 
@@ -29,10 +30,6 @@ CBMLanguage cbm_language_for_filename(const char *filename);
 /* Detect language from a file extension (including the dot, e.g. ".go").
  * Returns CBM_LANG_COUNT if unknown. */
 CBMLanguage cbm_language_for_extension(const char *ext);
-
-/* Get the human-readable name for a language enum value.
- * Returns "Unknown" for CBM_LANG_COUNT or out-of-range values. */
-const char *cbm_language_name(CBMLanguage lang);
 
 /* Disambiguate .m files by reading first 4KB of content.
  * Returns CBM_LANG_OBJC, CBM_LANG_MAGMA, or CBM_LANG_MATLAB.

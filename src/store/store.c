@@ -27,6 +27,7 @@ enum {
     ST_FOUND = -1,
     ST_BUF_16 = 16,
     ST_BUF_64 = 64,
+    SQLITE_AUTO_LEN = -1,
     /* file: URI for the immutable read-only fallback. A path is at most
      * CBM_SZ_1K; percent-encoding can triple it, plus the "file://" prefix,
      * the "?immutable=1" suffix and a leading '/'. */
@@ -68,37 +69,29 @@ enum {
 #include "foundation/compat_regex.h"
 #include "foundation/str_util.h"
 
-#ifdef CBM_USE_RUST_STORE_FTS_TOKENIZER
-extern size_t cbm_rs_store_camel_split_v1(char *buf, size_t bufsize, const char *input);
-#endif
 #ifdef CBM_USE_RUST_STORE_MMAP_RESOLVER
 extern int64_t cbm_rs_store_resolve_mmap_size_value_v1(const char *value);
 #endif
 #ifdef CBM_USE_RUST_STORE_IMMUTABLE_URI
 extern size_t cbm_rs_store_build_immutable_uri_v1(char *buf, size_t bufsize, const char *path);
 #endif
+
+extern bool cbm_store_build_immutable_uri(const char *path, char *out, size_t out_sz);
 #ifdef CBM_USE_RUST_STORE_SEARCH_PATTERN
-extern size_t cbm_rs_store_glob_to_like_v1(char *buf, size_t bufsize, const char *pattern);
 extern size_t cbm_rs_store_ensure_case_insensitive_v1(char *buf, size_t bufsize,
                                                       const char *pattern);
 extern size_t cbm_rs_store_strip_case_flag_v1(char *buf, size_t bufsize, const char *pattern);
-extern int cbm_rs_store_like_hint_count_v1(const char *pattern, int max_out);
-extern size_t cbm_rs_store_like_hint_v1(char *buf, size_t bufsize, const char *pattern, int max_out,
-                                        int index);
-#endif
-#ifdef CBM_USE_RUST_STORE_ARCH_HELPERS
-extern size_t cbm_rs_store_qn_to_package_v1(char *buf, size_t bufsize, const char *qn);
-extern size_t cbm_rs_store_qn_to_top_package_v1(char *buf, size_t bufsize, const char *qn);
-extern int cbm_rs_store_is_test_file_path_v1(const char *path);
-extern int cbm_rs_store_hop_to_risk_v1(int hop);
-extern size_t cbm_rs_store_risk_label_v1(char *buf, size_t bufsize, int level);
-#endif
-#ifdef CBM_USE_RUST_STORE_ARCH_PATH_SCOPE
-extern size_t cbm_rs_store_normalize_arch_path_v1(char *norm_out, size_t norm_sz, const char *path);
 #endif
 #ifdef CBM_USE_RUST_STORE_FILE_EXT
 extern size_t cbm_rs_store_file_ext_lower_v1(char *buf, size_t bufsize, const char *path);
 #endif
+#if defined(CBM_USE_RUST_STORE_LANGUAGE_MAP) || defined(CBM_USE_RUST_STORE_LANGUAGE_MAP_ONLY)
+extern int cbm_rs_store_ext_lang_kind_v1(const char *ext);
+#endif
+
+extern const char *cbm_store_file_ext(const char *path);
+extern bool cbm_store_arch_path_prepare(const char *path, char *norm_out, size_t norm_sz,
+                                        char *like_out, size_t like_sz);
 
 #define XXH_INLINE_ALL
 #include "xxhash/xxhash.h"
@@ -110,6 +103,8 @@ extern size_t cbm_rs_store_file_ext_lower_v1(char *buf, size_t bufsize, const ch
 #include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
+
+extern void cbm_store_sqlite_camel_split(sqlite3_context *ctx, int argc, sqlite3_value **argv);
 
 /* ── SQLite bind helpers ───────────────────────────────────────── */
 
@@ -341,29 +336,6 @@ static int create_user_indexes(cbm_store_t *s) {
     return exec_sql(s, sql);
 }
 
-int64_t cbm_store_resolve_mmap_size(void) {
-    enum { MMAP_DEFAULT = 67108864, BASE_10 = 10 }; /* default 64 MB; decimal radix */
-    char buf[ST_BUF_64];
-    const char *value = cbm_safe_getenv("CBM_SQLITE_MMAP_SIZE", buf, sizeof(buf), NULL);
-#ifdef CBM_USE_RUST_STORE_MMAP_RESOLVER
-    return cbm_rs_store_resolve_mmap_size_value_v1(value);
-#endif
-    if (value == NULL) {
-        return (int64_t)MMAP_DEFAULT;
-    }
-    char *end = NULL;
-    errno = 0;
-    long long parsed = strtoll(buf, &end, BASE_10);
-    if (errno == ERANGE || end == buf || *end != '\0') {
-        /* Malformed — fall back to default rather than fail the store open. */
-        return (int64_t)MMAP_DEFAULT;
-    }
-    if (parsed < 0) {
-        return 0;
-    }
-    return (int64_t)parsed;
-}
-
 /* Configure connection pragmas.
  *   in_memory  — :memory: DB (synchronous OFF, no journal file).
  *   read_only  — query-only connection opened SQLITE_OPEN_READONLY. Runs
@@ -421,97 +393,12 @@ static int configure_pragmas(cbm_store_t *s, bool in_memory, bool read_only) {
     return rc;
 }
 
-/* ── camelCase splitter for FTS5 indexing ───────────────────────── */
-
-/* Emits the original identifier plus a space-separated split version, so FTS5's
- * whitespace tokenizer produces both `updateCloudClient` (exact match) and the
- * word tokens `update`, `cloud`, `client`.  Rules:
- *   1. insert space before an uppercase letter preceded by a lowercase letter
- *      ("updateCloud" → "update Cloud")
- *   2. insert space before an uppercase letter preceded by another uppercase
- *      but followed by a lowercase letter ("XMLParser" → "XML Parser", not
- *      "X M L Parser")
- * snake_case is already split by FTS5's unicode61 tokenizer on `_`. */
-enum {
-    CAMEL_SPLIT_BUF = 2048,
-    SQLITE_AUTO_LEN = -1, /* sqlite3_result_text sentinel: use strlen(). */
-    CAMEL_BUF_GUARD = 2,  /* reserve room for inserted space + NUL terminator. */
-};
-
 /* Denominator epsilon guard for double-precision cosine. */
 #define CBM_STORE_DENOM_EPS_D 1e-10
 #define CBM_STORE_DENOM_EPS_F 1e-10F
 #define CBM_STORE_INT8_MAX 127.0F
 #define CBM_STORE_UNIT_POS_F 1.0F
 #define CBM_STORE_UNIT_POS_D 1.0
-
-/* Module-local copy of SQLite's SQLITE_TRANSIENT sentinel ((void*)-1).
- * We construct it via memcpy from a volatile intptr_t sentinel so the
- * resulting expression isn't syntactically a direct int-to-ptr cast —
- * clang-tidy's performance-no-int-to-ptr sees the memcpy boundary and
- * doesn't flag it per-use-site. */
-static sqlite3_destructor_type cbm_sqlite_transient_destructor(void) {
-    static const volatile intptr_t raw = -1;
-    sqlite3_destructor_type dtor = NULL;
-    memcpy(&dtor, (const void *)&raw, sizeof(dtor));
-    return dtor;
-}
-#define CBM_SQLITE_TRANSIENT (cbm_sqlite_transient_destructor())
-
-/* True if we should insert a space BEFORE input[i] to split a camelCase word
- * boundary (lowercase→uppercase or uppercase-run→uppercase-then-lowercase). */
-#ifndef CBM_USE_RUST_STORE_FTS_TOKENIZER
-static bool camel_should_split(const char *input, int i) {
-    if (i <= 0) {
-        return false;
-    }
-    char curr = input[i];
-    char prev = input[i - SKIP_ONE];
-    char next = input[i + SKIP_ONE];
-    if (curr >= 'A' && curr <= 'Z' && prev >= 'a' && prev <= 'z') {
-        return true;
-    }
-    if (curr >= 'A' && curr <= 'Z' && prev >= 'A' && prev <= 'Z' && next >= 'a' && next <= 'z') {
-        return true;
-    }
-    return false;
-}
-#endif
-
-static void sqlite_camel_split(sqlite3_context *ctx, int argc, sqlite3_value **argv) {
-    (void)argc;
-    const char *input = (const char *)sqlite3_value_text(argv[0]);
-#ifdef CBM_USE_RUST_STORE_FTS_TOKENIZER
-    char rust_buf[CAMEL_SPLIT_BUF];
-    size_t rust_len = cbm_rs_store_camel_split_v1(rust_buf, sizeof(rust_buf), input);
-    if (rust_len < sizeof(rust_buf)) {
-        sqlite3_result_text(ctx, rust_buf, (int)rust_len, CBM_SQLITE_TRANSIENT);
-        return;
-    }
-    sqlite3_result_text(ctx, input ? input : "", SQLITE_AUTO_LEN, CBM_SQLITE_TRANSIENT);
-    return;
-#else
-    if (!input || !input[0]) {
-        sqlite3_result_text(ctx, input ? input : "", SQLITE_AUTO_LEN, CBM_SQLITE_TRANSIENT);
-        return;
-    }
-    char buf[CAMEL_SPLIT_BUF];
-    int len = snprintf(buf, sizeof(buf), "%s ", input);
-    if (len < 0 || len >= (int)sizeof(buf)) {
-        /* Input too long — fall back to the original string unmodified. */
-        sqlite3_result_text(ctx, input, SQLITE_AUTO_LEN, CBM_SQLITE_TRANSIENT);
-        return;
-    }
-    for (int i = 0; input[i] && len < (int)sizeof(buf) - CAMEL_BUF_GUARD; i++) {
-        if (camel_should_split(input, i)) {
-            buf[len++] = ' ';
-        }
-        buf[len++] = input[i];
-    }
-    buf[len] = '\0';
-    sqlite3_result_text(ctx, buf, len, CBM_SQLITE_TRANSIENT);
-#endif
-}
 
 /* ── REGEXP function for SQLite ──────────────────────────────────── */
 
@@ -665,7 +552,7 @@ static cbm_store_t *store_open_internal(const char *path, bool in_memory) {
                             NULL, sqlite_cosine_i8, NULL, NULL);
     /* camelCase splitter for FTS5 BM25 indexing */
     sqlite3_create_function(s->db, "cbm_camel_split", SKIP_ONE, SQLITE_UTF8 | SQLITE_DETERMINISTIC,
-                            NULL, sqlite_camel_split, NULL, NULL);
+                            NULL, cbm_store_sqlite_camel_split, NULL, NULL);
 
     if (configure_pragmas(s, in_memory, false) != CBM_STORE_OK || init_schema(s) != CBM_STORE_OK ||
         create_user_indexes(s) != CBM_STORE_OK) {
@@ -691,70 +578,6 @@ cbm_store_t *cbm_store_open_path(const char *db_path) {
 
 const char *cbm_store_db_path(const cbm_store_t *s) {
     return s ? s->db_path : NULL;
-}
-
-/* Build a SQLite "file:" URI with immutable=1 from a filesystem path.
- * immutable=1 bypasses WAL and locking and reads the main DB file directly —
- * used only as a fallback for read-only filesystems where the wal-index
- * (-shm) cannot be created. URI-special characters are percent-encoded.
- * Windows backslashes are normalized to '/', and a leading '/' is inserted
- * for drive-letter paths so the drive is not parsed as a URI authority.
- * Returns false if the output buffer is too small. */
-static bool build_immutable_uri(const char *path, char *out, size_t out_sz) {
-#ifdef CBM_USE_RUST_STORE_IMMUTABLE_URI
-    size_t len = cbm_rs_store_build_immutable_uri_v1(out, out_sz, path);
-    return len != SIZE_MAX && len < out_sz;
-#else
-    static const char PREFIX[] = "file://";
-    static const char SUFFIX[] = "?immutable=1";
-    static const char HEX[] = "0123456789ABCDEF";
-    size_t prefix_len = sizeof(PREFIX) - 1;
-    size_t suffix_len = sizeof(SUFFIX) - 1;
-    if (prefix_len + 1 > out_sz) {
-        return false;
-    }
-    memcpy(out, PREFIX, prefix_len);
-    size_t pos = prefix_len;
-
-    /* Ensure the path component begins with '/' (POSIX absolute paths already
-     * do; Windows "C:\..." gets a leading '/' -> "/C:/..."). */
-    if (path[0] != '/') {
-        if (pos + 1 >= out_sz) {
-            return false;
-        }
-        out[pos++] = '/';
-    }
-
-    for (const unsigned char *p = (const unsigned char *)path; *p != '\0'; p++) {
-        unsigned char c = *p;
-        if (c == '\\') {
-            c = '/'; /* normalize Windows separators */
-        }
-        bool safe = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
-                    c == '/' || c == '.' || c == '-' || c == '_' || c == '~' || c == ':';
-        if (safe) {
-            if (pos + 1 >= out_sz) {
-                return false;
-            }
-            out[pos++] = (char)c;
-        } else {
-            if (pos + 3 >= out_sz) {
-                return false;
-            }
-            out[pos++] = '%';
-            out[pos++] = HEX[(c >> 4) & 0xF];
-            out[pos++] = HEX[c & 0xF];
-        }
-    }
-
-    if (pos + suffix_len + 1 > out_sz) {
-        return false;
-    }
-    memcpy(out + pos, SUFFIX, suffix_len);
-    pos += suffix_len;
-    out[pos] = '\0';
-    return true;
-#endif
 }
 
 cbm_store_t *cbm_store_open_path_query(const char *db_path) {
@@ -802,7 +625,7 @@ cbm_store_t *cbm_store_open_path_query(const char *db_path) {
             return NULL;
         }
         char uri[ST_QUERY_URI_MAX];
-        if (!build_immutable_uri(db_path, uri, sizeof(uri))) {
+        if (!cbm_store_build_immutable_uri(db_path, uri, sizeof(uri))) {
             free(s);
             return NULL;
         }
@@ -828,7 +651,7 @@ cbm_store_t *cbm_store_open_path_query(const char *db_path) {
     sqlite3_create_function(s->db, "cbm_cosine_i8", ST_COL_2, SQLITE_UTF8 | SQLITE_DETERMINISTIC,
                             NULL, sqlite_cosine_i8, NULL, NULL);
     sqlite3_create_function(s->db, "cbm_camel_split", SKIP_ONE, SQLITE_UTF8 | SQLITE_DETERMINISTIC,
-                            NULL, sqlite_camel_split, NULL, NULL);
+                            NULL, cbm_store_sqlite_camel_split, NULL, NULL);
 
     if (configure_pragmas(s, false, true) != CBM_STORE_OK) {
         sqlite3_close(s->db);
@@ -2252,153 +2075,7 @@ int cbm_store_restore_from(cbm_store_t *dst, cbm_store_t *src) {
 
 /* ── Search ─────────────────────────────────────────────────────── */
 
-/* Convert a glob pattern to SQL LIKE pattern. */
-char *cbm_glob_to_like(const char *pattern) {
-#ifdef CBM_USE_RUST_STORE_SEARCH_PATTERN
-    size_t len = cbm_rs_store_glob_to_like_v1(NULL, 0, pattern);
-    if (len == SIZE_MAX) {
-        return NULL;
-    }
-    char *out = malloc(len + SKIP_ONE);
-    if (!out) {
-        return NULL;
-    }
-    size_t written = cbm_rs_store_glob_to_like_v1(out, len + SKIP_ONE, pattern);
-    if (written == SIZE_MAX) {
-        free(out);
-        return NULL;
-    }
-    return out;
-#else
-    if (!pattern) {
-        return NULL;
-    }
-    size_t len = strlen(pattern);
-    char *out = malloc((len * ST_GROWTH) + SKIP_ONE);
-    size_t j = 0;
-
-    for (size_t i = 0; i < len; i++) {
-        if (pattern[i] == '*' && i + SKIP_ONE < len && pattern[i + SKIP_ONE] == '*') {
-            /* Remove leading / from output if present (handles glob dir-star) */
-            if (j > 0 && out[j - SKIP_ONE] == '/') {
-                j--;
-            }
-            out[j++] = '%';
-            i++; /* skip second * */
-            if (i + SKIP_ONE < len && pattern[i + SKIP_ONE] == '/') {
-                i++; /* skip trailing / */
-            }
-        } else if (pattern[i] == '*') {
-            out[j++] = '%';
-        } else if (pattern[i] == '?') {
-            out[j++] = '_';
-        } else {
-            out[j++] = pattern[i];
-        }
-    }
-    out[j] = '\0';
-    return out;
-#endif
-}
-
-/* ── extractLikeHints ─────────────────────────────────────────── */
-
-int cbm_extract_like_hints(const char *pattern, char **out, int max_out) {
-#ifdef CBM_USE_RUST_STORE_SEARCH_PATTERN
-    if (!pattern || !out || max_out <= 0) {
-        return 0;
-    }
-    int nhints = cbm_rs_store_like_hint_count_v1(pattern, max_out);
-    if (nhints <= 0) {
-        return 0;
-    }
-    int count = 0;
-    for (int i = 0; i < nhints && i < max_out; i++) {
-        size_t len = cbm_rs_store_like_hint_v1(NULL, 0, pattern, max_out, i);
-        if (len == SIZE_MAX) {
-            break;
-        }
-        char *hint = malloc(len + SKIP_ONE);
-        if (!hint) {
-            break;
-        }
-        size_t written = cbm_rs_store_like_hint_v1(hint, len + SKIP_ONE, pattern, max_out, i);
-        if (written == SIZE_MAX) {
-            free(hint);
-            break;
-        }
-        out[count++] = hint;
-    }
-    return count;
-#else
-    if (!pattern || !out || max_out <= 0) {
-        return 0;
-    }
-
-    /* Bail on alternation — can't convert OR regex to AND LIKE */
-    for (const char *p = pattern; *p; p++) {
-        if (*p == '|') {
-            return 0;
-        }
-    }
-
-    int count = 0;
-    char buf[CBM_SZ_256];
-    int blen = 0;
-
-    int i = 0;
-    while (pattern[i]) {
-        char ch = pattern[i];
-        switch (ch) {
-        case '\\':
-            /* Escaped char — the next char is literal */
-            if (pattern[i + SKIP_ONE]) {
-                if (blen < (int)sizeof(buf) - SKIP_ONE) {
-                    buf[blen++] = pattern[i + SKIP_ONE];
-                }
-                i += ST_GLOB_SKIP;
-            } else {
-                i++;
-            }
-            break;
-        case '.':
-        case '*':
-        case '+':
-        case '?':
-        case '^':
-        case '$':
-        case '(':
-        case ')':
-        case '[':
-        case ']':
-        case '{':
-        case '}':
-            /* Meta character — flush current literal segment */
-            if (blen >= ST_GLOB_MIN_LEN && count < max_out) {
-                buf[blen] = '\0';
-                out[count++] = strdup(buf);
-            }
-            blen = 0;
-            i++;
-            break;
-        default:
-            if (blen < (int)sizeof(buf) - SKIP_ONE) {
-                buf[blen++] = ch;
-            }
-            i++;
-            break;
-        }
-    }
-    /* Flush trailing segment */
-    if (blen >= ST_GLOB_MIN_LEN && count < max_out) {
-        buf[blen] = '\0';
-        out[count++] = strdup(buf);
-    }
-    return count;
-#endif
-}
-
-/* ── ensureCaseInsensitive / stripCaseFlag ────────────────────── */
+/* Search pattern heap helpers are implemented in search_pattern.c. */
 
 const char *cbm_ensure_case_insensitive(const char *pattern) {
     static char buf[CBM_SZ_2K];
@@ -3025,47 +2702,6 @@ void cbm_store_traverse_free(cbm_traverse_result_t *out) {
 
 /* ── Impact analysis ────────────────────────────────────────────── */
 
-cbm_risk_level_t cbm_hop_to_risk(int hop) {
-#ifdef CBM_USE_RUST_STORE_ARCH_HELPERS
-    int level = cbm_rs_store_hop_to_risk_v1(hop);
-    if (level >= CBM_RISK_CRITICAL && level <= CBM_RISK_LOW) {
-        return (cbm_risk_level_t)level;
-    }
-    return CBM_RISK_LOW;
-#else
-    switch (hop) {
-    case SKIP_ONE:
-        return CBM_RISK_CRITICAL;
-    case ST_COL_2:
-        return CBM_RISK_HIGH;
-    case ST_COL_3:
-        return CBM_RISK_MEDIUM;
-    default:
-        return CBM_RISK_LOW;
-    }
-#endif
-}
-
-const char *cbm_risk_label(cbm_risk_level_t level) {
-#ifdef CBM_USE_RUST_STORE_ARCH_HELPERS
-    static CBM_TLS char buf[CBM_SZ_16];
-    (void)cbm_rs_store_risk_label_v1(buf, sizeof(buf), (int)level);
-    return buf;
-#else
-    switch (level) {
-    case CBM_RISK_CRITICAL:
-        return "CRITICAL";
-    case CBM_RISK_HIGH:
-        return "HIGH";
-    case CBM_RISK_MEDIUM:
-        return "MEDIUM";
-    case CBM_RISK_LOW:
-    default:
-        return "LOW";
-    }
-#endif
-}
-
 cbm_impact_summary_t cbm_build_impact_summary(const cbm_node_hop_t *hops, int hop_count,
                                               const cbm_edge_info_t *edges, int edge_count) {
     cbm_impact_summary_t s = {0};
@@ -3164,70 +2800,6 @@ static void schema_discover_props(sqlite3 *db, const char *sql, const char *proj
 }
 
 /* Path scoping for architecture / schema (shared). */
-#ifndef CBM_USE_RUST_STORE_ARCH_PATH_SCOPE
-static bool arch_path_is_set(const char *path) {
-    if (!path) {
-        return false;
-    }
-    while (*path == ' ' || *path == '\t' || *path == '\n' || *path == '\r') {
-        path++;
-    }
-    return path[0] != '\0';
-}
-#endif
-
-static bool arch_path_prepare(const char *path, char *norm_out, size_t norm_sz, char *like_out,
-                              size_t like_sz) {
-#ifdef CBM_USE_RUST_STORE_ARCH_PATH_SCOPE
-    size_t rust_len = cbm_rs_store_normalize_arch_path_v1(norm_out, norm_sz, path);
-    if (rust_len == SIZE_MAX) {
-        return false;
-    }
-    snprintf(like_out, like_sz, "%s/%%", norm_out);
-    return true;
-#else
-    if (!arch_path_is_set(path)) {
-        return false;
-    }
-    while (*path == ' ' || *path == '\t' || *path == '\n' || *path == '\r') {
-        path++;
-    }
-    if (path[0] == '\0') {
-        return false;
-    }
-    if (strncmp(path, "./", 2) == 0) {
-        path += 2;
-    }
-    while (*path == '/') {
-        path++;
-    }
-    if (path[0] == '\0') {
-        return false;
-    }
-    strncpy(norm_out, path, norm_sz - 1);
-    norm_out[norm_sz - 1] = '\0';
-    size_t len = strlen(norm_out);
-    while (len > 0 &&
-           (norm_out[len - 1] == ' ' || norm_out[len - 1] == '\t' || norm_out[len - 1] == '/')) {
-        norm_out[--len] = '\0';
-    }
-    /* Collapse duplicate slashes */
-    size_t w = 0;
-    for (size_t r = 0; norm_out[r] != '\0'; r++) {
-        if (norm_out[r] == '/' && w > 0 && norm_out[w - 1] == '/') {
-            continue;
-        }
-        norm_out[w++] = norm_out[r];
-    }
-    norm_out[w] = '\0';
-    if (norm_out[0] == '\0') {
-        return false;
-    }
-    snprintf(like_out, like_sz, "%s/%%", norm_out);
-    return true;
-#endif
-}
-
 static const char *arch_path_scope_sql(void) {
     return " AND (file_path = ? OR file_path LIKE ?)";
 }
@@ -3241,12 +2813,12 @@ static void arch_bind_path_scope(sqlite3_stmt *stmt, int exact_idx, int like_idx
 bool cbm_store_arch_path_scoped(const char *path) {
     char norm[CBM_SZ_512];
     char like[CBM_SZ_512 + 4];
-    return arch_path_prepare(path, norm, sizeof(norm), like, sizeof(like));
+    return cbm_store_arch_path_prepare(path, norm, sizeof(norm), like, sizeof(like));
 }
 
 bool cbm_store_normalize_arch_path(const char *path, char *norm_out, size_t norm_sz) {
     char like[CBM_SZ_512 + 4];
-    return arch_path_prepare(path, norm_out, norm_sz, like, sizeof(like));
+    return cbm_store_arch_path_prepare(path, norm_out, norm_sz, like, sizeof(like));
 }
 
 int cbm_store_count_nodes_scoped(cbm_store_t *s, const char *project, const char *path) {
@@ -3255,7 +2827,7 @@ int cbm_store_count_nodes_scoped(cbm_store_t *s, const char *project, const char
     }
     char norm[CBM_SZ_512];
     char like[CBM_SZ_512];
-    if (!arch_path_prepare(path, norm, sizeof(norm), like, sizeof(like))) {
+    if (!cbm_store_arch_path_prepare(path, norm, sizeof(norm), like, sizeof(like))) {
         return cbm_store_count_nodes(s, project);
     }
     const char *sql = "SELECT COUNT(*) FROM nodes WHERE project = ?1 "
@@ -3283,7 +2855,7 @@ int cbm_store_count_edges_scoped(cbm_store_t *s, const char *project, const char
     }
     char norm[CBM_SZ_512];
     char like[CBM_SZ_512];
-    if (!arch_path_prepare(path, norm, sizeof(norm), like, sizeof(like))) {
+    if (!cbm_store_arch_path_prepare(path, norm, sizeof(norm), like, sizeof(like))) {
         return cbm_store_count_edges(s, project);
     }
     const char *sql =
@@ -3470,7 +3042,7 @@ int cbm_store_get_schema_counts_scoped(cbm_store_t *s, const char *project, cons
     }
     char norm[CBM_SZ_512];
     char like[CBM_SZ_512];
-    bool scoped = arch_path_prepare(path, norm, sizeof(norm), like, sizeof(like));
+    bool scoped = cbm_store_arch_path_prepare(path, norm, sizeof(norm), like, sizeof(like));
     if (!scoped) {
         return get_schema_impl(s, project, out, false);
     }
@@ -3627,89 +3199,6 @@ void cbm_store_schema_free(cbm_schema_info_t *out) {
 
 /* ── Architecture helpers ───────────────────────────────────────── */
 
-/* 從 QN 擷取子 package：project.dir1.dir2.sym -> dir2（4+ parts -> [2]，否則 [1]） */
-const char *cbm_qn_to_package(const char *qn) {
-#ifdef CBM_USE_RUST_STORE_ARCH_HELPERS
-    static CBM_TLS char buf[CBM_SZ_256];
-    (void)cbm_rs_store_qn_to_package_v1(buf, sizeof(buf), qn);
-    return buf;
-#else
-    if (!qn || !qn[0]) {
-        return "";
-    }
-    static CBM_TLS char buf[CBM_SZ_256];
-    /* Find dots and extract segment */
-    const char *dots[ST_QN_MAX_DOTS] = {NULL};
-    int ndots = 0;
-    for (const char *p = qn; *p && ndots < ST_QN_MAX_DOTS; p++) {
-        if (*p == '.') {
-            dots[ndots++] = p;
-        }
-    }
-    /* 4+ segments: return segment[2] */
-    if (ndots >= ST_QN_MIN_DOTS) {
-        const char *start = dots[SKIP_ONE] + SKIP_ONE;
-        int len = (int)(dots[ST_COL_2] - start);
-        if (len > 0 && len < (int)sizeof(buf)) {
-            memcpy(buf, start, len);
-            buf[len] = '\0';
-            return buf;
-        }
-    }
-    /* 2+ segments: return segment[1] */
-    if (ndots >= SKIP_ONE) {
-        const char *start = dots[0] + SKIP_ONE;
-        const char *end = (ndots >= ST_COL_2) ? dots[SKIP_ONE] : qn + strlen(qn);
-        int len = (int)(end - start);
-        if (len > 0 && len < (int)sizeof(buf)) {
-            memcpy(buf, start, len);
-            buf[len] = '\0';
-            return buf;
-        }
-    }
-    return "";
-#endif
-}
-
-/* Extract top-level package from QN: project.dir1.rest → dir1 (segment[1]) */
-const char *cbm_qn_to_top_package(const char *qn) {
-#ifdef CBM_USE_RUST_STORE_ARCH_HELPERS
-    static CBM_TLS char buf[CBM_SZ_256];
-    (void)cbm_rs_store_qn_to_top_package_v1(buf, sizeof(buf), qn);
-    return buf;
-#else
-    if (!qn || !qn[0]) {
-        return "";
-    }
-    static CBM_TLS char buf[CBM_SZ_256];
-    const char *first_dot = strchr(qn, '.');
-    if (!first_dot) {
-        return "";
-    }
-    const char *start = first_dot + SKIP_ONE;
-    const char *second_dot = strchr(start, '.');
-    const char *end = second_dot ? second_dot : qn + strlen(qn);
-    int len = (int)(end - start);
-    if (len > 0 && len < (int)sizeof(buf)) {
-        memcpy(buf, start, len);
-        buf[len] = '\0';
-        return buf;
-    }
-    return "";
-#endif
-}
-
-bool cbm_is_test_file_path(const char *fp) {
-#ifdef CBM_USE_RUST_STORE_ARCH_HELPERS
-    return cbm_rs_store_is_test_file_path_v1(fp) != 0;
-#else
-    if (!fp || fp[0] == '\0') {
-        return false;
-    }
-    return strstr(fp, "test") != NULL;
-#endif
-}
-
 /* File extension → language name mapping (table-driven) */
 typedef struct {
     const char *ext;
@@ -3731,7 +3220,8 @@ static const ext_lang_entry_t ext_lang_table[] = {
     {NULL, NULL},
 };
 
-static const char *ext_to_lang(const char *ext) {
+#ifndef CBM_USE_RUST_STORE_LANGUAGE_MAP_ONLY
+static const char *ext_to_lang_c(const char *ext) {
     if (!ext) {
         return NULL;
     }
@@ -3742,31 +3232,23 @@ static const char *ext_to_lang(const char *ext) {
     }
     return NULL;
 }
+#endif
 
-/* Get lowercase file extension from path */
-static const char *file_ext(const char *path) {
-#ifdef CBM_USE_RUST_STORE_FILE_EXT
-    static CBM_TLS char buf[CBM_SZ_16];
-    size_t len = cbm_rs_store_file_ext_lower_v1(buf, sizeof(buf), path);
-    return len == SIZE_MAX ? NULL : buf;
+static const char *ext_to_lang(const char *ext) {
+#ifdef CBM_USE_RUST_STORE_LANGUAGE_MAP_ONLY
+    int kind = cbm_rs_store_ext_lang_kind_v1(ext);
+    if (kind >= 0 && (size_t)kind < (sizeof(ext_lang_table) / sizeof(ext_lang_table[0])) - 1U) {
+        return ext_lang_table[kind].lang;
+    }
+    return NULL;
 #else
-    if (!path) {
-        return NULL;
+#ifdef CBM_USE_RUST_STORE_LANGUAGE_MAP
+    int kind = cbm_rs_store_ext_lang_kind_v1(ext);
+    if (kind >= 0 && (size_t)kind < (sizeof(ext_lang_table) / sizeof(ext_lang_table[0])) - 1U) {
+        return ext_lang_table[kind].lang;
     }
-    const char *dot = strrchr(path, '.');
-    if (!dot) {
-        return NULL;
-    }
-    static CBM_TLS char buf[CBM_SZ_16];
-    int len = (int)strlen(dot);
-    if (len >= (int)sizeof(buf)) {
-        return NULL;
-    }
-    for (int i = 0; i < len; i++) {
-        buf[i] = (char)((dot[i] >= 'A' && dot[i] <= 'Z') ? dot[i] + CBM_SZ_32 : dot[i]);
-    }
-    buf[len] = '\0';
-    return buf;
+#endif
+    return ext_to_lang_c(ext);
 #endif
 }
 
@@ -3776,7 +3258,7 @@ static int arch_languages(cbm_store_t *s, const char *project, const char *path,
                           cbm_architecture_info_t *out) {
     char norm[CBM_SZ_512];
     char like[CBM_SZ_512];
-    bool scoped = arch_path_prepare(path, norm, sizeof(norm), like, sizeof(like));
+    bool scoped = cbm_store_arch_path_prepare(path, norm, sizeof(norm), like, sizeof(like));
     char sqlbuf[ST_SQL_BUF];
     const char *base = "SELECT file_path FROM nodes WHERE project=?1 AND label='File'";
     if (scoped) {
@@ -3801,7 +3283,7 @@ static int arch_languages(cbm_store_t *s, const char *project, const char *path,
 
     while (sqlite3_step(stmt) == SQLITE_ROW) {
         const char *fp = (const char *)sqlite3_column_text(stmt, 0);
-        const char *ext = file_ext(fp);
+        const char *ext = cbm_store_file_ext(fp);
         const char *lang = ext_to_lang(ext);
         if (!lang) {
             continue;
@@ -3853,7 +3335,7 @@ static int arch_entry_points(cbm_store_t *s, const char *project, const char *pa
                              cbm_architecture_info_t *out) {
     char norm[CBM_SZ_512];
     char like[CBM_SZ_512];
-    bool scoped = arch_path_prepare(path, norm, sizeof(norm), like, sizeof(like));
+    bool scoped = cbm_store_arch_path_prepare(path, norm, sizeof(norm), like, sizeof(like));
     char sqlbuf[ST_SQL_BUF];
     const char *base = "SELECT name, qualified_name, file_path FROM nodes "
                        "WHERE project=?1 AND json_extract(properties, '$.is_entry_point') = 1 "
@@ -3895,7 +3377,28 @@ static int arch_entry_points(cbm_store_t *s, const char *project, const char *pa
 }
 
 /* Extract a JSON string value from a simple JSON object by key name. */
+#ifdef CBM_USE_RUST_STORE_ARCH_JSON_PROP
+extern size_t cbm_rs_store_arch_json_prop_len_v1(const char *json, const char *key, int key_len);
+extern size_t cbm_rs_store_arch_json_prop_copy_v1(char *out, size_t out_size, const char *json,
+                                                  const char *key, int key_len);
+#endif
+
 static char *extract_json_string_prop(const char *json, const char *key, int key_len) {
+#ifdef CBM_USE_RUST_STORE_ARCH_JSON_PROP
+    size_t len = cbm_rs_store_arch_json_prop_len_v1(json, key, key_len);
+    if (len == (size_t)-1) {
+        return NULL;
+    }
+    char *out = malloc(len + 1);
+    if (!out) {
+        return NULL;
+    }
+    if (cbm_rs_store_arch_json_prop_copy_v1(out, len + 1, json, key, key_len) != len) {
+        free(out);
+        return NULL;
+    }
+    return out;
+#else
     if (!json) {
         return NULL;
     }
@@ -3916,13 +3419,14 @@ static char *extract_json_string_prop(const char *json, const char *key, int key
     memcpy(vbuf, m, end - m);
     vbuf[end - m] = '\0';
     return heap_strdup(vbuf);
+#endif
 }
 
 static int arch_routes(cbm_store_t *s, const char *project, const char *path,
                        cbm_architecture_info_t *out) {
     char norm[CBM_SZ_512];
     char like[CBM_SZ_512];
-    bool scoped = arch_path_prepare(path, norm, sizeof(norm), like, sizeof(like));
+    bool scoped = cbm_store_arch_path_prepare(path, norm, sizeof(norm), like, sizeof(like));
     char sqlbuf[ST_SQL_BUF];
     const char *base = "SELECT name, properties, COALESCE(file_path, '') FROM nodes "
                        "WHERE project=?1 AND label='Route' "
@@ -3990,7 +3494,7 @@ static int arch_hotspots(cbm_store_t *s, const char *project, const char *path,
                          cbm_architecture_info_t *out) {
     char norm[CBM_SZ_512];
     char like[CBM_SZ_512];
-    bool scoped = arch_path_prepare(path, norm, sizeof(norm), like, sizeof(like));
+    bool scoped = cbm_store_arch_path_prepare(path, norm, sizeof(norm), like, sizeof(like));
     char sqlbuf[ST_SQL_BUF];
     const char *base = "SELECT n.name, n.qualified_name, COUNT(*) as fan_in "
                        "FROM nodes n JOIN edges e ON e.target_id = n.id AND e.type = 'CALLS' "
@@ -4080,7 +3584,7 @@ static int arch_boundaries(cbm_store_t *s, const char *project, const char *path
                            cbm_cross_pkg_boundary_t **out_arr, int *out_count) {
     char norm[CBM_SZ_512];
     char like[CBM_SZ_512];
-    bool scoped = arch_path_prepare(path, norm, sizeof(norm), like, sizeof(like));
+    bool scoped = cbm_store_arch_path_prepare(path, norm, sizeof(norm), like, sizeof(like));
     char nsqlbuf[ST_SQL_BUF];
     const char *nbase =
         "SELECT id, qualified_name, file_path FROM nodes WHERE project=?1 AND label IN "
@@ -4202,7 +3706,7 @@ static int arch_packages_from_qn(cbm_store_t *s, const char *project, const char
                                  cbm_package_summary_t **out_arr, int *out_count) {
     char norm[CBM_SZ_512];
     char like[CBM_SZ_512];
-    bool scoped = arch_path_prepare(path, norm, sizeof(norm), like, sizeof(like));
+    bool scoped = cbm_store_arch_path_prepare(path, norm, sizeof(norm), like, sizeof(like));
     char qsqlbuf[ST_SQL_BUF];
     const char *qbase = "SELECT qualified_name FROM nodes WHERE project=?1 AND label IN "
                         "('Function','Method','Class')";
@@ -4281,7 +3785,7 @@ static int arch_packages(cbm_store_t *s, const char *project, const char *path,
                          cbm_architecture_info_t *out) {
     char norm[CBM_SZ_512];
     char like[CBM_SZ_512];
-    bool scoped = arch_path_prepare(path, norm, sizeof(norm), like, sizeof(like));
+    bool scoped = cbm_store_arch_path_prepare(path, norm, sizeof(norm), like, sizeof(like));
     char sqlbuf[ST_SQL_BUF];
     const char *base = "SELECT n.name, COUNT(*) as cnt FROM nodes n "
                        "WHERE n.project=?1 AND n.label='Package'";
@@ -4397,7 +3901,7 @@ static int collect_pkg_names(cbm_store_t *s, const char *sql, const char *projec
                              char **pkgs, int max_pkgs) {
     char norm[CBM_SZ_512];
     char like[CBM_SZ_512];
-    bool scoped = arch_path_prepare(path, norm, sizeof(norm), like, sizeof(like));
+    bool scoped = cbm_store_arch_path_prepare(path, norm, sizeof(norm), like, sizeof(like));
     char sqlbuf[ST_SQL_BUF];
     if (scoped) {
         snprintf(sqlbuf, sizeof(sqlbuf), "%s%s", sql, arch_path_scope_sql());
@@ -4715,7 +4219,7 @@ static int arch_file_tree(cbm_store_t *s, const char *project, const char *path,
                           cbm_architecture_info_t *out) {
     char norm[CBM_SZ_512];
     char like[CBM_SZ_512];
-    bool scoped = arch_path_prepare(path, norm, sizeof(norm), like, sizeof(like));
+    bool scoped = cbm_store_arch_path_prepare(path, norm, sizeof(norm), like, sizeof(like));
     char sqlbuf[ST_SQL_BUF];
     const char *base = "SELECT file_path FROM nodes WHERE project=?1 AND label='File'";
     if (scoped) {
@@ -5445,7 +4949,7 @@ static int arch_clusters(cbm_store_t *s, const char *project, const char *path,
                          cbm_architecture_info_t *out) {
     char norm[CBM_SZ_512];
     char like[CBM_SZ_512];
-    bool scoped = arch_path_prepare(path, norm, sizeof(norm), like, sizeof(like));
+    bool scoped = cbm_store_arch_path_prepare(path, norm, sizeof(norm), like, sizeof(like));
     char nsqlbuf[ST_SQL_BUF];
     const char *nbase = "SELECT id, name, qualified_name, file_path FROM nodes "
                         "WHERE project=?1 AND label IN ('Function','Method','Class')";

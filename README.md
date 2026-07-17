@@ -104,9 +104,11 @@ The `install` command auto-detects all installed coding agents and configures MC
 validated against the default C behavior through parity gates.
 
 - Default binary: C-first path with optional Rust slices.
-- Rust slices: optional and additive (foundation, pipeline plan/registry, and the Store FTS tokenizer currently).
+- Rust slices: optional and additive across multiple boundaries (foundation helpers, discover helpers, pipeline planning/registry/path helpers/classifiers, Store helpers, MCP codec helpers, Cypher function helpers, traces, and CLI progress sink).
 - Release pipeline: PR and release jobs both run dedicated Rust gates (`_rust.yml`) before packaging.
 - Runtime switch: not enabled by default yet; Phase 5 switching work is still in progress (see [`Rust-Refactor.md`](Rust-Refactor.md)).
+- 發布閘道尚未涵蓋預設 runtime 轉換，目前所有正式發行仍保留 C 預設；
+  Rust 僅在明確 opt-in flag 下參與，預設路徑切換仍停留在 Gate 解鎖前。
 
 ### Graph Visualization UI
 

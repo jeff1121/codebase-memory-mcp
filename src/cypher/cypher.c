@@ -41,6 +41,14 @@ enum {
 #include <stdlib.h>
 #include <string.h>
 
+#if defined(CBM_USE_RUST_CYPHER_LEX_SINGLE_CHAR) || \
+    defined(CBM_USE_RUST_CYPHER_LEX_SINGLE_CHAR_ONLY)
+extern int cbm_rs_cypher_single_char_kind_v1(int c);
+#endif
+#if defined(CBM_USE_RUST_CYPHER_LEX_TWO_CHAR) || defined(CBM_USE_RUST_CYPHER_LEX_TWO_CHAR_ONLY)
+extern int cbm_rs_cypher_two_char_kind_v1(int first, int second);
+#endif
+
 /* ── Helpers ────────────────────────────────────────────────────── */
 
 static char *heap_strdup(const char *s) {
@@ -234,6 +242,16 @@ static bool lex_try_two_char(const char *input, int len, int *i, cbm_lex_result_
         return false;
     }
     char c2 = input[*i + SKIP_ONE];
+#if defined(CBM_USE_RUST_CYPHER_LEX_TWO_CHAR) || defined(CBM_USE_RUST_CYPHER_LEX_TWO_CHAR_ONLY)
+    int rust_type = cbm_rs_cypher_two_char_kind_v1((unsigned char)c, (unsigned char)c2);
+    if (rust_type == TOK_NEQ || rust_type == TOK_EQTILDE || rust_type == TOK_GTE ||
+        rust_type == TOK_LTE || rust_type == TOK_DOTDOT) {
+        char text[CYP_TRIPLE] = {c, c2, '\0'};
+        lex_push(out, (cbm_token_type_t)rust_type, text, *i);
+        *i += PAIR_LEN;
+        return true;
+    }
+#endif
     for (int p = 0; p < (int)(sizeof(pairs) / sizeof(pairs[0])); p++) {
         if (c == pairs[p].c1 && c2 == pairs[p].c2) {
             lex_push(out, pairs[p].type, pairs[p].text, *i);
@@ -246,6 +264,14 @@ static bool lex_try_two_char(const char *input, int len, int *i, cbm_lex_result_
 
 /* Try to match a single-character token. Returns TOK_EOF if not matched. */
 static cbm_token_type_t lex_single_char(char c) {
+#if defined(CBM_USE_RUST_CYPHER_LEX_SINGLE_CHAR) || \
+    defined(CBM_USE_RUST_CYPHER_LEX_SINGLE_CHAR_ONLY)
+    int rust_type = cbm_rs_cypher_single_char_kind_v1((unsigned char)c);
+    if (rust_type == TOK_EOF || (rust_type >= TOK_LPAREN && rust_type <= TOK_EQ) ||
+        rust_type == TOK_PIPE) {
+        return (cbm_token_type_t)rust_type;
+    }
+#endif
     switch (c) {
     case '(':
         return TOK_LPAREN;
@@ -1199,37 +1225,56 @@ static bool is_string_func_tok(cbm_token_type_t t) {
     return (t == TOK_TOLOWER || t == TOK_TOUPPER || t == TOK_TOSTRING) != 0;
 }
 
+#if defined(CBM_USE_RUST_CYPHER_AGG_FUNC) || defined(CBM_USE_RUST_CYPHER_AGG_FUNC_ONLY)
+extern int cbm_rs_cypher_aggregate_func_index_v1(int token_kind);
+#endif
+#if defined(CBM_USE_RUST_CYPHER_STRING_FUNC) || defined(CBM_USE_RUST_CYPHER_STRING_FUNC_ONLY)
+extern int cbm_rs_cypher_string_func_index_v1(int token_kind);
+#endif
+
 /* Token type to function name */
 static const char *agg_func_name(cbm_token_type_t t) {
+    static const char *const names[] = {"COUNT", "SUM", "AVG", "MIN", "MAX", "COLLECT", NULL};
+#if defined(CBM_USE_RUST_CYPHER_AGG_FUNC) || defined(CBM_USE_RUST_CYPHER_AGG_FUNC_ONLY)
+    int idx = cbm_rs_cypher_aggregate_func_index_v1((int)t);
+    return idx < 0 ? "COUNT" : names[idx];
+#else
     switch (t) {
     case TOK_COUNT:
-        return "COUNT";
+        return names[0];
     case TOK_SUM:
-        return "SUM";
+        return names[1];
     case TOK_AVG:
-        return "AVG";
+        return names[2];
     case TOK_MIN_KW:
-        return "MIN";
+        return names[3];
     case TOK_MAX_KW:
-        return "MAX";
+        return names[4];
     case TOK_COLLECT:
-        return "COLLECT";
+        return names[5];
     default:
         return "COUNT";
     }
+#endif
 }
 
 static const char *str_func_name(cbm_token_type_t t) {
+    static const char *const names[] = {"toLower", "toUpper", "toString", NULL};
+#if defined(CBM_USE_RUST_CYPHER_STRING_FUNC) || defined(CBM_USE_RUST_CYPHER_STRING_FUNC_ONLY)
+    int idx = cbm_rs_cypher_string_func_index_v1((int)t);
+    return idx < 0 ? "" : names[idx];
+#else
     switch (t) {
     case TOK_TOLOWER:
-        return "toLower";
+        return names[0];
     case TOK_TOUPPER:
-        return "toUpper";
+        return names[1];
     case TOK_TOSTRING:
-        return "toString";
+        return names[2];
     default:
         return "";
     }
+#endif
 }
 
 /* Parse a value literal: string, number, ident[.prop], true, false. Returns heap-allocated. */
@@ -1329,15 +1374,18 @@ static bool cyp_ci_eq(const char *a, const char *b) {
  * invoked by identifier — labels/type/id/keys/properties and the numeric/bool
  * casts toInteger/toFloat/toBoolean — or NULL if unrecognised (case-insensitive).
  * toLower/toUpper/toString are separate keyword tokens handled elsewhere. */
-#ifdef CBM_USE_RUST_CYPHER_SCALAR_FUNC
+#if defined(CBM_USE_RUST_CYPHER_SCALAR_FUNC) || defined(CBM_USE_RUST_CYPHER_SCALAR_FUNC_ONLY)
 extern int cbm_rs_cypher_scalar_func_index_v1(const char *input);
+#endif
+#if defined(CBM_USE_RUST_CYPHER_MULTIARG_FUNC) || defined(CBM_USE_RUST_CYPHER_MULTIARG_FUNC_ONLY)
+extern int cbm_rs_cypher_multiarg_func_index_v1(const char *input);
 #endif
 
 static const char *scalar_func_canonical(const char *s) {
     static const char *const names[] = {
         "labels", "type",   "id",   "keys",  "properties", "toInteger", "toFloat", "toBoolean",
         "size",   "length", "trim", "ltrim", "rtrim",      "reverse",   NULL};
-#ifdef CBM_USE_RUST_CYPHER_SCALAR_FUNC
+#if defined(CBM_USE_RUST_CYPHER_SCALAR_FUNC) || defined(CBM_USE_RUST_CYPHER_SCALAR_FUNC_ONLY)
     int idx = cbm_rs_cypher_scalar_func_index_v1(s);
     return idx < 0 ? NULL : names[idx];
 #else
@@ -1403,12 +1451,17 @@ static int parse_named_func_item(parser_t *p, cbm_return_item_t *item) {
 /* Canonical name for a multi-argument scalar function, or NULL. */
 static const char *multiarg_func_canonical(const char *s) {
     static const char *const names[] = {"coalesce", "substring", "replace", "left", "right", NULL};
+#if defined(CBM_USE_RUST_CYPHER_MULTIARG_FUNC) || defined(CBM_USE_RUST_CYPHER_MULTIARG_FUNC_ONLY)
+    int idx = cbm_rs_cypher_multiarg_func_index_v1(s);
+    return idx < 0 ? NULL : names[idx];
+#else
     for (int i = 0; names[i]; i++) {
         if (cyp_ci_eq(s, names[i])) {
             return names[i];
         }
     }
     return NULL;
+#endif
 }
 
 static bool is_multiarg_func_call(parser_t *p) {

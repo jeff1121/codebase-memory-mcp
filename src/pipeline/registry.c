@@ -25,6 +25,7 @@ enum { REG_MAX_CANDIDATES = 256 };
 
 #define DEFAULT_CONFIDENCE 0.5
 #include "pipeline/pipeline.h"
+#include "pipeline/registry_test_qn.h"
 #include "foundation/compat.h" /* CBM_TLS */
 #include "foundation/hash_table.h"
 #include "foundation/dyn_array.h"
@@ -154,24 +155,12 @@ static int common_prefix_len(const char *a, const char *b) {
 
 enum { REG_TEST_PENALTY = 1000 };
 
-/* Check if a qualified name looks like a test/mock path. */
-static bool is_test_qn(const char *qn) {
-    if (!qn) {
-        return false;
-    }
-    return (strstr(qn, "Test") != NULL || strstr(qn, "test") != NULL ||
-            strstr(qn, "Mock") != NULL || strstr(qn, "mock") != NULL ||
-            strstr(qn, "Stub") != NULL || strstr(qn, "stub") != NULL ||
-            strstr(qn, "Fake") != NULL || strstr(qn, "fake") != NULL ||
-            strstr(qn, "Fixture") != NULL || strstr(qn, "spec") != NULL);
-}
-
 /* Score a candidate for tiebreaking. Higher = better.
  * Layer 1: Non-test code preferred over test code (+1000)
  * Layer 2: Namespace proximity via common prefix length (+plen) */
 static int candidate_score(const char *candidate_qn, const char *module_qn) {
     int score = 0;
-    if (!is_test_qn(candidate_qn)) {
+    if (!cbm_pipeline_registry_is_test_qn(candidate_qn)) {
         score += REG_TEST_PENALTY;
     }
     score += common_prefix_len(candidate_qn, module_qn);

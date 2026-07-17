@@ -350,14 +350,16 @@ TEST(gbuf_mutation_adapter_callpoint_static_guard) {
     ASSERT_FALSE(source_file_contains("src/pipeline/pass_parallel.c",
                                       "cbm_gbuf_insert_edge(ws->local_edge_buf"));
     ASSERT_FALSE(source_file_contains("src/pipeline/pass_parallel.c", "cbm_gbuf_upsert_node("));
-    ASSERT_FALSE(source_file_contains("src/pipeline/pipeline.c",
-                                      "cbm_rs_pipeline_full_plan_steps_v1"));
-    ASSERT_FALSE(source_file_contains("src/pipeline/pipeline.c",
+    ASSERT_TRUE(source_file_contains("src/pipeline/pipeline.c", "cbm_rust_full_plan_steps"));
+    ASSERT_TRUE(source_file_contains("src/pipeline/pipeline.c", "\"full_pipeline\""));
+    ASSERT_TRUE(source_file_contains("src/pipeline/pipeline.c",
+                                     "load_rust_top_plan(p->mode, worker_count, file_count"));
+    ASSERT_FALSE(source_file_contains("src/pipeline/pipeline_incremental.c",
+                                      "cbm_rust_full_plan_steps"));
+    ASSERT_FALSE(source_file_contains("src/pipeline/pipeline_incremental.c",
                                       "cbm_rs_pipeline_full_plan_step_count_v1"));
     ASSERT_FALSE(source_file_contains("src/pipeline/pipeline_incremental.c",
                                       "cbm_rs_pipeline_full_plan_steps_v1"));
-    ASSERT_FALSE(source_file_contains("src/pipeline/pipeline_incremental.c",
-                                      "cbm_rs_pipeline_full_plan_step_count_v1"));
     PASS();
 }
 

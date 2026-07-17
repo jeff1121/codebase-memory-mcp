@@ -32,11 +32,21 @@ enum {
 #define SLEN(s) (sizeof(s) - 1)
 #include "pipeline/pipeline.h"
 #include "pipeline/pipeline_internal.h"
+#include "pipeline/infrascan_json.h"
 
 #include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+
+#if defined(CBM_USE_RUST_PIPELINE_INFRASCAN) || defined(CBM_USE_RUST_PIPELINE_INFRASCAN_ONLY)
+extern int cbm_rs_pipeline_is_dockerfile_v1(const char *name);
+extern int cbm_rs_pipeline_is_compose_file_v1(const char *name);
+extern int cbm_rs_pipeline_is_env_file_v1(const char *name);
+extern int cbm_rs_pipeline_is_cloudbuild_file_v1(const char *name);
+extern int cbm_rs_pipeline_is_kustomize_file_v1(const char *name);
+extern int cbm_rs_pipeline_is_shell_script_v1(const char *name, const char *ext);
+#endif
 
 /* ── Constants ───────────────────────────────────────────────────── */
 
@@ -51,6 +61,7 @@ enum {
 
 /* ── Internal helpers ────────────────────────────────────────────── */
 
+#if !defined(CBM_USE_RUST_PIPELINE_INFRASCAN) && !defined(CBM_USE_RUST_PIPELINE_INFRASCAN_ONLY)
 static void to_lower(const char *src, char *dst, size_t dst_sz) {
     size_t i;
     size_t len = strlen(src);
@@ -62,6 +73,7 @@ static void to_lower(const char *src, char *dst, size_t dst_sz) {
     }
     dst[i] = '\0';
 }
+#endif
 
 /* Case-insensitive substring search */
 static const char *ci_strstr(const char *haystack, const char *needle) {
@@ -137,6 +149,9 @@ static void rtrim(char *s) {
 /* ── File identification ────────────────────────────────────────── */
 
 bool cbm_is_dockerfile(const char *name) {
+#if defined(CBM_USE_RUST_PIPELINE_INFRASCAN) || defined(CBM_USE_RUST_PIPELINE_INFRASCAN_ONLY)
+    return cbm_rs_pipeline_is_dockerfile_v1(name) != 0;
+#else
     if (!name) {
         return false;
     }
@@ -154,9 +169,13 @@ bool cbm_is_dockerfile(const char *name) {
         return true;
     }
     return false;
+#endif
 }
 
 bool cbm_is_compose_file(const char *name) {
+#if defined(CBM_USE_RUST_PIPELINE_INFRASCAN) || defined(CBM_USE_RUST_PIPELINE_INFRASCAN_ONLY)
+    return cbm_rs_pipeline_is_compose_file_v1(name) != 0;
+#else
     if (!name) {
         return false;
     }
@@ -174,9 +193,13 @@ bool cbm_is_compose_file(const char *name) {
         return false;
     }
     return (strcmp(ext, ".yml") == 0 || strcmp(ext, ".yaml") == 0);
+#endif
 }
 
 bool cbm_is_cloudbuild_file(const char *name) {
+#if defined(CBM_USE_RUST_PIPELINE_INFRASCAN) || defined(CBM_USE_RUST_PIPELINE_INFRASCAN_ONLY)
+    return cbm_rs_pipeline_is_cloudbuild_file_v1(name) != 0;
+#else
     if (!name) {
         return false;
     }
@@ -191,9 +214,13 @@ bool cbm_is_cloudbuild_file(const char *name) {
         return false;
     }
     return (strcmp(ext, ".yml") == 0 || strcmp(ext, ".yaml") == 0);
+#endif
 }
 
 bool cbm_is_env_file(const char *name) {
+#if defined(CBM_USE_RUST_PIPELINE_INFRASCAN) || defined(CBM_USE_RUST_PIPELINE_INFRASCAN_ONLY)
+    return cbm_rs_pipeline_is_env_file_v1(name) != 0;
+#else
     if (!name) {
         return false;
     }
@@ -211,9 +238,13 @@ bool cbm_is_env_file(const char *name) {
         return true;
     }
     return false;
+#endif
 }
 
 bool cbm_is_kustomize_file(const char *name) {
+#if defined(CBM_USE_RUST_PIPELINE_INFRASCAN) || defined(CBM_USE_RUST_PIPELINE_INFRASCAN_ONLY)
+    return cbm_rs_pipeline_is_kustomize_file_v1(name) != 0;
+#else
     if (!name) {
         return false;
     }
@@ -223,6 +254,7 @@ bool cbm_is_kustomize_file(const char *name) {
         return true;
     }
     return strcmp(lower, "kustomization.yml") == 0;
+#endif
 }
 
 bool cbm_is_k8s_manifest(const char *name, const char *content) {
@@ -238,11 +270,15 @@ bool cbm_is_k8s_manifest(const char *name, const char *content) {
 }
 
 bool cbm_is_shell_script(const char *name, const char *ext) {
+#if defined(CBM_USE_RUST_PIPELINE_INFRASCAN) || defined(CBM_USE_RUST_PIPELINE_INFRASCAN_ONLY)
+    return cbm_rs_pipeline_is_shell_script_v1(name, ext) != 0;
+#else
     (void)name;
     if (!ext) {
         return false;
     }
     return (strcmp(ext, ".sh") == 0 || strcmp(ext, ".bash") == 0 || strcmp(ext, ".zsh") == 0);
+#endif
 }
 
 /* ── Secret detection ───────────────────────────────────────────── */
@@ -319,49 +355,6 @@ bool cbm_is_secret_binding(const char *key, const char *value) {
         return true;
     }
     return false;
-}
-
-/* ── Clean JSON brackets ────────────────────────────────────────── */
-
-/* Strip JSON array brackets, quotes, and normalize whitespace. */
-static void clean_json_array_inner(const char *s, size_t len, char *out, size_t out_sz) {
-    size_t pos = 0;
-    bool in_space = false;
-    for (size_t i = SKIP_ONE; i < len - SKIP_ONE && pos < out_sz - SKIP_ONE; i++) {
-        char c = s[i];
-        if (c == '"') {
-            continue;
-        }
-        if (c == ',') {
-            c = ' ';
-        }
-        if (c == ' ' || c == '\t') {
-            if (!in_space && pos > 0) {
-                out[pos++] = ' ';
-                in_space = true;
-            }
-        } else {
-            out[pos++] = c;
-            in_space = false;
-        }
-    }
-    while (pos > 0 && out[pos - SKIP_ONE] == ' ') {
-        pos--;
-    }
-    out[pos] = '\0';
-}
-
-void cbm_clean_json_brackets(const char *s, char *out, size_t out_sz) {
-    if (!s || !out || out_sz == 0) {
-        return;
-    }
-
-    size_t len = strlen(s);
-    if (len >= PAIR_LEN && s[0] == '[' && s[len - SKIP_ONE] == ']') {
-        clean_json_array_inner(s, len, out, out_sz);
-    } else {
-        snprintf(out, out_sz, "%s", s);
-    }
 }
 
 /* ── Dockerfile parser ──────────────────────────────────────────── */

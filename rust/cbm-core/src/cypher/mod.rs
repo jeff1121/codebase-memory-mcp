@@ -119,6 +119,7 @@ const SCALAR_FUNC_NAMES: [&[u8]; 14] = [
     b"reverse",
 ];
 
+const MULTIARG_FUNC_NAMES: [&[u8]; 5] = [b"coalesce", b"substring", b"replace", b"left", b"right"];
 /// 對齊 `src/cypher/cypher.c` `scalar_func_canonical`：以 ASCII 大小寫不敏感
 /// （對齊 `cyp_ci_eq`）比對 `input`，回傳符合的 canonical 名稱索引（順序需與 C
 /// `names[]` 一致），或 `None`。索引由 C 端映射回其自身的 static 名稱字串，因此
@@ -129,6 +130,43 @@ pub fn scalar_func_index(input: Option<&[u8]>) -> Option<usize> {
     SCALAR_FUNC_NAMES
         .iter()
         .position(|name| input.eq_ignore_ascii_case(name))
+}
+
+/// 對齊 `src/cypher/cypher.c` `multiarg_func_canonical`。Rust 只回傳
+/// C `names[]` 的索引，C 仍回傳自己的 static 名稱字串並執行既有 evaluator。
+#[must_use]
+pub fn multiarg_func_index(input: Option<&[u8]>) -> Option<usize> {
+    let input = input?;
+    MULTIARG_FUNC_NAMES
+        .iter()
+        .position(|name| input.eq_ignore_ascii_case(name))
+}
+
+/// 對齊 `src/cypher/cypher.c` `agg_func_name` 的 token -> aggregate 名稱 mapping。
+/// Rust 只回傳 C 本地 `names[]` 的索引；parser item 建立與 aggregation executor 仍由 C 執行。
+#[must_use]
+pub fn aggregate_func_index(token_kind: i32) -> Option<usize> {
+    match token_kind {
+        TOK_COUNT => Some(0),
+        TOK_SUM => Some(1),
+        TOK_AVG => Some(2),
+        TOK_MIN_KW => Some(3),
+        TOK_MAX_KW => Some(4),
+        TOK_COLLECT => Some(5),
+        _ => None,
+    }
+}
+
+/// 對齊 `src/cypher/cypher.c` `str_func_name` 的 token -> string function 名稱 mapping。
+/// Rust 只回傳 C 本地 `names[]` 的索引；parser item 建立與 scalar evaluator 仍由 C 執行。
+#[must_use]
+pub fn string_func_index(token_kind: i32) -> Option<usize> {
+    match token_kind {
+        TOK_TOLOWER => Some(0),
+        TOK_TOUPPER => Some(1),
+        TOK_TOSTRING => Some(2),
+        _ => None,
+    }
 }
 
 #[must_use]
@@ -1009,23 +1047,29 @@ fn try_two_char(input: &[u8], pos: &mut usize) -> Option<Token> {
     if *pos + 1 >= input.len() {
         return None;
     }
-    let pair = [input[*pos], input[*pos + 1]];
-    let (kind, text): (i32, &[u8]) = match pair {
-        [b'!', b'='] => (TOK_NEQ, b"!="),
-        [b'<', b'>'] => (TOK_NEQ, b"<>"),
-        [b'=', b'~'] => (TOK_EQTILDE, b"=~"),
-        [b'>', b'='] => (TOK_GTE, b">="),
-        [b'<', b'='] => (TOK_LTE, b"<="),
-        [b'.', b'.'] => (TOK_DOTDOT, b".."),
-        _ => return None,
-    };
+    let kind = two_char_kind(input[*pos], input[*pos + 1])?;
     let start = *pos;
     *pos += 2;
     Some(Token {
         kind,
         pos: start as i32,
-        text: text.to_vec(),
+        text: input[start..*pos].to_vec(),
     })
+}
+
+pub(crate) fn two_char_kind(first: u8, second: u8) -> Option<i32> {
+    match (first, second) {
+        (b'!', b'=') | (b'<', b'>') => Some(TOK_NEQ),
+        (b'=', b'~') => Some(TOK_EQTILDE),
+        (b'>', b'=') => Some(TOK_GTE),
+        (b'<', b'=') => Some(TOK_LTE),
+        (b'.', b'.') => Some(TOK_DOTDOT),
+        _ => None,
+    }
+}
+
+pub(crate) fn two_char_kind_or_eof(first: u8, second: u8) -> i32 {
+    two_char_kind(first, second).unwrap_or(TOK_EOF)
 }
 
 fn skip_whitespace_comments(input: &[u8], pos: &mut usize) -> bool {
@@ -1058,7 +1102,7 @@ fn skip_whitespace_comments(input: &[u8], pos: &mut usize) -> bool {
     false
 }
 
-fn single_char_kind(c: u8) -> Option<i32> {
+pub(crate) fn single_char_kind(c: u8) -> Option<i32> {
     match c {
         b'(' => Some(TOK_LPAREN),
         b')' => Some(TOK_RPAREN),
@@ -1077,6 +1121,10 @@ fn single_char_kind(c: u8) -> Option<i32> {
         b'|' => Some(TOK_PIPE),
         _ => None,
     }
+}
+
+pub(crate) fn single_char_kind_or_eof(c: u8) -> i32 {
+    single_char_kind(c).unwrap_or(TOK_EOF)
 }
 
 fn keyword_lookup(word: &[u8]) -> Option<i32> {
@@ -1311,6 +1359,99 @@ mod tests {
         assert_eq!(scalar_func_index(Some(b"toString")), None);
         // 非 ASCII byte 不應誤判為已知函式
         assert_eq!(scalar_func_index(Some(b"label\xc3\xa9")), None);
+    }
+
+    #[test]
+    fn multiarg_func_index_matches_c_contract() {
+        assert_eq!(multiarg_func_index(Some(b"coalesce")), Some(0));
+        assert_eq!(multiarg_func_index(Some(b"COALESCE")), Some(0));
+        assert_eq!(multiarg_func_index(Some(b"substring")), Some(1));
+        assert_eq!(multiarg_func_index(Some(b"Replace")), Some(2));
+        assert_eq!(multiarg_func_index(Some(b"LEFT")), Some(3));
+        assert_eq!(multiarg_func_index(Some(b"right")), Some(4));
+        assert_eq!(multiarg_func_index(None), None);
+        assert_eq!(multiarg_func_index(Some(b"")), None);
+        assert_eq!(multiarg_func_index(Some(b"coalesc")), None);
+        assert_eq!(multiarg_func_index(Some(b"coalesceX")), None);
+        assert_eq!(multiarg_func_index(Some(b"count")), None);
+        assert_eq!(multiarg_func_index(Some(b"toLower")), None);
+        assert_eq!(multiarg_func_index(Some(b"labels")), None);
+        assert_eq!(multiarg_func_index(Some(b"split")), None);
+        assert_eq!(multiarg_func_index(Some(b"right\xc3\xa9")), None);
+    }
+
+    #[test]
+    fn aggregate_func_index_matches_c_contract() {
+        assert_eq!(aggregate_func_index(TOK_COUNT), Some(0));
+        assert_eq!(aggregate_func_index(TOK_SUM), Some(1));
+        assert_eq!(aggregate_func_index(TOK_AVG), Some(2));
+        assert_eq!(aggregate_func_index(TOK_MIN_KW), Some(3));
+        assert_eq!(aggregate_func_index(TOK_MAX_KW), Some(4));
+        assert_eq!(aggregate_func_index(TOK_COLLECT), Some(5));
+        assert_eq!(aggregate_func_index(TOK_TOLOWER), None);
+        assert_eq!(aggregate_func_index(TOK_IDENT), None);
+        assert_eq!(aggregate_func_index(-1), None);
+        assert_eq!(aggregate_func_index(TOK_EOF), None);
+    }
+
+    #[test]
+    fn string_func_index_matches_c_contract() {
+        assert_eq!(string_func_index(TOK_TOLOWER), Some(0));
+        assert_eq!(string_func_index(TOK_TOUPPER), Some(1));
+        assert_eq!(string_func_index(TOK_TOSTRING), Some(2));
+        assert_eq!(string_func_index(TOK_COUNT), None);
+        assert_eq!(string_func_index(TOK_IDENT), None);
+        assert_eq!(string_func_index(-1), None);
+        assert_eq!(string_func_index(TOK_EOF), None);
+    }
+
+    #[test]
+    fn single_char_kind_matches_c_contract() {
+        let expected = [
+            (b'(', TOK_LPAREN),
+            (b')', TOK_RPAREN),
+            (b'[', TOK_LBRACKET),
+            (b']', TOK_RBRACKET),
+            (b'-', TOK_DASH),
+            (b'>', TOK_GT),
+            (b'<', TOK_LT),
+            (b':', TOK_COLON),
+            (b'.', TOK_DOT),
+            (b'{', TOK_LBRACE),
+            (b'}', TOK_RBRACE),
+            (b'*', TOK_STAR),
+            (b',', TOK_COMMA),
+            (b'=', TOK_EQ),
+            (b'|', TOK_PIPE),
+        ];
+
+        for (input, kind) in expected {
+            assert_eq!(single_char_kind(input), Some(kind));
+            assert_eq!(single_char_kind_or_eof(input), kind);
+        }
+        assert_eq!(single_char_kind(b'@'), None);
+        assert_eq!(single_char_kind_or_eof(b'@'), TOK_EOF);
+        assert_eq!(single_char_kind(0x80), None);
+    }
+
+    #[test]
+    fn two_char_kind_matches_c_contract() {
+        let expected = [
+            ((b'!', b'='), TOK_NEQ),
+            ((b'<', b'>'), TOK_NEQ),
+            ((b'=', b'~'), TOK_EQTILDE),
+            ((b'>', b'='), TOK_GTE),
+            ((b'<', b'='), TOK_LTE),
+            ((b'.', b'.'), TOK_DOTDOT),
+        ];
+
+        for ((first, second), kind) in expected {
+            assert_eq!(two_char_kind(first, second), Some(kind));
+            assert_eq!(two_char_kind_or_eof(first, second), kind);
+        }
+        assert_eq!(two_char_kind(b'@', b'!'), None);
+        assert_eq!(two_char_kind_or_eof(b'@', b'!'), TOK_EOF);
+        assert_eq!(two_char_kind(0x80, b'='), None);
     }
 
     #[test]

@@ -6,6 +6,7 @@
  */
 #include "test_framework.h"
 #include "../src/foundation/log.h"
+#include "../src/foundation/log_path.h"
 #include "../src/foundation/compat.h"
 #include <stdbool.h>
 #ifndef _WIN32
@@ -164,12 +165,37 @@ TEST(log_sink_tee_keeps_stderr) {
     PASS();
 }
 
+TEST(log_copy_path_contract) {
+    char out[64];
+    cbm_log_copy_path_without_query("/api/items?q=1#section", out, sizeof(out));
+    ASSERT_STR_EQ(out, "/api/items");
+
+    cbm_log_copy_path_without_query("/api/items#section", out, sizeof(out));
+    ASSERT_STR_EQ(out, "/api/items");
+
+    char truncated[5];
+    cbm_log_copy_path_without_query("/api/items", truncated, sizeof(truncated));
+    ASSERT_STR_EQ(truncated, "/api");
+
+    char one[1] = {'x'};
+    cbm_log_copy_path_without_query("/api/items", one, sizeof(one));
+    ASSERT_EQ(one[0], '\0');
+    cbm_log_copy_path_without_query(NULL, out, sizeof(out));
+    ASSERT_STR_EQ(out, "");
+
+    char untouched[] = "x";
+    cbm_log_copy_path_without_query("/api/items", untouched, 0);
+    ASSERT_STR_EQ(untouched, "x");
+    cbm_log_copy_path_without_query("/api/items", NULL, 0);
+    PASS();
+}
+
 TEST(log_operational_helpers) {
     cbm_log_set_level(CBM_LOG_DEBUG);
     cbm_log_set_format(CBM_LOG_FORMAT_TEXT);
     capture_start();
     cbm_log_mcp_request("tools/call", "search_graph", false, 1250);
-    cbm_log_http_request("graph_ui", "GET", "/api/layout", 200, 7, 0, 42);
+    cbm_log_http_request("graph_ui", "GET", "/api/layout?q=1#section", 200, 7, 0, 42);
     const char *output = capture_end();
     cbm_log_set_level(CBM_LOG_INFO);
 
@@ -180,6 +206,8 @@ TEST(log_operational_helpers) {
     ASSERT(cbm_str_contains_raw(output, "msg=http.request"));
     ASSERT(cbm_str_contains_raw(output, "method=GET"));
     ASSERT(cbm_str_contains_raw(output, "path=/api/layout"));
+    ASSERT_NULL(strstr(output, "?q=1"));
+    ASSERT_NULL(strstr(output, "#section"));
     ASSERT(cbm_str_contains_raw(output, "status=200"));
     PASS();
 }
@@ -192,6 +220,11 @@ TEST(log_format_from_env) {
     cbm_setenv("CBM_LOG_FORMAT", "text", 1);
     cbm_log_init_from_env();
     ASSERT_EQ(cbm_log_get_format(), CBM_LOG_FORMAT_TEXT);
+
+    cbm_log_set_format(CBM_LOG_FORMAT_JSON);
+    cbm_setenv("CBM_LOG_FORMAT", " json", 1);
+    cbm_log_init_from_env();
+    ASSERT_EQ(cbm_log_get_format(), CBM_LOG_FORMAT_JSON);
 
     cbm_unsetenv("CBM_LOG_FORMAT");
     cbm_log_set_format(CBM_LOG_FORMAT_TEXT);
@@ -249,6 +282,15 @@ TEST(log_level_from_env_numeric) {
     cbm_log_init_from_env();
     ASSERT_EQ(cbm_log_get_level(), CBM_LOG_ERROR);
 
+    cbm_setenv("CBM_LOG_LEVEL", " +3", 1);
+    cbm_log_init_from_env();
+    ASSERT_EQ(cbm_log_get_level(), CBM_LOG_ERROR);
+
+    cbm_log_set_level(CBM_LOG_WARN);
+    cbm_setenv("CBM_LOG_LEVEL", "3 ", 1);
+    cbm_log_init_from_env();
+    ASSERT_EQ(cbm_log_get_level(), CBM_LOG_WARN);
+
     cbm_setenv("CBM_LOG_LEVEL", "4", 1);
     cbm_log_init_from_env();
     ASSERT_EQ(cbm_log_get_level(), CBM_LOG_NONE);
@@ -293,6 +335,7 @@ SUITE(log) {
     RUN_TEST(log_json_output);
     RUN_TEST(log_text_sanitizes_control_chars);
     RUN_TEST(log_sink_tee_keeps_stderr);
+    RUN_TEST(log_copy_path_contract);
     RUN_TEST(log_operational_helpers);
     RUN_TEST(log_format_from_env);
     RUN_TEST(log_format_unset_keeps_current);

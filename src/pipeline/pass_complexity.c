@@ -26,6 +26,11 @@
 #include <stdio.h>
 #include <stdbool.h>
 
+#ifdef CBM_USE_RUST_PIPELINE_COMPLEXITY_JSON
+extern int cbm_rs_pipeline_complexity_json_int_v1(const char *json, const char *key, int dflt);
+extern int cbm_rs_pipeline_complexity_json_bool_v1(const char *json, const char *key);
+#endif
+
 enum { CBM_TLD_MAX_DEPTH = 256 }; /* recursion-depth cap (cycle/stack guard) */
 
 /* Int → string for structured logging (thread-safe ring buffer). */
@@ -41,6 +46,9 @@ static const char *itoa_cx(int val) {
 
 /* Parse an integer "key":N from a flat JSON object. Returns def if absent. */
 static int json_get_int(const char *json, const char *key, int dflt) {
+#ifdef CBM_USE_RUST_PIPELINE_COMPLEXITY_JSON
+    return cbm_rs_pipeline_complexity_json_int_v1(json, key, dflt);
+#else
     if (!json) {
         return dflt;
     }
@@ -55,10 +63,14 @@ static int json_get_int(const char *json, const char *key, int dflt) {
         p++;
     }
     return (int)strtol(p, NULL, CBM_DECIMAL_BASE);
+#endif
 }
 
 /* Parse a boolean "key":true/false from a flat JSON object. */
 static bool json_get_bool(const char *json, const char *key) {
+#ifdef CBM_USE_RUST_PIPELINE_COMPLEXITY_JSON
+    return cbm_rs_pipeline_complexity_json_bool_v1(json, key) != 0;
+#else
     if (!json) {
         return false;
     }
@@ -73,6 +85,7 @@ static bool json_get_bool(const char *json, const char *key) {
         p++;
     }
     return *p == 't';
+#endif
 }
 
 /* Append transitive_loop_depth + recursive to a node's properties JSON object. */

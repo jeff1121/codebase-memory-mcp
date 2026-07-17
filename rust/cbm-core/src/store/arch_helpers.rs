@@ -170,6 +170,44 @@ pub fn file_ext_lower(path: Option<&[u8]>, cap: usize) -> Option<Vec<u8>> {
     Some(ext.iter().map(|&b| b.to_ascii_lowercase()).collect())
 }
 
+static EXT_LANGUAGE_EXTENSIONS: &[&str] = &[
+    ".py", ".go", ".js", ".jsx", ".ts", ".tsx", ".rs", ".java", ".cpp", ".cc", ".cxx", ".c", ".h",
+    ".cs", ".php", ".lua", ".scala", ".kt", ".rb", ".sh", ".bash", ".zig", ".ex", ".exs", ".hs",
+    ".ml", ".mli", ".html", ".css", ".yaml", ".yml", ".toml", ".hcl", ".tf", ".sql", ".erl",
+    ".swift", ".dart", ".groovy", ".pl", ".r", ".scss", ".vue", ".svelte",
+];
+
+#[must_use]
+pub fn ext_language_kind(ext: Option<&[u8]>) -> Option<i32> {
+    let ext = ext?;
+    EXT_LANGUAGE_EXTENSIONS
+        .iter()
+        .position(|candidate| candidate.as_bytes() == ext)
+        .map(|index| index as i32)
+}
+
+#[must_use]
+pub fn extract_json_string_prop(
+    json: Option<&[u8]>,
+    key: Option<&[u8]>,
+    key_len: usize,
+) -> Option<Vec<u8>> {
+    let (json, key) = (json?, key?);
+    let key_start = json.windows(key.len()).position(|window| window == key)?;
+    let after_key = key_start.checked_add(key_len)?;
+    let quote_offset = json
+        .get(after_key..)?
+        .iter()
+        .position(|byte| *byte == b'"')?;
+    let quote_start = after_key.checked_add(quote_offset)?.checked_add(1)?;
+    let value = json.get(quote_start..)?;
+    let value_len = value.iter().position(|byte| *byte == b'"')?;
+    if value_len >= 256 {
+        return None;
+    }
+    Some(value[..value_len].to_vec())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -226,6 +264,29 @@ mod tests {
             file_ext_lower(Some(b"a.abcdefghijklmn"), 16),
             Some(b".abcdefghijklmn".to_vec())
         );
+    }
+
+    #[test]
+    fn ext_language_kind_matches_c_table_order() {
+        for (index, ext) in EXT_LANGUAGE_EXTENSIONS.iter().enumerate() {
+            assert_eq!(ext_language_kind(Some(ext.as_bytes())), Some(index as i32));
+        }
+        assert_eq!(ext_language_kind(None), None);
+        assert_eq!(ext_language_kind(Some(b".txt")), None);
+        assert_eq!(ext_language_kind(Some(b".PY")), None);
+    }
+
+    #[test]
+    fn extracts_bounded_json_string_property_like_c() {
+        assert_eq!(
+            extract_json_string_prop(Some(b"{\"method\":\"GET\"}"), Some(b"\"method\""), 8),
+            Some(b"GET".to_vec())
+        );
+        assert_eq!(
+            extract_json_string_prop(Some(b"{\"method\":\"GET\"}"), Some(b"\"path\""), 6),
+            None
+        );
+        assert_eq!(extract_json_string_prop(None, Some(b"key"), 3), None);
     }
 
     #[test]

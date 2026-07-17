@@ -9,6 +9,12 @@
 
 #include <string.h>
 
+#if defined(CBM_USE_RUST_COMPAT_REGEX) || defined(CBM_USE_RUST_COMPAT_REGEX_ONLY)
+extern int cbm_rs_compat_regex_known_flags(int flags);
+extern int cbm_rs_compat_regex_match_cap(int nmatch, int has_matches);
+extern int cbm_rs_compat_regex_status(int matched);
+#endif
+
 #ifdef _WIN32
 
 /* ── Windows: use vendored TRE regex ─────────────────────────── */
@@ -18,6 +24,9 @@ _Static_assert(sizeof(regex_t) <= CBM_SZ_256,
                "cbm_regex_t opaque buffer too small for TRE regex_t");
 
 static int translate_flags_tre(int flags) {
+#if defined(CBM_USE_RUST_COMPAT_REGEX) || defined(CBM_USE_RUST_COMPAT_REGEX_ONLY)
+    return cbm_rs_compat_regex_known_flags(flags);
+#else
     int tre_flags = 0;
     if (flags & CBM_REG_EXTENDED)
         tre_flags |= REG_EXTENDED;
@@ -28,6 +37,7 @@ static int translate_flags_tre(int flags) {
     if (flags & CBM_REG_NEWLINE)
         tre_flags |= REG_NEWLINE;
     return tre_flags;
+#endif
 }
 
 int cbm_regcomp(cbm_regex_t *r, const char *pattern, int flags) {
@@ -41,18 +51,35 @@ int cbm_regexec(const cbm_regex_t *r, const char *str, int nmatch, cbm_regmatch_
     const regex_t *re = (const regex_t *)r->opaque;
     if (nmatch <= 0 || !matches) {
         int rc = tre_regexec(re, str, 0, NULL, eflags);
+#if defined(CBM_USE_RUST_COMPAT_REGEX) || defined(CBM_USE_RUST_COMPAT_REGEX_ONLY)
+        return cbm_rs_compat_regex_status(rc == 0);
+#else
         return rc == 0 ? CBM_REG_OK : CBM_REG_NOMATCH;
+#endif
     }
     regmatch_t pmatch[CBM_SZ_32];
+#if defined(CBM_USE_RUST_COMPAT_REGEX) || defined(CBM_USE_RUST_COMPAT_REGEX_ONLY)
+    int n = cbm_rs_compat_regex_match_cap(nmatch, 1);
+#else
     int n = nmatch > CBM_SZ_32 ? CBM_SZ_32 : nmatch;
+#endif
     int rc = tre_regexec(re, str, (size_t)n, pmatch, eflags);
-    if (rc != 0)
+    if (rc != 0) {
+#if defined(CBM_USE_RUST_COMPAT_REGEX) || defined(CBM_USE_RUST_COMPAT_REGEX_ONLY)
+        return cbm_rs_compat_regex_status(0);
+#else
         return CBM_REG_NOMATCH;
+#endif
+    }
     for (int i = 0; i < n; i++) {
         matches[i].rm_so = (int)pmatch[i].rm_so;
         matches[i].rm_eo = (int)pmatch[i].rm_eo;
     }
+#if defined(CBM_USE_RUST_COMPAT_REGEX) || defined(CBM_USE_RUST_COMPAT_REGEX_ONLY)
+    return cbm_rs_compat_regex_status(1);
+#else
     return CBM_REG_OK;
+#endif
 }
 
 void cbm_regfree(cbm_regex_t *r) {
@@ -71,6 +98,9 @@ void cbm_regfree(cbm_regex_t *r) {
 _Static_assert(sizeof(regex_t) <= CBM_SZ_256, "cbm_regex_t opaque buffer too small for regex_t");
 
 static int translate_flags(int flags) {
+#if defined(CBM_USE_RUST_COMPAT_REGEX) || defined(CBM_USE_RUST_COMPAT_REGEX_ONLY)
+    return cbm_rs_compat_regex_known_flags(flags);
+#else
     int posix_flags = 0;
     if (flags & CBM_REG_EXTENDED) {
         posix_flags |= REG_EXTENDED;
@@ -85,6 +115,7 @@ static int translate_flags(int flags) {
         posix_flags |= REG_NEWLINE;
     }
     return posix_flags;
+#endif
 }
 
 int cbm_regcomp(cbm_regex_t *r, const char *pattern, int flags) {
@@ -99,22 +130,37 @@ int cbm_regexec(const cbm_regex_t *r, const char *str, int nmatch, cbm_regmatch_
 
     if (nmatch <= 0 || !matches) {
         int rc = regexec(re, str, 0, NULL, eflags);
+#if defined(CBM_USE_RUST_COMPAT_REGEX) || defined(CBM_USE_RUST_COMPAT_REGEX_ONLY)
+        return cbm_rs_compat_regex_status(rc == 0);
+#else
         return rc == 0 ? CBM_REG_OK : CBM_REG_NOMATCH;
+#endif
     }
 
-    /* Map through POSIX regmatch_t */
     regmatch_t pmatch[CBM_SZ_32];
+#if defined(CBM_USE_RUST_COMPAT_REGEX) || defined(CBM_USE_RUST_COMPAT_REGEX_ONLY)
+    int n = cbm_rs_compat_regex_match_cap(nmatch, 1);
+#else
     int n = nmatch > CBM_SZ_32 ? CBM_SZ_32 : nmatch;
+#endif
     int rc = regexec(re, str, (size_t)n, pmatch, eflags);
     if (rc != 0) {
+#if defined(CBM_USE_RUST_COMPAT_REGEX) || defined(CBM_USE_RUST_COMPAT_REGEX_ONLY)
+        return cbm_rs_compat_regex_status(0);
+#else
         return CBM_REG_NOMATCH;
+#endif
     }
 
     for (int i = 0; i < n; i++) {
         matches[i].rm_so = (int)pmatch[i].rm_so;
         matches[i].rm_eo = (int)pmatch[i].rm_eo;
     }
+#if defined(CBM_USE_RUST_COMPAT_REGEX) || defined(CBM_USE_RUST_COMPAT_REGEX_ONLY)
+    return cbm_rs_compat_regex_status(1);
+#else
     return CBM_REG_OK;
+#endif
 }
 
 void cbm_regfree(cbm_regex_t *r) {

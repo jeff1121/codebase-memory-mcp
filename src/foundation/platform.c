@@ -11,11 +11,11 @@
 #include <stdio.h>
 #include <string.h>
 
-#ifdef CBM_USE_RUST_PLATFORM_PATH
+#if defined(CBM_USE_RUST_PLATFORM_PATH) || defined(CBM_USE_RUST_PLATFORM_PATH_ONLY)
 extern char *cbm_rs_normalize_path_sep(char *path);
 #endif
 
-#ifdef CBM_USE_RUST_PLATFORM_ENV_DIRS
+#if defined(CBM_USE_RUST_PLATFORM_ENV_DIRS) || defined(CBM_USE_RUST_PLATFORM_ENV_DIRS_ONLY)
 extern size_t cbm_rs_safe_getenv(char *buf, size_t buf_sz, const char *name, const char *fallback);
 extern size_t cbm_rs_get_home_dir(char *buf, size_t buf_sz);
 extern size_t cbm_rs_app_config_dir(char *buf, size_t buf_sz);
@@ -29,7 +29,7 @@ static const char *cbm_rust_static_buf(size_t (*fill)(char *buf, size_t buf_sz),
 }
 #endif
 
-#ifndef CBM_USE_RUST_PLATFORM_PATH
+#if !defined(CBM_USE_RUST_PLATFORM_PATH) && !defined(CBM_USE_RUST_PLATFORM_PATH_ONLY)
 /* Canonicalize a Windows drive letter to upper-case in place: "c:/x" -> "C:/x".
  * Windows drive letters are case-insensitive, but a lowercase one (as agent
  * CWDs often report, e.g. Claude Code's "c:\...") otherwise produces a distinct
@@ -163,7 +163,9 @@ int64_t cbm_file_size(const char *path) {
 }
 
 char *cbm_normalize_path_sep(char *path) {
-#ifdef CBM_USE_RUST_PLATFORM_PATH
+#ifdef CBM_USE_RUST_PLATFORM_PATH_ONLY
+    return cbm_rs_normalize_path_sep(path);
+#elif defined(CBM_USE_RUST_PLATFORM_PATH)
     return cbm_rs_normalize_path_sep(path);
 #else
     if (path) {
@@ -295,7 +297,9 @@ int64_t cbm_file_size(const char *path) {
 }
 
 char *cbm_normalize_path_sep(char *path) {
-#ifdef CBM_USE_RUST_PLATFORM_PATH
+#ifdef CBM_USE_RUST_PLATFORM_PATH_ONLY
+    return cbm_rs_normalize_path_sep(path);
+#elif defined(CBM_USE_RUST_PLATFORM_PATH)
     return cbm_rs_normalize_path_sep(path);
 #else
     /* Normalize on ALL platforms — backslash paths can arrive via stored
@@ -339,7 +343,7 @@ const char *cbm_safe_getenv(const char *name, char *buf, size_t buf_sz, const ch
         buf[0] = '\0';
         return NULL;
     }
-#ifdef CBM_USE_RUST_PLATFORM_ENV_DIRS
+#if defined(CBM_USE_RUST_PLATFORM_ENV_DIRS) || defined(CBM_USE_RUST_PLATFORM_ENV_DIRS_ONLY)
     size_t len = cbm_rs_safe_getenv(buf, buf_sz, name, fallback);
     if (len == SIZE_MAX) {
         buf[0] = '\0';
@@ -370,7 +374,7 @@ const char *cbm_safe_getenv(const char *name, char *buf, size_t buf_sz, const ch
 
 const char *cbm_get_home_dir(void) {
     static char buf[CBM_SZ_1K];
-#ifdef CBM_USE_RUST_PLATFORM_ENV_DIRS
+#if defined(CBM_USE_RUST_PLATFORM_ENV_DIRS) || defined(CBM_USE_RUST_PLATFORM_ENV_DIRS_ONLY)
     return cbm_rust_static_buf(cbm_rs_get_home_dir, buf, sizeof(buf));
 #else
     char tmp[CBM_SZ_256] = "";
@@ -396,7 +400,7 @@ const char *cbm_get_home_dir(void) {
 
 const char *cbm_app_config_dir(void) {
     static char buf[CBM_SZ_1K];
-#ifdef CBM_USE_RUST_PLATFORM_ENV_DIRS
+#if defined(CBM_USE_RUST_PLATFORM_ENV_DIRS) || defined(CBM_USE_RUST_PLATFORM_ENV_DIRS_ONLY)
     return cbm_rust_static_buf(cbm_rs_app_config_dir, buf, sizeof(buf));
 #else
     char tmp[CBM_SZ_256] = "";
@@ -431,7 +435,7 @@ const char *cbm_app_config_dir(void) {
 }
 
 const char *cbm_app_local_dir(void) {
-#ifdef CBM_USE_RUST_PLATFORM_ENV_DIRS
+#if defined(CBM_USE_RUST_PLATFORM_ENV_DIRS) || defined(CBM_USE_RUST_PLATFORM_ENV_DIRS_ONLY)
     static char buf[CBM_SZ_1K];
     return cbm_rust_static_buf(cbm_rs_app_local_dir, buf, sizeof(buf));
 #else
@@ -460,7 +464,7 @@ const char *cbm_app_local_dir(void) {
 
 const char *cbm_resolve_cache_dir(void) {
     static char buf[CBM_SZ_1K];
-#ifdef CBM_USE_RUST_PLATFORM_ENV_DIRS
+#if defined(CBM_USE_RUST_PLATFORM_ENV_DIRS) || defined(CBM_USE_RUST_PLATFORM_ENV_DIRS_ONLY)
     return cbm_rust_static_buf(cbm_rs_resolve_cache_dir, buf, sizeof(buf));
 #else
     char tmp[CBM_SZ_256] = "";
