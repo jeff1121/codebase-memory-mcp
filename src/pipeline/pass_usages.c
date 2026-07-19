@@ -15,6 +15,7 @@
 #include "foundation/str_util.h" // cbm_json_escape
 #include "pipeline/pipeline.h"
 #include "pipeline/pipeline_internal.h"
+#include "pipeline/usages_json.h"
 #include "graph_buffer/graph_buffer.h"
 #include "foundation/log.h"
 #include "foundation/compat.h"
@@ -27,11 +28,6 @@
 
 #ifdef CBM_USE_RUST_PIPELINE_CHECKED_EXCEPTION
 extern int cbm_rs_pipeline_is_checked_exception_v1(const char *name);
-#endif
-#ifdef CBM_USE_RUST_PIPELINE_USAGES_JSON
-extern size_t cbm_rs_pipeline_usages_local_name_len_v1(const char *json);
-extern size_t cbm_rs_pipeline_usages_local_name_copy_v1(const char *json, char *out,
-                                                        size_t out_size);
 #endif
 int cbm_pipeline_is_checked_exception(const char *name);
 
@@ -154,34 +150,13 @@ static int build_import_map_from_edges(cbm_pipeline_ctx_t *ctx, const char *rel_
             continue;
         }
 
-#ifdef CBM_USE_RUST_PIPELINE_USAGES_JSON
-        size_t local_name_len = cbm_rs_pipeline_usages_local_name_len_v1(e->properties_json);
-        if (local_name_len != SIZE_MAX) {
-            char *local_name = malloc(local_name_len + SKIP_ONE);
-            if (!local_name) {
-                continue;
-            }
-            if (cbm_rs_pipeline_usages_local_name_copy_v1(
-                    e->properties_json, local_name, local_name_len + SKIP_ONE) != local_name_len) {
-                free(local_name);
-                continue;
-            }
+        /* local_name 擷取：見 usages_json.c（true-source selectable CU） */
+        char *local_name = cbm_pipeline_usages_extract_local_name(e->properties_json);
+        if (local_name) {
             keys[count] = local_name;
             vals[count] = target->qualified_name;
             count++;
         }
-#else
-        const char *start = strstr(e->properties_json, "\"local_name\":\"");
-        if (start) {
-            start += strlen("\"local_name\":\"");
-            const char *end = strchr(start, '"');
-            if (end && end > start) {
-                keys[count] = cbm_strndup(start, end - start);
-                vals[count] = target->qualified_name;
-                count++;
-            }
-        }
-#endif
     }
 
     *out_keys = keys;

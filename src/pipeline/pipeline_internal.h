@@ -9,6 +9,7 @@
 #define CBM_PIPELINE_INTERNAL_H
 
 #include "pipeline/pipeline.h"
+#include "pipeline/enrichment_tokens.h"
 #include "pipeline/split_command.h"
 #include "pipeline/path_alias.h"
 #include "graph_buffer/graph_buffer.h"
@@ -233,17 +234,6 @@ int cbm_normalize_config_key(const char *key, char *norm_out, size_t norm_sz);
 
 /* Check if a file path has a config file extension (.toml, .yaml, .env, etc.) */
 bool cbm_has_config_extension(const char *path);
-
-/* ── Enrichment helpers (pass_enrichment.c) ──────────────────────── */
-
-/* Split camelCase string on lowercase→uppercase transitions.
- * Writes substrings to out[]. Returns count. Caller must free each out[i]. */
-int cbm_split_camel_case(const char *s, char **out, int max_out);
-
-/* Tokenize a decorator into lowercase words, filtering stopwords.
- * E.g. "@login_required" → ["login", "required"].
- * Writes words to out[]. Returns count. Caller must free each out[i]. */
-int cbm_tokenize_decorator(const char *dec, char **out, int max_out);
 
 /* ── Compile commands helpers (pass_compile_commands.c) ──────────── */
 

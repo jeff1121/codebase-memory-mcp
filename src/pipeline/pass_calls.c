@@ -34,10 +34,7 @@ enum { PC_RING = 4, PC_RING_MASK = 3, PC_SIG_SCAN = 15, PC_REGEX_GRP = 2 };
 #include <stdlib.h>
 #include <string.h>
 
-#ifdef CBM_USE_RUST_PIPELINE_CALLS_JSON
-extern size_t cbm_rs_pipeline_calls_extract_local_name_v1(char *buf, size_t bufsize,
-                                                          const char *json);
-#endif
+#include "pipeline/calls_json.h"
 
 /* Read entire file into heap-allocated buffer. Caller must free(). */
 static char *read_file(const char *path, int *out_len) {
@@ -86,39 +83,7 @@ static const char *itoa_log(int val) {
 
 /* Build per-file import map from cached extraction result or graph buffer edges.
  * Returns parallel arrays of (local_name, module_qn) pairs. Caller frees. */
-/* Parse "local_name":"value" from JSON properties string. Returns strdup'd key or NULL. */
-static char *extract_local_name_from_json(const char *props_json) {
-#ifdef CBM_USE_RUST_PIPELINE_CALLS_JSON
-    size_t length = cbm_rs_pipeline_calls_extract_local_name_v1(NULL, 0, props_json);
-    if (length == SIZE_MAX) {
-        return NULL;
-    }
-    char *result = malloc(length + SKIP_ONE);
-    if (!result) {
-        return NULL;
-    }
-    if (cbm_rs_pipeline_calls_extract_local_name_v1(result, length + SKIP_ONE, props_json) !=
-        length) {
-        free(result);
-        return NULL;
-    }
-    return result;
-#else
-    if (!props_json) {
-        return NULL;
-    }
-    const char *start = strstr(props_json, "\"local_name\":\"");
-    if (!start) {
-        return NULL;
-    }
-    start += strlen("\"local_name\":\"");
-    const char *end = strchr(start, '"');
-    if (!end || end <= start) {
-        return NULL;
-    }
-    return cbm_strndup(start, end - start);
-#endif
-}
+/* local_name 擷取：見 calls_json.c（true-source selectable CU） */
 
 static int build_import_map(cbm_pipeline_ctx_t *ctx, const char *rel_path,
                             const CBMFileResult *result, const char ***out_keys,
@@ -181,7 +146,7 @@ static int build_import_map(cbm_pipeline_ctx_t *ctx, const char *rel_path,
         if (!target) {
             continue;
         }
-        char *key = extract_local_name_from_json(e->properties_json);
+        char *key = cbm_pipeline_calls_extract_local_name(e->properties_json);
         if (key) {
             keys[count] = key;
             vals[count] = target->qualified_name;

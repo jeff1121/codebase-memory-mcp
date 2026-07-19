@@ -142,4 +142,23 @@ mod tests {
             b"packages/foo/src/lib"
         );
     }
+
+    #[test]
+    fn preserves_bounded_bytes_and_null_path_contracts() {
+        let source = b"x\n \tmod\0";
+        assert_eq!(
+            find_line_value_offset(Some(source), Some(b"mod"), source.len()),
+            Some(7)
+        );
+        assert!(!at_prefix(None, Some(b"mod"), 3));
+        assert_eq!(path_dirname(None), b"");
+        assert_eq!(strip_extension(None), b"");
+        assert_eq!(join_and_strip(None, None), None);
+        assert_eq!(build_entry_path(None, None), b"");
+
+        let dir = vec![b'd'; 1022];
+        let joined = join_and_strip(Some(&dir), Some(b"entry.ts")).expect("entry is present");
+        assert_eq!(joined.len(), 1023);
+        assert_eq!(joined.last(), Some(&b'/'));
+    }
 }

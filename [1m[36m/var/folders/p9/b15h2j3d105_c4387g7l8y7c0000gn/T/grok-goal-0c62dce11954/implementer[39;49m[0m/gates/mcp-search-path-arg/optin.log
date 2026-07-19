@@ -1,0 +1,479 @@
+/Applications/Xcode.app/Contents/Developer/usr/bin/make -j1 -f Makefile.cbm BUILD_DIR=build/c/rust-mcp-search-path-arg-default SANITIZE= clean-c
+rm -rf build/c/rust-mcp-search-path-arg-default
+/Applications/Xcode.app/Contents/Developer/usr/bin/make -j1 -f Makefile.cbm BUILD_DIR=build/c/rust-mcp-search-path-arg-default SANITIZE= build/c/rust-mcp-search-path-arg-default/test-rust-ffi
+CARGO_TARGET_DIR=target/cbm-default cargo build -p cbm-core   --locked
+   Compiling cbm-core v0.0.0 (/Users/jeff/Documents/repos/codebase-memory-mcp/rust/cbm-core)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.63s
+mkdir -p build/c/rust-mcp-search-path-arg-default
+cc -std=c11 -D_DEFAULT_SOURCE -D_GNU_SOURCE -Wall -Wextra -Werror -Wno-unused-parameter -Wno-sign-compare  -Isrc -Ivendored -Ivendored/sqlite3 -Ivendored/mimalloc/include -Iinternal/cbm -Iinternal/cbm/vendored/ts_runtime/include  -g -O1  -o build/c/rust-mcp-search-path-arg-default/test-rust-ffi tests/test_rust_ffi.c  src/pipeline/artifact_path.c src/pipeline/route_node_classifiers.c src/pipeline/json_prop.c src/pipeline/split_command.c src/pipeline/calls_json.c src/pipeline/usages_json.c src/pipeline/lsp_cross_classifiers.c src/mcp/search_mode.c src/mcp/index_mode.c src/mcp/search_path_arg.c src/mcp/search_line_span.c src/discover/local_rel_path.c src/discover/filters.c src/discover/discover_string_helpers.c src/semantic/ast_profile_classifiers.c src/pipeline/registry_test_qn.c src/pipeline/test_node_is_test.c src/semantic/camel_break.c src/semantic/token_delim.c src/discover/language_name.c src/pipeline/parallel_json.c src/pipeline/definitions_json.c src/pipeline/similarity_fp.c src/simhash/minhash_jaccard.c src/pipeline/infrascan_json.c src/discover/language_markers.c target/cbm-default/debug/libcbm_core.a -lm -lstdc++ -lpthread -lz   
+cd /Users/jeff/Documents/repos/codebase-memory-mcp && build/c/rust-mcp-search-path-arg-default/test-rust-ffi
+/Applications/Xcode.app/Contents/Developer/usr/bin/make -j1 -f Makefile.cbm BUILD_DIR=build/c/rust-mcp-search-path-arg-default SANITIZE= build/c/rust-mcp-search-path-arg-default/test-runner
+cc -std=c11 -D_DEFAULT_SOURCE -D_GNU_SOURCE -Wall -Wextra -Werror -Wno-unused-parameter -Wno-sign-compare  -Isrc -Ivendored -Ivendored/sqlite3 -Ivendored/mimalloc/include -Iinternal/cbm -Iinternal/cbm/vendored/ts_runtime/include  -g -O1  -o build/c/rust-mcp-search-path-arg-default/test-runner \
+		tests/test_main.c tests/test_arena.c tests/test_hash_table.c tests/test_dyn_array.c tests/test_str_intern.c tests/test_log.c tests/test_profile.c tests/test_diagnostics.c tests/test_str_util.c tests/test_compat.c tests/test_platform.c tests/test_yaml.c tests/test_dump_verify.c tests/test_extraction.c tests/test_extraction_inheritance.c tests/test_extraction_imports.c tests/test_grammar_regression.c tests/test_grammar_labels.c tests/test_grammar_imports.c tests/test_ac.c tests/test_store_nodes.c tests/test_store_edges.c tests/test_store_search.c tests/test_store_arch.c tests/test_store_bulk.c tests/test_store_pragmas.c tests/test_store_checkpoint.c tests/test_store_compat.c tests/test_dump_verify_io.c tests/test_cypher.c tests/test_cypher_contract.c tests/test_mcp.c tests/test_language.c tests/test_userconfig.c tests/test_gitignore.c tests/test_discover.c tests/test_graph_buffer.c tests/test_registry.c tests/test_pipeline.c tests/test_fqn.c tests/test_route_canon.c tests/test_path_alias.c tests/test_configlink.c tests/test_infrascan.c tests/test_worker_pool.c tests/test_parallel.c tests/test_watcher.c tests/test_lz4.c tests/test_zstd.c tests/test_artifact.c tests/test_sqlite_writer.c tests/test_go_lsp.c tests/test_c_lsp.c tests/test_php_lsp.c tests/test_cs_lsp.c tests/test_cs_lsp_bench.c tests/test_scope.c tests/test_type_rep.c tests/test_py_lsp.c tests/test_py_lsp_bench.c tests/test_py_lsp_stress.c tests/test_py_lsp_scale.c tests/test_ts_lsp.c tests/test_java_lsp.c tests/test_java_lsp_coverage.c tests/test_kotlin_lsp.c tests/test_rust_lsp.c tests/test_traces.c tests/test_cli.c tests/test_progress_sink.c tests/test_mem.c tests/test_ui.c tests/test_httpd.c tests/test_security.c tests/test_simhash.c tests/test_stack_overflow.c tests/test_integration.c tests/test_incremental.c tests/test_lang_contract.c tests/test_edge_imports.c tests/test_edge_structural.c tests/test_lsp_resolution_probe.c tests/test_node_creation_probe.c tests/test_edge_types_probe.c tests/test_convergence_probe.c tests/test_matrix_known_classes.c tests/test_matrix_new_constructs.c tests/test_grammar_probe_a.c tests/test_grammar_probe_b.c tests/test_grammar_probe_c.c tests/test_grammar_probe_d.c tests/test_grammar_probe_e.c tests/test_grammar_probe_f.c tests/test_grammar_probe_g.c src/foundation/arena.c src/foundation/hash_table.c src/foundation/str_intern.c src/foundation/log.c src/foundation/log_path.c src/foundation/str_util.c src/foundation/platform.c src/foundation/system_info.c src/foundation/slab_alloc.c src/foundation/yaml.c src/foundation/compat.c src/foundation/compat_thread.c src/foundation/compat_fs.c src/foundation/compat_regex.c src/foundation/mem.c src/foundation/diagnostics.c src/foundation/profile.c src/foundation/dump_verify.c src/store/store.c src/store/arch_helpers.c src/store/arch_path_scope.c src/store/file_ext.c src/store/immutable_uri.c src/store/mmap_resolver.c src/store/fts_tokenizer.c src/store/search_pattern.c src/cypher/cypher.c src/mcp/edge_type_valid.c src/mcp/search_mode.c src/mcp/index_mode.c src/mcp/search_path_arg.c src/mcp/search_line_span.c src/mcp/mcp.c src/discover/language.c src/discover/language_name.c src/discover/language_markers.c src/discover/userconfig.c  src/discover/gitignore.c src/discover/discover_string_helpers.c src/discover/trailing_sep.c src/discover/path_join.c src/discover/local_rel_path.c src/discover/discover.c src/discover/filters.c src/graph_buffer/graph_buffer.c src/graph_buffer/graph_buffer_mutation.c src/pipeline/fqn.c src/pipeline/project_name.c src/pipeline/path_alias.c src/pipeline/registry.c src/pipeline/registry_test_qn.c src/pipeline/pipeline.c src/pipeline/incremental_edge_type.c src/pipeline/incremental_registry_label.c src/pipeline/pipeline_incremental.c src/pipeline/worker_pool.c src/pipeline/parallel_json.c src/pipeline/pass_parallel.c src/pipeline/checked_exception.c src/pipeline/route_args.c src/pipeline/k8s_file_classifiers.c src/pipeline/route_node_classifiers.c src/pipeline/definitions_json.c src/pipeline/pass_definitions.c src/pipeline/calls_json.c src/pipeline/pass_calls.c src/pipeline/lsp_cross_classifiers.c src/pipeline/pass_lsp_cross.c src/pipeline/usages_json.c src/pipeline/pass_usages.c src/pipeline/semantic_fp_suffix.c src/pipeline/pass_semantic.c src/pipeline/test_node_is_test.c src/pipeline/pass_tests.c src/pipeline/test_detect.c src/pipeline/trackable_file.c src/pipeline/pass_githistory.c src/pipeline/pass_gitdiff.c src/pipeline/pass_configures.c src/pipeline/configlink_helpers.c src/pipeline/pass_configlink.c src/pipeline/json_prop.c src/pipeline/pass_route_nodes.c src/pipeline/url_path.c src/pipeline/sveltekit_file_kind.c src/pipeline/sveltekit_server_method.c src/pipeline/pass_enrichment.c src/pipeline/envscan_classifiers.c src/pipeline/pass_envscan.c src/pipeline/split_command.c src/pipeline/pass_compile_commands.c src/pipeline/infrascan_json.c src/pipeline/pass_infrascan.c src/pipeline/k8s_text_helpers.c src/pipeline/pass_k8s.c src/pipeline/similarity_fp.c src/pipeline/pass_similarity.c src/pipeline/pass_semantic_edges.c src/pipeline/pass_complexity.c src/pipeline/pass_cross_repo.c src/pipeline/artifact.c src/pipeline/artifact_path.c src/pipeline/pass_pkgmap.c src/simhash/minhash_jaccard.c src/simhash/minhash.c src/semantic/semantic.c src/semantic/ast_profile.c src/semantic/camel_break.c src/semantic/token_delim.c src/semantic/ast_profile_classifiers.c src/traces/traces.c src/watcher/watcher.c src/watcher/poll_interval.c src/git/git_context.c src/git/path_absolute.c src/git/json_escaped_len.c src/git/trim_newlines.c src/cli/archive_helpers.c src/cli/cli.c src/cli/progress_sink.c src/cli/hook_augment.c src/ui/config.c src/ui/http_server.c src/ui/layout3d.c src/ui/httpd.c src/ui/embedded_stub.c vendored/yyjson/yyjson.c \
+		internal/cbm/cbm.c internal/cbm/extract_defs.c internal/cbm/extract_calls.c internal/cbm/extract_imports.c internal/cbm/extract_usages.c internal/cbm/extract_unified.c internal/cbm/extract_semantic.c internal/cbm/extract_type_refs.c internal/cbm/extract_type_assigns.c internal/cbm/extract_env_accesses.c internal/cbm/extract_channels.c internal/cbm/extract_k8s.c internal/cbm/helpers.c internal/cbm/lang_specs.c internal/cbm/service_patterns.c internal/cbm/ac.c internal/cbm/lz4_store.c internal/cbm/zstd_store.c internal/cbm/sqlite_writer.c \
+		build/c/rust-mcp-search-path-arg-default/mimalloc.o build/c/rust-mcp-search-path-arg-default/sqlite3.o  build/c/rust-mcp-search-path-arg-default/grammar_ada.o build/c/rust-mcp-search-path-arg-default/grammar_agda.o build/c/rust-mcp-search-path-arg-default/grammar_apex.o build/c/rust-mcp-search-path-arg-default/grammar_assembly.o build/c/rust-mcp-search-path-arg-default/grammar_astro.o build/c/rust-mcp-search-path-arg-default/grammar_awk.o build/c/rust-mcp-search-path-arg-default/grammar_bash.o build/c/rust-mcp-search-path-arg-default/grammar_beancount.o build/c/rust-mcp-search-path-arg-default/grammar_bibtex.o build/c/rust-mcp-search-path-arg-default/grammar_bicep.o build/c/rust-mcp-search-path-arg-default/grammar_bitbake.o build/c/rust-mcp-search-path-arg-default/grammar_blade.o build/c/rust-mcp-search-path-arg-default/grammar_c_sharp.o build/c/rust-mcp-search-path-arg-default/grammar_c.o build/c/rust-mcp-search-path-arg-default/grammar_cairo.o build/c/rust-mcp-search-path-arg-default/grammar_capnp.o build/c/rust-mcp-search-path-arg-default/grammar_cfml.o build/c/rust-mcp-search-path-arg-default/grammar_cfscript.o build/c/rust-mcp-search-path-arg-default/grammar_clojure.o build/c/rust-mcp-search-path-arg-default/grammar_cmake.o build/c/rust-mcp-search-path-arg-default/grammar_cobol.o build/c/rust-mcp-search-path-arg-default/grammar_commonlisp.o build/c/rust-mcp-search-path-arg-default/grammar_cpp.o build/c/rust-mcp-search-path-arg-default/grammar_crystal.o build/c/rust-mcp-search-path-arg-default/grammar_css.o build/c/rust-mcp-search-path-arg-default/grammar_csv.o build/c/rust-mcp-search-path-arg-default/grammar_cuda.o build/c/rust-mcp-search-path-arg-default/grammar_d.o build/c/rust-mcp-search-path-arg-default/grammar_dart.o build/c/rust-mcp-search-path-arg-default/grammar_devicetree.o build/c/rust-mcp-search-path-arg-default/grammar_diff.o build/c/rust-mcp-search-path-arg-default/grammar_dockerfile.o build/c/rust-mcp-search-path-arg-default/grammar_dotenv.o build/c/rust-mcp-search-path-arg-default/grammar_elisp.o build/c/rust-mcp-search-path-arg-default/grammar_elixir.o build/c/rust-mcp-search-path-arg-default/grammar_elm.o build/c/rust-mcp-search-path-arg-default/grammar_erlang.o build/c/rust-mcp-search-path-arg-default/grammar_fennel.o build/c/rust-mcp-search-path-arg-default/grammar_fish.o build/c/rust-mcp-search-path-arg-default/grammar_form.o build/c/rust-mcp-search-path-arg-default/grammar_fortran.o build/c/rust-mcp-search-path-arg-default/grammar_fsharp.o build/c/rust-mcp-search-path-arg-default/grammar_func.o build/c/rust-mcp-search-path-arg-default/grammar_gdscript.o build/c/rust-mcp-search-path-arg-default/grammar_gitattributes.o build/c/rust-mcp-search-path-arg-default/grammar_gitignore.o build/c/rust-mcp-search-path-arg-default/grammar_gleam.o build/c/rust-mcp-search-path-arg-default/grammar_glsl.o build/c/rust-mcp-search-path-arg-default/grammar_gn.o build/c/rust-mcp-search-path-arg-default/grammar_go.o build/c/rust-mcp-search-path-arg-default/grammar_gomod.o build/c/rust-mcp-search-path-arg-default/grammar_gotemplate.o build/c/rust-mcp-search-path-arg-default/grammar_graphql.o build/c/rust-mcp-search-path-arg-default/grammar_groovy.o build/c/rust-mcp-search-path-arg-default/grammar_hare.o build/c/rust-mcp-search-path-arg-default/grammar_haskell.o build/c/rust-mcp-search-path-arg-default/grammar_hcl.o build/c/rust-mcp-search-path-arg-default/grammar_hlsl.o build/c/rust-mcp-search-path-arg-default/grammar_html.o build/c/rust-mcp-search-path-arg-default/grammar_hyprlang.o build/c/rust-mcp-search-path-arg-default/grammar_ini.o build/c/rust-mcp-search-path-arg-default/grammar_ispc.o build/c/rust-mcp-search-path-arg-default/grammar_janet.o build/c/rust-mcp-search-path-arg-default/grammar_java.o build/c/rust-mcp-search-path-arg-default/grammar_javascript.o build/c/rust-mcp-search-path-arg-default/grammar_jinja2.o build/c/rust-mcp-search-path-arg-default/grammar_jsdoc.o build/c/rust-mcp-search-path-arg-default/grammar_json.o build/c/rust-mcp-search-path-arg-default/grammar_json5.o build/c/rust-mcp-search-path-arg-default/grammar_jsonnet.o build/c/rust-mcp-search-path-arg-default/grammar_julia.o build/c/rust-mcp-search-path-arg-default/grammar_just.o build/c/rust-mcp-search-path-arg-default/grammar_kconfig.o build/c/rust-mcp-search-path-arg-default/grammar_kdl.o build/c/rust-mcp-search-path-arg-default/grammar_kotlin.o build/c/rust-mcp-search-path-arg-default/grammar_lean.o build/c/rust-mcp-search-path-arg-default/grammar_linkerscript.o build/c/rust-mcp-search-path-arg-default/grammar_liquid.o build/c/rust-mcp-search-path-arg-default/grammar_llvm.o build/c/rust-mcp-search-path-arg-default/grammar_lua.o build/c/rust-mcp-search-path-arg-default/grammar_luau.o build/c/rust-mcp-search-path-arg-default/grammar_magma.o build/c/rust-mcp-search-path-arg-default/grammar_makefile.o build/c/rust-mcp-search-path-arg-default/grammar_markdown.o build/c/rust-mcp-search-path-arg-default/grammar_matlab.o build/c/rust-mcp-search-path-arg-default/grammar_mermaid.o build/c/rust-mcp-search-path-arg-default/grammar_meson.o build/c/rust-mcp-search-path-arg-default/grammar_move.o build/c/rust-mcp-search-path-arg-default/grammar_nasm.o build/c/rust-mcp-search-path-arg-default/grammar_nickel.o build/c/rust-mcp-search-path-arg-default/grammar_nix.o build/c/rust-mcp-search-path-arg-default/grammar_objc.o build/c/rust-mcp-search-path-arg-default/grammar_ocaml.o build/c/rust-mcp-search-path-arg-default/grammar_odin.o build/c/rust-mcp-search-path-arg-default/grammar_pascal.o build/c/rust-mcp-search-path-arg-default/grammar_perl.o build/c/rust-mcp-search-path-arg-default/grammar_php.o build/c/rust-mcp-search-path-arg-default/grammar_pine.o build/c/rust-mcp-search-path-arg-default/grammar_pkl.o build/c/rust-mcp-search-path-arg-default/grammar_po.o build/c/rust-mcp-search-path-arg-default/grammar_pony.o build/c/rust-mcp-search-path-arg-default/grammar_powershell.o build/c/rust-mcp-search-path-arg-default/grammar_prisma.o build/c/rust-mcp-search-path-arg-default/grammar_properties.o build/c/rust-mcp-search-path-arg-default/grammar_protobuf.o build/c/rust-mcp-search-path-arg-default/grammar_puppet.o build/c/rust-mcp-search-path-arg-default/grammar_purescript.o build/c/rust-mcp-search-path-arg-default/grammar_python.o build/c/rust-mcp-search-path-arg-default/grammar_qml.o build/c/rust-mcp-search-path-arg-default/grammar_r.o build/c/rust-mcp-search-path-arg-default/grammar_racket.o build/c/rust-mcp-search-path-arg-default/grammar_regex.o build/c/rust-mcp-search-path-arg-default/grammar_requirements.o build/c/rust-mcp-search-path-arg-default/grammar_rescript.o build/c/rust-mcp-search-path-arg-default/grammar_ron.o build/c/rust-mcp-search-path-arg-default/grammar_rst.o build/c/rust-mcp-search-path-arg-default/grammar_ruby.o build/c/rust-mcp-search-path-arg-default/grammar_rust.o build/c/rust-mcp-search-path-arg-default/grammar_scala.o build/c/rust-mcp-search-path-arg-default/grammar_scheme.o build/c/rust-mcp-search-path-arg-default/grammar_scss.o build/c/rust-mcp-search-path-arg-default/grammar_slang.o build/c/rust-mcp-search-path-arg-default/grammar_smali.o build/c/rust-mcp-search-path-arg-default/grammar_smithy.o build/c/rust-mcp-search-path-arg-default/grammar_solidity.o build/c/rust-mcp-search-path-arg-default/grammar_soql.o build/c/rust-mcp-search-path-arg-default/grammar_sosl.o build/c/rust-mcp-search-path-arg-default/grammar_sql.o build/c/rust-mcp-search-path-arg-default/grammar_squirrel.o build/c/rust-mcp-search-path-arg-default/grammar_sshconfig.o build/c/rust-mcp-search-path-arg-default/grammar_starlark.o build/c/rust-mcp-search-path-arg-default/grammar_svelte.o build/c/rust-mcp-search-path-arg-default/grammar_sway.o build/c/rust-mcp-search-path-arg-default/grammar_swift.o build/c/rust-mcp-search-path-arg-default/grammar_systemverilog.o build/c/rust-mcp-search-path-arg-default/grammar_tablegen.o build/c/rust-mcp-search-path-arg-default/grammar_tcl.o build/c/rust-mcp-search-path-arg-default/grammar_teal.o build/c/rust-mcp-search-path-arg-default/grammar_templ.o build/c/rust-mcp-search-path-arg-default/grammar_thrift.o build/c/rust-mcp-search-path-arg-default/grammar_tlaplus.o build/c/rust-mcp-search-path-arg-default/grammar_toml.o build/c/rust-mcp-search-path-arg-default/grammar_tsx.o build/c/rust-mcp-search-path-arg-default/grammar_typescript.o build/c/rust-mcp-search-path-arg-default/grammar_typst.o build/c/rust-mcp-search-path-arg-default/grammar_verilog.o build/c/rust-mcp-search-path-arg-default/grammar_vhdl.o build/c/rust-mcp-search-path-arg-default/grammar_vim.o build/c/rust-mcp-search-path-arg-default/grammar_vue.o build/c/rust-mcp-search-path-arg-default/grammar_wgsl.o build/c/rust-mcp-search-path-arg-default/grammar_wit.o build/c/rust-mcp-search-path-arg-default/grammar_wolfram.o build/c/rust-mcp-search-path-arg-default/grammar_xml.o build/c/rust-mcp-search-path-arg-default/grammar_yaml.o build/c/rust-mcp-search-path-arg-default/grammar_zig.o build/c/rust-mcp-search-path-arg-default/grammar_zsh.o build/c/rust-mcp-search-path-arg-default/ts_runtime.o build/c/rust-mcp-search-path-arg-default/lsp_all.o build/c/rust-mcp-search-path-arg-default/preprocessor.o build/c/rust-mcp-search-path-arg-default/test_lz4.o build/c/rust-mcp-search-path-arg-default/test_lz4hc.o build/c/rust-mcp-search-path-arg-default/test_zstd.o build/c/rust-mcp-search-path-arg-default/unixcoder_blob.o  \
+		-lm -lstdc++ -lpthread -lz   
+cd /Users/jeff/Documents/repos/codebase-memory-mcp && build/c/rust-mcp-search-path-arg-default/test-runner mcp
+
+  codebase-memory-mcp  C test suite
+
+=== mcp ===
+  jsonrpc_parse_request                                  PASS
+  jsonrpc_parse_notification                             PASS
+  jsonrpc_parse_invalid                                  PASS
+  jsonrpc_parse_tools_call                               PASS
+  jsonrpc_parse_string_id_issue253                       PASS
+  jsonrpc_format_response_string_id_issue253             PASS
+  jsonrpc_parse_empty_string                             PASS
+  jsonrpc_parse_missing_jsonrpc_field                    PASS
+  jsonrpc_parse_missing_method                           PASS
+  jsonrpc_parse_string_id                                PASS
+  jsonrpc_parse_other_id_keeps_notification_distinct     PASS
+  jsonrpc_parse_duplicate_keys_first_wins                PASS
+  jsonrpc_parse_unicode_escape_method_and_id             PASS
+  jsonrpc_parse_invalid_utf8_rejected                    PASS
+  jsonrpc_parse_no_params                                PASS
+  jsonrpc_parse_extra_whitespace                         PASS
+  jsonrpc_parse_array_not_object                         PASS
+  jsonrpc_format_response                                PASS
+  jsonrpc_format_error                                   PASS
+  mcp_initialize_response                                PASS
+  mcp_tools_list                                         PASS
+  mcp_tools_list_latest_metadata                         PASS
+  mcp_index_repository_declares_name_override_issue571   PASS
+  mcp_tool_input_schema_lookup                           PASS
+  mcp_tools_array_schemas_have_items                     PASS
+  mcp_text_result                                        PASS
+  mcp_text_result_skips_structured_content_for_plain_textPASS
+  mcp_cancel_matches_request_id                          PASS
+  mcp_text_result_error                                  PASS
+  mcp_get_tool_name                                      PASS
+  mcp_get_arguments                                      PASS
+  mcp_get_string_arg                                     PASS
+  mcp_get_int_arg                                        PASS
+  mcp_get_bool_arg                                       PASS
+  mcp_get_string_arg_empty_json                          PASS
+  mcp_get_string_arg_empty_object                        PASS
+  mcp_get_string_arg_nested_value                        PASS
+  mcp_get_string_arg_int_value                           PASS
+  mcp_get_int_arg_empty_json                             PASS
+  mcp_get_int_arg_string_value                           PASS
+  mcp_get_int_arg_bool_value                             PASS
+  mcp_get_bool_arg_empty_json                            PASS
+  mcp_get_bool_arg_int_value                             PASS
+  mcp_get_tool_name_empty_json                           PASS
+  mcp_get_tool_name_missing_name                         PASS
+  mcp_get_arguments_empty_json                           PASS
+  mcp_get_arguments_no_arguments_key                     PASS
+  server_handle_initialize                               level=info msg=session.root.cwd path=/Users/jeff/Documents/repos/codebase-memory-mcp
+level=info msg=autoindex.skip reason=disabled hint=run:_codebase-memory-mcp_config_set_auto_index_true
+level=info msg=mcp.request protocol=jsonrpc method=initialize status=ok duration_ms=0
+PASS
+  server_handle_initialized_notification                 PASS
+  server_handle_tools_list                               level=info msg=mcp.request protocol=jsonrpc method=tools/list status=ok duration_ms=0
+PASS
+  server_handle_tools_list_paginates                     level=info msg=mcp.request protocol=jsonrpc method=tools/list status=ok duration_ms=0
+level=info msg=mcp.request protocol=jsonrpc method=tools/list status=ok duration_ms=0
+PASS
+  server_handle_tools_list_cursor_edge_cases             level=info msg=mcp.request protocol=jsonrpc method=tools/list status=ok duration_ms=0
+level=info msg=mcp.request protocol=jsonrpc method=tools/list status=ok duration_ms=0
+level=info msg=mcp.request protocol=jsonrpc method=tools/list status=ok duration_ms=0
+PASS
+  server_handle_logs_request_without_params              PASS
+  server_handle_unknown_method                           level=warn msg=mcp.request protocol=jsonrpc method=unknown/method status=error duration_ms=0
+PASS
+  server_handle_invalid_json                             PASS
+  server_handle_empty_object                             PASS
+  server_handle_tools_call_missing_name                  level=warn msg=mcp.request protocol=jsonrpc method=tools/call status=error duration_ms=0
+PASS
+  tool_list_projects_empty                               level=info msg=mcp.request protocol=jsonrpc method=tools/call tool=list_projects status=ok duration_ms=358
+PASS
+  tool_get_graph_schema_empty                            level=warn msg=mcp.request protocol=jsonrpc method=tools/call tool=get_graph_schema status=error duration_ms=0
+PASS
+  tool_unknown_tool                                      level=warn msg=mcp.request protocol=jsonrpc method=tools/call tool=nonexistent_tool status=error duration_ms=0
+PASS
+  tool_handle_tool_missing_name                          PASS
+  tool_handle_tool_unknown_name                          PASS
+  tool_search_graph_basic                                level=warn msg=mcp.request protocol=jsonrpc method=tools/call tool=search_graph status=error duration_ms=0
+PASS
+  tool_search_graph_rejects_invalid_relationship         level=warn msg=mcp.request protocol=jsonrpc method=tools/call tool=search_graph status=error duration_ms=0
+PASS
+  tool_search_graph_includes_node_properties             level=info msg=mcp.request protocol=jsonrpc method=tools/call tool=search_graph status=ok duration_ms=0
+PASS
+  tool_search_graph_query_honors_file_pattern_issue552   level=info msg=mcp.request protocol=jsonrpc method=tools/call tool=search_graph status=ok duration_ms=0
+PASS
+  tool_search_graph_bm25_file_pattern_rank_order_contractlevel=info msg=mcp.request protocol=jsonrpc method=tools/call tool=search_graph status=ok duration_ms=0
+PASS
+  tool_query_graph_basic                                 level=warn msg=mcp.request protocol=jsonrpc method=tools/call tool=query_graph status=error duration_ms=66
+PASS
+  tool_index_status_no_project                           level=warn msg=mcp.request protocol=jsonrpc method=tools/call tool=index_status status=error duration_ms=0
+PASS
+  tool_index_status_includes_git_metadata                level=info msg=mcp.request protocol=jsonrpc method=tools/call tool=index_status status=ok duration_ms=11
+PASS
+  tool_trace_call_path_not_found                         level=warn msg=mcp.request protocol=jsonrpc method=tools/call tool=trace_call_path status=error duration_ms=123
+PASS
+  tool_trace_missing_function_name                       level=warn msg=mcp.request protocol=jsonrpc method=tools/call tool=trace_call_path status=error duration_ms=0
+PASS
+  tool_trace_call_path_ambiguous                         level=info msg=mcp.request protocol=jsonrpc method=tools/call tool=trace_call_path status=ok duration_ms=0
+PASS
+  tool_trace_call_path_prefers_definition                level=info msg=mcp.request protocol=jsonrpc method=tools/call tool=trace_call_path status=ok duration_ms=0
+PASS
+  tool_trace_call_path_filters_tests_by_default          level=info msg=mcp.request protocol=jsonrpc method=tools/call tool=trace_call_path status=ok duration_ms=0
+level=info msg=mcp.request protocol=jsonrpc method=tools/call tool=trace_call_path status=ok duration_ms=0
+PASS
+  tool_trace_call_path_data_flow_mode_uses_data_edges    level=info msg=mcp.request protocol=jsonrpc method=tools/call tool=trace_call_path status=ok duration_ms=0
+level=info msg=mcp.request protocol=jsonrpc method=tools/call tool=trace_call_path status=ok duration_ms=0
+PASS
+  tool_delete_project_not_found                          level=warn msg=mcp.request protocol=jsonrpc method=tools/call tool=delete_project status=error duration_ms=0
+PASS
+  tool_get_architecture_empty                            level=warn msg=mcp.request protocol=jsonrpc method=tools/call tool=get_architecture status=error duration_ms=125
+PASS
+  tool_get_architecture_emits_populated_sections         level=info msg=mcp.request protocol=jsonrpc method=tools/call tool=get_architecture status=ok duration_ms=0
+PASS
+  tool_get_architecture_accepts_project_name_alias_issue640level=info msg=mcp.request protocol=jsonrpc method=tools/call tool=get_architecture status=ok duration_ms=0
+PASS
+  tool_search_graph_accepts_project_name_alias_issue640  level=info msg=mcp.request protocol=jsonrpc method=tools/call tool=search_graph status=ok duration_ms=0
+PASS
+  tool_get_architecture_path_scoping                     level=info msg=mcp.request protocol=jsonrpc method=tools/call tool=get_architecture status=ok duration_ms=0
+level=info msg=mcp.request protocol=jsonrpc method=tools/call tool=get_architecture status=ok duration_ms=0
+PASS
+  tool_query_graph_missing_query                         level=warn msg=mcp.request protocol=jsonrpc method=tools/call tool=query_graph status=error duration_ms=0
+PASS
+  tool_index_repository_missing_path                     level=warn msg=mcp.request protocol=jsonrpc method=tools/call tool=index_repository status=error duration_ms=0
+PASS
+  tool_get_code_snippet_missing_qn                       level=warn msg=mcp.request protocol=jsonrpc method=tools/call tool=get_code_snippet status=error duration_ms=0
+PASS
+  tool_get_code_snippet_not_found                        level=warn msg=mcp.request protocol=jsonrpc method=tools/call tool=get_code_snippet status=error duration_ms=123
+PASS
+  tool_search_code_missing_pattern                       level=warn msg=mcp.request protocol=jsonrpc method=tools/call tool=search_code status=error duration_ms=0
+PASS
+  tool_search_code_no_project                            level=warn msg=mcp.request protocol=jsonrpc method=tools/call tool=search_code status=error duration_ms=125
+PASS
+  search_code_multi_word                                 level=info msg=mcp.request protocol=jsonrpc method=tools/call tool=search_code status=ok duration_ms=6
+PASS
+  search_code_sanitizes_non_ascii_source_bytes           level=info msg=mcp.request protocol=jsonrpc method=tools/call tool=search_code status=ok duration_ms=5
+PASS
+  search_code_invalid_regex_errors_issue283              level=warn msg=mcp.request protocol=jsonrpc method=tools/call tool=search_code status=error duration_ms=0
+level=info msg=mcp.request protocol=jsonrpc method=tools/call tool=search_code status=ok duration_ms=4
+PASS
+  search_code_literal_pipe_warns_issue282                level=info msg=mcp.request protocol=jsonrpc method=tools/call tool=search_code status=ok duration_ms=4
+PASS
+  search_code_ampersand_accepted_issue272                level=info msg=mcp.request protocol=jsonrpc method=tools/call tool=search_code status=ok duration_ms=4
+PASS
+  search_code_rejects_invalid_file_pattern               level=warn msg=mcp.request protocol=jsonrpc method=tools/call tool=search_code status=error duration_ms=0
+PASS
+  search_code_files_mode_lists_files                     level=info msg=mcp.request protocol=jsonrpc method=tools/call tool=search_code status=ok duration_ms=4
+PASS
+  tool_detect_changes_no_project                         level=warn msg=mcp.request protocol=jsonrpc method=tools/call tool=detect_changes status=error duration_ms=0
+PASS
+  tool_manage_adr_no_project                             level=warn msg=mcp.request protocol=jsonrpc method=tools/call tool=manage_adr status=error duration_ms=0
+PASS
+  tool_manage_adr_get_with_existing_adr                  level=info msg=mcp.request protocol=jsonrpc method=tools/call tool=manage_adr status=ok duration_ms=0
+PASS
+  tool_manage_adr_unified_backend_issue256               level=info msg=mcp.request protocol=jsonrpc method=tools/call tool=manage_adr status=ok duration_ms=0
+level=info msg=mcp.request protocol=jsonrpc method=tools/call tool=manage_adr status=ok duration_ms=0
+level=info msg=mcp.request protocol=jsonrpc method=tools/call tool=manage_adr status=ok duration_ms=0
+PASS
+  tool_ingest_traces_basic                               level=info msg=mcp.request protocol=jsonrpc method=tools/call tool=ingest_traces status=ok duration_ms=0
+PASS
+  tool_ingest_traces_empty                               level=info msg=mcp.request protocol=jsonrpc method=tools/call tool=ingest_traces status=ok duration_ms=0
+PASS
+  readonly_query_does_not_mutate_db                      PASS
+  readonly_query_succeeds_on_readonly_fs                 PASS
+  store_idle_eviction                                    PASS
+  store_idle_no_eviction_within_timeout                  PASS
+  store_idle_evict_protects_initial_store                PASS
+  store_idle_evict_access_resets_timer                   PASS
+  parse_file_uri_unix                                    PASS
+  parse_file_uri_windows                                 PASS
+  parse_file_uri_invalid                                 PASS
+  parse_file_uri_http_scheme                             PASS
+  parse_file_uri_ftp_scheme                              PASS
+  parse_file_uri_buffer_too_small                        PASS
+  parse_file_uri_spaces_in_path                          PASS
+  parse_file_uri_null_out_path                           PASS
+  parse_file_uri_zero_size                               PASS
+  mcp_server_run_rapid_messages                          level=info msg=session.root.cwd path=/Users/jeff/Documents/repos/codebase-memory-mcp
+level=info msg=autoindex.skip reason=disabled hint=run:_codebase-memory-mcp_config_set_auto_index_true
+level=info msg=mcp.request protocol=jsonrpc method=initialize status=ok duration_ms=0
+level=info msg=mcp.request protocol=jsonrpc method=tools/list status=ok duration_ms=0
+PASS
+  mcp_server_run_content_length_framing                  level=info msg=session.root.cwd path=/Users/jeff/Documents/repos/codebase-memory-mcp
+level=info msg=autoindex.skip reason=disabled hint=run:_codebase-memory-mcp_config_set_auto_index_true
+level=info msg=mcp.request protocol=jsonrpc method=initialize status=ok duration_ms=0
+PASS
+  mcp_server_run_content_length_incomplete_body          PASS
+  mcp_server_run_content_length_oversize_skips_body      level=info msg=mcp.request protocol=jsonrpc method=ping status=ok duration_ms=0
+PASS
+  snippet_exact_qn                                       PASS
+  snippet_qn_suffix                                      PASS
+  snippet_unique_short_name                              PASS
+  snippet_name_tier                                      PASS
+  snippet_ambiguous_short_name                           PASS
+  snippet_not_found                                      PASS
+  snippet_fuzzy_suggestions                              PASS
+  snippet_enriched_properties                            PASS
+  snippet_fuzzy_last_segment                             PASS
+  snippet_auto_resolve_default                           PASS
+  snippet_auto_resolve_enabled                           PASS
+  snippet_include_neighbors_default                      PASS
+  snippet_include_neighbors_enabled                      PASS
+  snippet_source_invalid_utf8                            PASS
+  tool_bad_project_name_no_overflow_issue235             level=warn msg=mcp.request protocol=jsonrpc method=tools/call tool=search_graph status=error duration_ms=22
+PASS
+  tool_resolve_store_by_internal_name_issue704           level=info msg=mcp.request protocol=jsonrpc method=tools/call tool=list_projects status=ok duration_ms=30
+level=info msg=mcp.request protocol=jsonrpc method=tools/call tool=search_graph status=ok duration_ms=0
+level=info msg=mcp.request protocol=jsonrpc method=tools/call tool=search_graph status=ok duration_ms=0
+level=error msg=store.auto_clean project=ghost704 path=/tmp/cbm-issue704-s4Fbgj/ghost704.db action=backing_up_corrupt_db_to_.corrupt_—_re-index_required
+level=warn msg=mcp.request protocol=jsonrpc method=tools/call tool=search_graph status=error duration_ms=0
+level=warn msg=mcp.request protocol=jsonrpc method=tools/call tool=search_graph status=error duration_ms=1
+PASS
+
+────────────────────────────────────────────
+  136 passed
+────────────────────────────────────────────
+
+/Applications/Xcode.app/Contents/Developer/usr/bin/make -j1 -f Makefile.cbm BUILD_DIR=build/c/rust-mcp-search-path-arg-wrapper SANITIZE= clean-c
+rm -rf build/c/rust-mcp-search-path-arg-wrapper
+/Applications/Xcode.app/Contents/Developer/usr/bin/make -j1 -f Makefile.cbm BUILD_DIR=build/c/rust-mcp-search-path-arg-wrapper SANITIZE= CBM_USE_RUST_MCP_SEARCH_PATH_ARG=1 build/c/rust-mcp-search-path-arg-wrapper/test-rust-ffi
+mkdir -p build/c/rust-mcp-search-path-arg-wrapper
+cc -std=c11 -D_DEFAULT_SOURCE -D_GNU_SOURCE -Wall -Wextra -Werror -Wno-unused-parameter -Wno-sign-compare  -Isrc -Ivendored -Ivendored/sqlite3 -Ivendored/mimalloc/include -Iinternal/cbm -Iinternal/cbm/vendored/ts_runtime/include  -DCBM_USE_RUST_MCP_SEARCH_PATH_ARG -g -O1  -o build/c/rust-mcp-search-path-arg-wrapper/test-rust-ffi tests/test_rust_ffi.c  src/pipeline/artifact_path.c src/pipeline/route_node_classifiers.c src/pipeline/json_prop.c src/pipeline/split_command.c src/pipeline/calls_json.c src/pipeline/usages_json.c src/pipeline/lsp_cross_classifiers.c src/mcp/search_mode.c src/mcp/index_mode.c src/mcp/search_path_arg.c src/mcp/search_line_span.c src/discover/local_rel_path.c src/discover/filters.c src/discover/discover_string_helpers.c src/semantic/ast_profile_classifiers.c src/pipeline/registry_test_qn.c src/pipeline/test_node_is_test.c src/semantic/camel_break.c src/semantic/token_delim.c src/discover/language_name.c src/pipeline/parallel_json.c src/pipeline/definitions_json.c src/pipeline/similarity_fp.c src/simhash/minhash_jaccard.c src/pipeline/infrascan_json.c src/discover/language_markers.c target/cbm-default/debug/libcbm_core.a -lm -lstdc++ -lpthread -lz   
+cd /Users/jeff/Documents/repos/codebase-memory-mcp && build/c/rust-mcp-search-path-arg-wrapper/test-rust-ffi
+/Applications/Xcode.app/Contents/Developer/usr/bin/make -j1 -f Makefile.cbm BUILD_DIR=build/c/rust-mcp-search-path-arg-wrapper SANITIZE= CBM_USE_RUST_MCP_SEARCH_PATH_ARG=1 build/c/rust-mcp-search-path-arg-wrapper/test-runner
+cc -std=c11 -D_DEFAULT_SOURCE -D_GNU_SOURCE -Wall -Wextra -Werror -Wno-unused-parameter -Wno-sign-compare  -Isrc -Ivendored -Ivendored/sqlite3 -Ivendored/mimalloc/include -Iinternal/cbm -Iinternal/cbm/vendored/ts_runtime/include  -DCBM_USE_RUST_MCP_SEARCH_PATH_ARG -g -O1  -o build/c/rust-mcp-search-path-arg-wrapper/test-runner \
+		tests/test_main.c tests/test_arena.c tests/test_hash_table.c tests/test_dyn_array.c tests/test_str_intern.c tests/test_log.c tests/test_profile.c tests/test_diagnostics.c tests/test_str_util.c tests/test_compat.c tests/test_platform.c tests/test_yaml.c tests/test_dump_verify.c tests/test_extraction.c tests/test_extraction_inheritance.c tests/test_extraction_imports.c tests/test_grammar_regression.c tests/test_grammar_labels.c tests/test_grammar_imports.c tests/test_ac.c tests/test_store_nodes.c tests/test_store_edges.c tests/test_store_search.c tests/test_store_arch.c tests/test_store_bulk.c tests/test_store_pragmas.c tests/test_store_checkpoint.c tests/test_store_compat.c tests/test_dump_verify_io.c tests/test_cypher.c tests/test_cypher_contract.c tests/test_mcp.c tests/test_language.c tests/test_userconfig.c tests/test_gitignore.c tests/test_discover.c tests/test_graph_buffer.c tests/test_registry.c tests/test_pipeline.c tests/test_fqn.c tests/test_route_canon.c tests/test_path_alias.c tests/test_configlink.c tests/test_infrascan.c tests/test_worker_pool.c tests/test_parallel.c tests/test_watcher.c tests/test_lz4.c tests/test_zstd.c tests/test_artifact.c tests/test_sqlite_writer.c tests/test_go_lsp.c tests/test_c_lsp.c tests/test_php_lsp.c tests/test_cs_lsp.c tests/test_cs_lsp_bench.c tests/test_scope.c tests/test_type_rep.c tests/test_py_lsp.c tests/test_py_lsp_bench.c tests/test_py_lsp_stress.c tests/test_py_lsp_scale.c tests/test_ts_lsp.c tests/test_java_lsp.c tests/test_java_lsp_coverage.c tests/test_kotlin_lsp.c tests/test_rust_lsp.c tests/test_traces.c tests/test_cli.c tests/test_progress_sink.c tests/test_mem.c tests/test_ui.c tests/test_httpd.c tests/test_security.c tests/test_simhash.c tests/test_stack_overflow.c tests/test_integration.c tests/test_incremental.c tests/test_lang_contract.c tests/test_edge_imports.c tests/test_edge_structural.c tests/test_lsp_resolution_probe.c tests/test_node_creation_probe.c tests/test_edge_types_probe.c tests/test_convergence_probe.c tests/test_matrix_known_classes.c tests/test_matrix_new_constructs.c tests/test_grammar_probe_a.c tests/test_grammar_probe_b.c tests/test_grammar_probe_c.c tests/test_grammar_probe_d.c tests/test_grammar_probe_e.c tests/test_grammar_probe_f.c tests/test_grammar_probe_g.c src/foundation/arena.c src/foundation/hash_table.c src/foundation/str_intern.c src/foundation/log.c src/foundation/log_path.c src/foundation/str_util.c src/foundation/platform.c src/foundation/system_info.c src/foundation/slab_alloc.c src/foundation/yaml.c src/foundation/compat.c src/foundation/compat_thread.c src/foundation/compat_fs.c src/foundation/compat_regex.c src/foundation/mem.c src/foundation/diagnostics.c src/foundation/profile.c src/foundation/dump_verify.c src/store/store.c src/store/arch_helpers.c src/store/arch_path_scope.c src/store/file_ext.c src/store/immutable_uri.c src/store/mmap_resolver.c src/store/fts_tokenizer.c src/store/search_pattern.c src/cypher/cypher.c src/mcp/edge_type_valid.c src/mcp/search_mode.c src/mcp/index_mode.c src/mcp/search_path_arg.c src/mcp/search_line_span.c src/mcp/mcp.c src/discover/language.c src/discover/language_name.c src/discover/language_markers.c src/discover/userconfig.c  src/discover/gitignore.c src/discover/discover_string_helpers.c src/discover/trailing_sep.c src/discover/path_join.c src/discover/local_rel_path.c src/discover/discover.c src/discover/filters.c src/graph_buffer/graph_buffer.c src/graph_buffer/graph_buffer_mutation.c src/pipeline/fqn.c src/pipeline/project_name.c src/pipeline/path_alias.c src/pipeline/registry.c src/pipeline/registry_test_qn.c src/pipeline/pipeline.c src/pipeline/incremental_edge_type.c src/pipeline/incremental_registry_label.c src/pipeline/pipeline_incremental.c src/pipeline/worker_pool.c src/pipeline/parallel_json.c src/pipeline/pass_parallel.c src/pipeline/checked_exception.c src/pipeline/route_args.c src/pipeline/k8s_file_classifiers.c src/pipeline/route_node_classifiers.c src/pipeline/definitions_json.c src/pipeline/pass_definitions.c src/pipeline/calls_json.c src/pipeline/pass_calls.c src/pipeline/lsp_cross_classifiers.c src/pipeline/pass_lsp_cross.c src/pipeline/usages_json.c src/pipeline/pass_usages.c src/pipeline/semantic_fp_suffix.c src/pipeline/pass_semantic.c src/pipeline/test_node_is_test.c src/pipeline/pass_tests.c src/pipeline/test_detect.c src/pipeline/trackable_file.c src/pipeline/pass_githistory.c src/pipeline/pass_gitdiff.c src/pipeline/pass_configures.c src/pipeline/configlink_helpers.c src/pipeline/pass_configlink.c src/pipeline/json_prop.c src/pipeline/pass_route_nodes.c src/pipeline/url_path.c src/pipeline/sveltekit_file_kind.c src/pipeline/sveltekit_server_method.c src/pipeline/pass_enrichment.c src/pipeline/envscan_classifiers.c src/pipeline/pass_envscan.c src/pipeline/split_command.c src/pipeline/pass_compile_commands.c src/pipeline/infrascan_json.c src/pipeline/pass_infrascan.c src/pipeline/k8s_text_helpers.c src/pipeline/pass_k8s.c src/pipeline/similarity_fp.c src/pipeline/pass_similarity.c src/pipeline/pass_semantic_edges.c src/pipeline/pass_complexity.c src/pipeline/pass_cross_repo.c src/pipeline/artifact.c src/pipeline/artifact_path.c src/pipeline/pass_pkgmap.c src/simhash/minhash_jaccard.c src/simhash/minhash.c src/semantic/semantic.c src/semantic/ast_profile.c src/semantic/camel_break.c src/semantic/token_delim.c src/semantic/ast_profile_classifiers.c src/traces/traces.c src/watcher/watcher.c src/watcher/poll_interval.c src/git/git_context.c src/git/path_absolute.c src/git/json_escaped_len.c src/git/trim_newlines.c src/cli/archive_helpers.c src/cli/cli.c src/cli/progress_sink.c src/cli/hook_augment.c src/ui/config.c src/ui/http_server.c src/ui/layout3d.c src/ui/httpd.c src/ui/embedded_stub.c vendored/yyjson/yyjson.c \
+		internal/cbm/cbm.c internal/cbm/extract_defs.c internal/cbm/extract_calls.c internal/cbm/extract_imports.c internal/cbm/extract_usages.c internal/cbm/extract_unified.c internal/cbm/extract_semantic.c internal/cbm/extract_type_refs.c internal/cbm/extract_type_assigns.c internal/cbm/extract_env_accesses.c internal/cbm/extract_channels.c internal/cbm/extract_k8s.c internal/cbm/helpers.c internal/cbm/lang_specs.c internal/cbm/service_patterns.c internal/cbm/ac.c internal/cbm/lz4_store.c internal/cbm/zstd_store.c internal/cbm/sqlite_writer.c \
+		build/c/rust-mcp-search-path-arg-wrapper/mimalloc.o build/c/rust-mcp-search-path-arg-wrapper/sqlite3.o  build/c/rust-mcp-search-path-arg-wrapper/grammar_ada.o build/c/rust-mcp-search-path-arg-wrapper/grammar_agda.o build/c/rust-mcp-search-path-arg-wrapper/grammar_apex.o build/c/rust-mcp-search-path-arg-wrapper/grammar_assembly.o build/c/rust-mcp-search-path-arg-wrapper/grammar_astro.o build/c/rust-mcp-search-path-arg-wrapper/grammar_awk.o build/c/rust-mcp-search-path-arg-wrapper/grammar_bash.o build/c/rust-mcp-search-path-arg-wrapper/grammar_beancount.o build/c/rust-mcp-search-path-arg-wrapper/grammar_bibtex.o build/c/rust-mcp-search-path-arg-wrapper/grammar_bicep.o build/c/rust-mcp-search-path-arg-wrapper/grammar_bitbake.o build/c/rust-mcp-search-path-arg-wrapper/grammar_blade.o build/c/rust-mcp-search-path-arg-wrapper/grammar_c_sharp.o build/c/rust-mcp-search-path-arg-wrapper/grammar_c.o build/c/rust-mcp-search-path-arg-wrapper/grammar_cairo.o build/c/rust-mcp-search-path-arg-wrapper/grammar_capnp.o build/c/rust-mcp-search-path-arg-wrapper/grammar_cfml.o build/c/rust-mcp-search-path-arg-wrapper/grammar_cfscript.o build/c/rust-mcp-search-path-arg-wrapper/grammar_clojure.o build/c/rust-mcp-search-path-arg-wrapper/grammar_cmake.o build/c/rust-mcp-search-path-arg-wrapper/grammar_cobol.o build/c/rust-mcp-search-path-arg-wrapper/grammar_commonlisp.o build/c/rust-mcp-search-path-arg-wrapper/grammar_cpp.o build/c/rust-mcp-search-path-arg-wrapper/grammar_crystal.o build/c/rust-mcp-search-path-arg-wrapper/grammar_css.o build/c/rust-mcp-search-path-arg-wrapper/grammar_csv.o build/c/rust-mcp-search-path-arg-wrapper/grammar_cuda.o build/c/rust-mcp-search-path-arg-wrapper/grammar_d.o build/c/rust-mcp-search-path-arg-wrapper/grammar_dart.o build/c/rust-mcp-search-path-arg-wrapper/grammar_devicetree.o build/c/rust-mcp-search-path-arg-wrapper/grammar_diff.o build/c/rust-mcp-search-path-arg-wrapper/grammar_dockerfile.o build/c/rust-mcp-search-path-arg-wrapper/grammar_dotenv.o build/c/rust-mcp-search-path-arg-wrapper/grammar_elisp.o build/c/rust-mcp-search-path-arg-wrapper/grammar_elixir.o build/c/rust-mcp-search-path-arg-wrapper/grammar_elm.o build/c/rust-mcp-search-path-arg-wrapper/grammar_erlang.o build/c/rust-mcp-search-path-arg-wrapper/grammar_fennel.o build/c/rust-mcp-search-path-arg-wrapper/grammar_fish.o build/c/rust-mcp-search-path-arg-wrapper/grammar_form.o build/c/rust-mcp-search-path-arg-wrapper/grammar_fortran.o build/c/rust-mcp-search-path-arg-wrapper/grammar_fsharp.o build/c/rust-mcp-search-path-arg-wrapper/grammar_func.o build/c/rust-mcp-search-path-arg-wrapper/grammar_gdscript.o build/c/rust-mcp-search-path-arg-wrapper/grammar_gitattributes.o build/c/rust-mcp-search-path-arg-wrapper/grammar_gitignore.o build/c/rust-mcp-search-path-arg-wrapper/grammar_gleam.o build/c/rust-mcp-search-path-arg-wrapper/grammar_glsl.o build/c/rust-mcp-search-path-arg-wrapper/grammar_gn.o build/c/rust-mcp-search-path-arg-wrapper/grammar_go.o build/c/rust-mcp-search-path-arg-wrapper/grammar_gomod.o build/c/rust-mcp-search-path-arg-wrapper/grammar_gotemplate.o build/c/rust-mcp-search-path-arg-wrapper/grammar_graphql.o build/c/rust-mcp-search-path-arg-wrapper/grammar_groovy.o build/c/rust-mcp-search-path-arg-wrapper/grammar_hare.o build/c/rust-mcp-search-path-arg-wrapper/grammar_haskell.o build/c/rust-mcp-search-path-arg-wrapper/grammar_hcl.o build/c/rust-mcp-search-path-arg-wrapper/grammar_hlsl.o build/c/rust-mcp-search-path-arg-wrapper/grammar_html.o build/c/rust-mcp-search-path-arg-wrapper/grammar_hyprlang.o build/c/rust-mcp-search-path-arg-wrapper/grammar_ini.o build/c/rust-mcp-search-path-arg-wrapper/grammar_ispc.o build/c/rust-mcp-search-path-arg-wrapper/grammar_janet.o build/c/rust-mcp-search-path-arg-wrapper/grammar_java.o build/c/rust-mcp-search-path-arg-wrapper/grammar_javascript.o build/c/rust-mcp-search-path-arg-wrapper/grammar_jinja2.o build/c/rust-mcp-search-path-arg-wrapper/grammar_jsdoc.o build/c/rust-mcp-search-path-arg-wrapper/grammar_json.o build/c/rust-mcp-search-path-arg-wrapper/grammar_json5.o build/c/rust-mcp-search-path-arg-wrapper/grammar_jsonnet.o build/c/rust-mcp-search-path-arg-wrapper/grammar_julia.o build/c/rust-mcp-search-path-arg-wrapper/grammar_just.o build/c/rust-mcp-search-path-arg-wrapper/grammar_kconfig.o build/c/rust-mcp-search-path-arg-wrapper/grammar_kdl.o build/c/rust-mcp-search-path-arg-wrapper/grammar_kotlin.o build/c/rust-mcp-search-path-arg-wrapper/grammar_lean.o build/c/rust-mcp-search-path-arg-wrapper/grammar_linkerscript.o build/c/rust-mcp-search-path-arg-wrapper/grammar_liquid.o build/c/rust-mcp-search-path-arg-wrapper/grammar_llvm.o build/c/rust-mcp-search-path-arg-wrapper/grammar_lua.o build/c/rust-mcp-search-path-arg-wrapper/grammar_luau.o build/c/rust-mcp-search-path-arg-wrapper/grammar_magma.o build/c/rust-mcp-search-path-arg-wrapper/grammar_makefile.o build/c/rust-mcp-search-path-arg-wrapper/grammar_markdown.o build/c/rust-mcp-search-path-arg-wrapper/grammar_matlab.o build/c/rust-mcp-search-path-arg-wrapper/grammar_mermaid.o build/c/rust-mcp-search-path-arg-wrapper/grammar_meson.o build/c/rust-mcp-search-path-arg-wrapper/grammar_move.o build/c/rust-mcp-search-path-arg-wrapper/grammar_nasm.o build/c/rust-mcp-search-path-arg-wrapper/grammar_nickel.o build/c/rust-mcp-search-path-arg-wrapper/grammar_nix.o build/c/rust-mcp-search-path-arg-wrapper/grammar_objc.o build/c/rust-mcp-search-path-arg-wrapper/grammar_ocaml.o build/c/rust-mcp-search-path-arg-wrapper/grammar_odin.o build/c/rust-mcp-search-path-arg-wrapper/grammar_pascal.o build/c/rust-mcp-search-path-arg-wrapper/grammar_perl.o build/c/rust-mcp-search-path-arg-wrapper/grammar_php.o build/c/rust-mcp-search-path-arg-wrapper/grammar_pine.o build/c/rust-mcp-search-path-arg-wrapper/grammar_pkl.o build/c/rust-mcp-search-path-arg-wrapper/grammar_po.o build/c/rust-mcp-search-path-arg-wrapper/grammar_pony.o build/c/rust-mcp-search-path-arg-wrapper/grammar_powershell.o build/c/rust-mcp-search-path-arg-wrapper/grammar_prisma.o build/c/rust-mcp-search-path-arg-wrapper/grammar_properties.o build/c/rust-mcp-search-path-arg-wrapper/grammar_protobuf.o build/c/rust-mcp-search-path-arg-wrapper/grammar_puppet.o build/c/rust-mcp-search-path-arg-wrapper/grammar_purescript.o build/c/rust-mcp-search-path-arg-wrapper/grammar_python.o build/c/rust-mcp-search-path-arg-wrapper/grammar_qml.o build/c/rust-mcp-search-path-arg-wrapper/grammar_r.o build/c/rust-mcp-search-path-arg-wrapper/grammar_racket.o build/c/rust-mcp-search-path-arg-wrapper/grammar_regex.o build/c/rust-mcp-search-path-arg-wrapper/grammar_requirements.o build/c/rust-mcp-search-path-arg-wrapper/grammar_rescript.o build/c/rust-mcp-search-path-arg-wrapper/grammar_ron.o build/c/rust-mcp-search-path-arg-wrapper/grammar_rst.o build/c/rust-mcp-search-path-arg-wrapper/grammar_ruby.o build/c/rust-mcp-search-path-arg-wrapper/grammar_rust.o build/c/rust-mcp-search-path-arg-wrapper/grammar_scala.o build/c/rust-mcp-search-path-arg-wrapper/grammar_scheme.o build/c/rust-mcp-search-path-arg-wrapper/grammar_scss.o build/c/rust-mcp-search-path-arg-wrapper/grammar_slang.o build/c/rust-mcp-search-path-arg-wrapper/grammar_smali.o build/c/rust-mcp-search-path-arg-wrapper/grammar_smithy.o build/c/rust-mcp-search-path-arg-wrapper/grammar_solidity.o build/c/rust-mcp-search-path-arg-wrapper/grammar_soql.o build/c/rust-mcp-search-path-arg-wrapper/grammar_sosl.o build/c/rust-mcp-search-path-arg-wrapper/grammar_sql.o build/c/rust-mcp-search-path-arg-wrapper/grammar_squirrel.o build/c/rust-mcp-search-path-arg-wrapper/grammar_sshconfig.o build/c/rust-mcp-search-path-arg-wrapper/grammar_starlark.o build/c/rust-mcp-search-path-arg-wrapper/grammar_svelte.o build/c/rust-mcp-search-path-arg-wrapper/grammar_sway.o build/c/rust-mcp-search-path-arg-wrapper/grammar_swift.o build/c/rust-mcp-search-path-arg-wrapper/grammar_systemverilog.o build/c/rust-mcp-search-path-arg-wrapper/grammar_tablegen.o build/c/rust-mcp-search-path-arg-wrapper/grammar_tcl.o build/c/rust-mcp-search-path-arg-wrapper/grammar_teal.o build/c/rust-mcp-search-path-arg-wrapper/grammar_templ.o build/c/rust-mcp-search-path-arg-wrapper/grammar_thrift.o build/c/rust-mcp-search-path-arg-wrapper/grammar_tlaplus.o build/c/rust-mcp-search-path-arg-wrapper/grammar_toml.o build/c/rust-mcp-search-path-arg-wrapper/grammar_tsx.o build/c/rust-mcp-search-path-arg-wrapper/grammar_typescript.o build/c/rust-mcp-search-path-arg-wrapper/grammar_typst.o build/c/rust-mcp-search-path-arg-wrapper/grammar_verilog.o build/c/rust-mcp-search-path-arg-wrapper/grammar_vhdl.o build/c/rust-mcp-search-path-arg-wrapper/grammar_vim.o build/c/rust-mcp-search-path-arg-wrapper/grammar_vue.o build/c/rust-mcp-search-path-arg-wrapper/grammar_wgsl.o build/c/rust-mcp-search-path-arg-wrapper/grammar_wit.o build/c/rust-mcp-search-path-arg-wrapper/grammar_wolfram.o build/c/rust-mcp-search-path-arg-wrapper/grammar_xml.o build/c/rust-mcp-search-path-arg-wrapper/grammar_yaml.o build/c/rust-mcp-search-path-arg-wrapper/grammar_zig.o build/c/rust-mcp-search-path-arg-wrapper/grammar_zsh.o build/c/rust-mcp-search-path-arg-wrapper/ts_runtime.o build/c/rust-mcp-search-path-arg-wrapper/lsp_all.o build/c/rust-mcp-search-path-arg-wrapper/preprocessor.o build/c/rust-mcp-search-path-arg-wrapper/test_lz4.o build/c/rust-mcp-search-path-arg-wrapper/test_lz4hc.o build/c/rust-mcp-search-path-arg-wrapper/test_zstd.o build/c/rust-mcp-search-path-arg-wrapper/unixcoder_blob.o target/cbm-default/debug/libcbm_core.a \
+		-lm -lstdc++ -lpthread -lz   
+cd /Users/jeff/Documents/repos/codebase-memory-mcp && build/c/rust-mcp-search-path-arg-wrapper/test-runner mcp
+
+  codebase-memory-mcp  C test suite
+
+=== mcp ===
+  jsonrpc_parse_request                                  PASS
+  jsonrpc_parse_notification                             PASS
+  jsonrpc_parse_invalid                                  PASS
+  jsonrpc_parse_tools_call                               PASS
+  jsonrpc_parse_string_id_issue253                       PASS
+  jsonrpc_format_response_string_id_issue253             PASS
+  jsonrpc_parse_empty_string                             PASS
+  jsonrpc_parse_missing_jsonrpc_field                    PASS
+  jsonrpc_parse_missing_method                           PASS
+  jsonrpc_parse_string_id                                PASS
+  jsonrpc_parse_other_id_keeps_notification_distinct     PASS
+  jsonrpc_parse_duplicate_keys_first_wins                PASS
+  jsonrpc_parse_unicode_escape_method_and_id             PASS
+  jsonrpc_parse_invalid_utf8_rejected                    PASS
+  jsonrpc_parse_no_params                                PASS
+  jsonrpc_parse_extra_whitespace                         PASS
+  jsonrpc_parse_array_not_object                         PASS
+  jsonrpc_format_response                                PASS
+  jsonrpc_format_error                                   PASS
+  mcp_initialize_response                                PASS
+  mcp_tools_list                                         PASS
+  mcp_tools_list_latest_metadata                         PASS
+  mcp_index_repository_declares_name_override_issue571   PASS
+  mcp_tool_input_schema_lookup                           PASS
+  mcp_tools_array_schemas_have_items                     PASS
+  mcp_text_result                                        PASS
+  mcp_text_result_skips_structured_content_for_plain_textPASS
+  mcp_cancel_matches_request_id                          PASS
+  mcp_text_result_error                                  PASS
+  mcp_get_tool_name                                      PASS
+  mcp_get_arguments                                      PASS
+  mcp_get_string_arg                                     PASS
+  mcp_get_int_arg                                        PASS
+  mcp_get_bool_arg                                       PASS
+  mcp_get_string_arg_empty_json                          PASS
+  mcp_get_string_arg_empty_object                        PASS
+  mcp_get_string_arg_nested_value                        PASS
+  mcp_get_string_arg_int_value                           PASS
+  mcp_get_int_arg_empty_json                             PASS
+  mcp_get_int_arg_string_value                           PASS
+  mcp_get_int_arg_bool_value                             PASS
+  mcp_get_bool_arg_empty_json                            PASS
+  mcp_get_bool_arg_int_value                             PASS
+  mcp_get_tool_name_empty_json                           PASS
+  mcp_get_tool_name_missing_name                         PASS
+  mcp_get_arguments_empty_json                           PASS
+  mcp_get_arguments_no_arguments_key                     PASS
+  server_handle_initialize                               level=info msg=session.root.cwd path=/Users/jeff/Documents/repos/codebase-memory-mcp
+level=info msg=autoindex.skip reason=disabled hint=run:_codebase-memory-mcp_config_set_auto_index_true
+level=info msg=mcp.request protocol=jsonrpc method=initialize status=ok duration_ms=0
+PASS
+  server_handle_initialized_notification                 PASS
+  server_handle_tools_list                               level=info msg=mcp.request protocol=jsonrpc method=tools/list status=ok duration_ms=0
+PASS
+  server_handle_tools_list_paginates                     level=info msg=mcp.request protocol=jsonrpc method=tools/list status=ok duration_ms=0
+level=info msg=mcp.request protocol=jsonrpc method=tools/list status=ok duration_ms=0
+PASS
+  server_handle_tools_list_cursor_edge_cases             level=info msg=mcp.request protocol=jsonrpc method=tools/list status=ok duration_ms=0
+level=info msg=mcp.request protocol=jsonrpc method=tools/list status=ok duration_ms=0
+level=info msg=mcp.request protocol=jsonrpc method=tools/list status=ok duration_ms=0
+PASS
+  server_handle_logs_request_without_params              PASS
+  server_handle_unknown_method                           level=warn msg=mcp.request protocol=jsonrpc method=unknown/method status=error duration_ms=0
+PASS
+  server_handle_invalid_json                             PASS
+  server_handle_empty_object                             PASS
+  server_handle_tools_call_missing_name                  level=warn msg=mcp.request protocol=jsonrpc method=tools/call status=error duration_ms=0
+PASS
+  tool_list_projects_empty                               level=info msg=mcp.request protocol=jsonrpc method=tools/call tool=list_projects status=ok duration_ms=322
+PASS
+  tool_get_graph_schema_empty                            level=warn msg=mcp.request protocol=jsonrpc method=tools/call tool=get_graph_schema status=error duration_ms=0
+PASS
+  tool_unknown_tool                                      level=warn msg=mcp.request protocol=jsonrpc method=tools/call tool=nonexistent_tool status=error duration_ms=0
+PASS
+  tool_handle_tool_missing_name                          PASS
+  tool_handle_tool_unknown_name                          PASS
+  tool_search_graph_basic                                level=warn msg=mcp.request protocol=jsonrpc method=tools/call tool=search_graph status=error duration_ms=0
+PASS
+  tool_search_graph_rejects_invalid_relationship         level=warn msg=mcp.request protocol=jsonrpc method=tools/call tool=search_graph status=error duration_ms=0
+PASS
+  tool_search_graph_includes_node_properties             level=info msg=mcp.request protocol=jsonrpc method=tools/call tool=search_graph status=ok duration_ms=0
+PASS
+  tool_search_graph_query_honors_file_pattern_issue552   level=info msg=mcp.request protocol=jsonrpc method=tools/call tool=search_graph status=ok duration_ms=0
+PASS
+  tool_search_graph_bm25_file_pattern_rank_order_contractlevel=info msg=mcp.request protocol=jsonrpc method=tools/call tool=search_graph status=ok duration_ms=0
+PASS
+  tool_query_graph_basic                                 level=warn msg=mcp.request protocol=jsonrpc method=tools/call tool=query_graph status=error duration_ms=64
+PASS
+  tool_index_status_no_project                           level=warn msg=mcp.request protocol=jsonrpc method=tools/call tool=index_status status=error duration_ms=0
+PASS
+  tool_index_status_includes_git_metadata                level=info msg=mcp.request protocol=jsonrpc method=tools/call tool=index_status status=ok duration_ms=11
+PASS
+  tool_trace_call_path_not_found                         level=warn msg=mcp.request protocol=jsonrpc method=tools/call tool=trace_call_path status=error duration_ms=122
+PASS
+  tool_trace_missing_function_name                       level=warn msg=mcp.request protocol=jsonrpc method=tools/call tool=trace_call_path status=error duration_ms=0
+PASS
+  tool_trace_call_path_ambiguous                         level=info msg=mcp.request protocol=jsonrpc method=tools/call tool=trace_call_path status=ok duration_ms=0
+PASS
+  tool_trace_call_path_prefers_definition                level=info msg=mcp.request protocol=jsonrpc method=tools/call tool=trace_call_path status=ok duration_ms=0
+PASS
+  tool_trace_call_path_filters_tests_by_default          level=info msg=mcp.request protocol=jsonrpc method=tools/call tool=trace_call_path status=ok duration_ms=0
+level=info msg=mcp.request protocol=jsonrpc method=tools/call tool=trace_call_path status=ok duration_ms=0
+PASS
+  tool_trace_call_path_data_flow_mode_uses_data_edges    level=info msg=mcp.request protocol=jsonrpc method=tools/call tool=trace_call_path status=ok duration_ms=0
+level=info msg=mcp.request protocol=jsonrpc method=tools/call tool=trace_call_path status=ok duration_ms=0
+PASS
+  tool_delete_project_not_found                          level=warn msg=mcp.request protocol=jsonrpc method=tools/call tool=delete_project status=error duration_ms=0
+PASS
+  tool_get_architecture_empty                            level=warn msg=mcp.request protocol=jsonrpc method=tools/call tool=get_architecture status=error duration_ms=122
+PASS
+  tool_get_architecture_emits_populated_sections         level=info msg=mcp.request protocol=jsonrpc method=tools/call tool=get_architecture status=ok duration_ms=0
+PASS
+  tool_get_architecture_accepts_project_name_alias_issue640level=info msg=mcp.request protocol=jsonrpc method=tools/call tool=get_architecture status=ok duration_ms=0
+PASS
+  tool_search_graph_accepts_project_name_alias_issue640  level=info msg=mcp.request protocol=jsonrpc method=tools/call tool=search_graph status=ok duration_ms=0
+PASS
+  tool_get_architecture_path_scoping                     level=info msg=mcp.request protocol=jsonrpc method=tools/call tool=get_architecture status=ok duration_ms=0
+level=info msg=mcp.request protocol=jsonrpc method=tools/call tool=get_architecture status=ok duration_ms=0
+PASS
+  tool_query_graph_missing_query                         level=warn msg=mcp.request protocol=jsonrpc method=tools/call tool=query_graph status=error duration_ms=0
+PASS
+  tool_index_repository_missing_path                     level=warn msg=mcp.request protocol=jsonrpc method=tools/call tool=index_repository status=error duration_ms=0
+PASS
+  tool_get_code_snippet_missing_qn                       level=warn msg=mcp.request protocol=jsonrpc method=tools/call tool=get_code_snippet status=error duration_ms=0
+PASS
+  tool_get_code_snippet_not_found                        level=warn msg=mcp.request protocol=jsonrpc method=tools/call tool=get_code_snippet status=error duration_ms=117
+PASS
+  tool_search_code_missing_pattern                       level=warn msg=mcp.request protocol=jsonrpc method=tools/call tool=search_code status=error duration_ms=0
+PASS
+  tool_search_code_no_project                            level=warn msg=mcp.request protocol=jsonrpc method=tools/call tool=search_code status=error duration_ms=120
+PASS
+  search_code_multi_word                                 level=info msg=mcp.request protocol=jsonrpc method=tools/call tool=search_code status=ok duration_ms=6
+PASS
+  search_code_sanitizes_non_ascii_source_bytes           level=info msg=mcp.request protocol=jsonrpc method=tools/call tool=search_code status=ok duration_ms=5
+PASS
+  search_code_invalid_regex_errors_issue283              level=warn msg=mcp.request protocol=jsonrpc method=tools/call tool=search_code status=error duration_ms=0
+level=info msg=mcp.request protocol=jsonrpc method=tools/call tool=search_code status=ok duration_ms=5
+PASS
+  search_code_literal_pipe_warns_issue282                level=info msg=mcp.request protocol=jsonrpc method=tools/call tool=search_code status=ok duration_ms=4
+PASS
+  search_code_ampersand_accepted_issue272                level=info msg=mcp.request protocol=jsonrpc method=tools/call tool=search_code status=ok duration_ms=5
+PASS
+  search_code_rejects_invalid_file_pattern               level=warn msg=mcp.request protocol=jsonrpc method=tools/call tool=search_code status=error duration_ms=0
+PASS
+  search_code_files_mode_lists_files                     level=info msg=mcp.request protocol=jsonrpc method=tools/call tool=search_code status=ok duration_ms=5
+PASS
+  tool_detect_changes_no_project                         level=warn msg=mcp.request protocol=jsonrpc method=tools/call tool=detect_changes status=error duration_ms=0
+PASS
+  tool_manage_adr_no_project                             level=warn msg=mcp.request protocol=jsonrpc method=tools/call tool=manage_adr status=error duration_ms=0
+PASS
+  tool_manage_adr_get_with_existing_adr                  level=info msg=mcp.request protocol=jsonrpc method=tools/call tool=manage_adr status=ok duration_ms=0
+PASS
+  tool_manage_adr_unified_backend_issue256               level=info msg=mcp.request protocol=jsonrpc method=tools/call tool=manage_adr status=ok duration_ms=0
+level=info msg=mcp.request protocol=jsonrpc method=tools/call tool=manage_adr status=ok duration_ms=0
+level=info msg=mcp.request protocol=jsonrpc method=tools/call tool=manage_adr status=ok duration_ms=0
+PASS
+  tool_ingest_traces_basic                               level=info msg=mcp.request protocol=jsonrpc method=tools/call tool=ingest_traces status=ok duration_ms=0
+PASS
+  tool_ingest_traces_empty                               level=info msg=mcp.request protocol=jsonrpc method=tools/call tool=ingest_traces status=ok duration_ms=0
+PASS
+  readonly_query_does_not_mutate_db                      PASS
+  readonly_query_succeeds_on_readonly_fs                 PASS
+  store_idle_eviction                                    PASS
+  store_idle_no_eviction_within_timeout                  PASS
+  store_idle_evict_protects_initial_store                PASS
+  store_idle_evict_access_resets_timer                   PASS
+  parse_file_uri_unix                                    PASS
+  parse_file_uri_windows                                 PASS
+  parse_file_uri_invalid                                 PASS
+  parse_file_uri_http_scheme                             PASS
+  parse_file_uri_ftp_scheme                              PASS
+  parse_file_uri_buffer_too_small                        PASS
+  parse_file_uri_spaces_in_path                          PASS
+  parse_file_uri_null_out_path                           PASS
+  parse_file_uri_zero_size                               PASS
+  mcp_server_run_rapid_messages                          level=info msg=session.root.cwd path=/Users/jeff/Documents/repos/codebase-memory-mcp
+level=info msg=autoindex.skip reason=disabled hint=run:_codebase-memory-mcp_config_set_auto_index_true
+level=info msg=mcp.request protocol=jsonrpc method=initialize status=ok duration_ms=0
+level=info msg=mcp.request protocol=jsonrpc method=tools/list status=ok duration_ms=0
+PASS
+  mcp_server_run_content_length_framing                  level=info msg=session.root.cwd path=/Users/jeff/Documents/repos/codebase-memory-mcp
+level=info msg=autoindex.skip reason=disabled hint=run:_codebase-memory-mcp_config_set_auto_index_true
+level=info msg=mcp.request protocol=jsonrpc method=initialize status=ok duration_ms=0
+PASS
+  mcp_server_run_content_length_incomplete_body          PASS
+  mcp_server_run_content_length_oversize_skips_body      level=info msg=mcp.request protocol=jsonrpc method=ping status=ok duration_ms=0
+PASS
+  snippet_exact_qn                                       PASS
+  snippet_qn_suffix                                      PASS
+  snippet_unique_short_name                              PASS
+  snippet_name_tier                                      PASS
+  snippet_ambiguous_short_name                           PASS
+  snippet_not_found                                      PASS
+  snippet_fuzzy_suggestions                              PASS
+  snippet_enriched_properties                            PASS
+  snippet_fuzzy_last_segment                             PASS
+  snippet_auto_resolve_default                           PASS
+  snippet_auto_resolve_enabled                           PASS
+  snippet_include_neighbors_default                      PASS
+  snippet_include_neighbors_enabled                      PASS
+  snippet_source_invalid_utf8                            PASS
+  tool_bad_project_name_no_overflow_issue235             level=warn msg=mcp.request protocol=jsonrpc method=tools/call tool=search_graph status=error duration_ms=23
+PASS
+  tool_resolve_store_by_internal_name_issue704           level=info msg=mcp.request protocol=jsonrpc method=tools/call tool=list_projects status=ok duration_ms=30
+level=info msg=mcp.request protocol=jsonrpc method=tools/call tool=search_graph status=ok duration_ms=0
+level=info msg=mcp.request protocol=jsonrpc method=tools/call tool=search_graph status=ok duration_ms=0
+level=error msg=store.auto_clean project=ghost704 path=/tmp/cbm-issue704-lRguX0/ghost704.db action=backing_up_corrupt_db_to_.corrupt_—_re-index_required
+level=warn msg=mcp.request protocol=jsonrpc method=tools/call tool=search_graph status=error duration_ms=0
+level=warn msg=mcp.request protocol=jsonrpc method=tools/call tool=search_graph status=error duration_ms=1
+PASS
+
+────────────────────────────────────────────
+  136 passed
+────────────────────────────────────────────
+
+/Applications/Xcode.app/Contents/Developer/usr/bin/make -j1 -f Makefile.cbm BUILD_DIR=build/c/rust-mcp-search-path-arg-wrapper SANITIZE= CBM_USE_RUST_MCP_SEARCH_PATH_ARG=1 cbm
+CARGO_TARGET_DIR=target/cbm-default cargo build -p cbm-core   --release --locked
+   Compiling cbm-core v0.0.0 (/Users/jeff/Documents/repos/codebase-memory-mcp/rust/cbm-core)
+    Finished `release` profile [optimized] target(s) in 1.74s
+cc -std=c11 -D_DEFAULT_SOURCE -D_GNU_SOURCE -Wall -Wextra -Werror -Wno-unused-parameter -Wno-sign-compare  -Isrc -Ivendored -Ivendored/sqlite3 -Ivendored/mimalloc/include -Iinternal/cbm -Iinternal/cbm/vendored/ts_runtime/include  -DCBM_USE_RUST_MCP_SEARCH_PATH_ARG -O2 -DCBM_BIND_TS_ALLOCATOR=1  -o build/c/rust-mcp-search-path-arg-wrapper/codebase-memory-mcp \
+		src/main.c src/foundation/arena.c src/foundation/hash_table.c src/foundation/str_intern.c src/foundation/log.c src/foundation/log_path.c src/foundation/str_util.c src/foundation/platform.c src/foundation/system_info.c src/foundation/slab_alloc.c src/foundation/yaml.c src/foundation/compat.c src/foundation/compat_thread.c src/foundation/compat_fs.c src/foundation/compat_regex.c src/foundation/mem.c src/foundation/diagnostics.c src/foundation/profile.c src/foundation/dump_verify.c src/store/store.c src/store/arch_helpers.c src/store/arch_path_scope.c src/store/file_ext.c src/store/immutable_uri.c src/store/mmap_resolver.c src/store/fts_tokenizer.c src/store/search_pattern.c src/cypher/cypher.c src/mcp/edge_type_valid.c src/mcp/search_mode.c src/mcp/index_mode.c src/mcp/search_path_arg.c src/mcp/search_line_span.c src/mcp/mcp.c src/discover/language.c src/discover/language_name.c src/discover/language_markers.c src/discover/userconfig.c  src/discover/gitignore.c src/discover/discover_string_helpers.c src/discover/trailing_sep.c src/discover/path_join.c src/discover/local_rel_path.c src/discover/discover.c src/discover/filters.c src/graph_buffer/graph_buffer.c src/graph_buffer/graph_buffer_mutation.c src/pipeline/fqn.c src/pipeline/project_name.c src/pipeline/path_alias.c src/pipeline/registry.c src/pipeline/registry_test_qn.c src/pipeline/pipeline.c src/pipeline/incremental_edge_type.c src/pipeline/incremental_registry_label.c src/pipeline/pipeline_incremental.c src/pipeline/worker_pool.c src/pipeline/parallel_json.c src/pipeline/pass_parallel.c src/pipeline/checked_exception.c src/pipeline/route_args.c src/pipeline/k8s_file_classifiers.c src/pipeline/route_node_classifiers.c src/pipeline/definitions_json.c src/pipeline/pass_definitions.c src/pipeline/calls_json.c src/pipeline/pass_calls.c src/pipeline/lsp_cross_classifiers.c src/pipeline/pass_lsp_cross.c src/pipeline/usages_json.c src/pipeline/pass_usages.c src/pipeline/semantic_fp_suffix.c src/pipeline/pass_semantic.c src/pipeline/test_node_is_test.c src/pipeline/pass_tests.c src/pipeline/test_detect.c src/pipeline/trackable_file.c src/pipeline/pass_githistory.c src/pipeline/pass_gitdiff.c src/pipeline/pass_configures.c src/pipeline/configlink_helpers.c src/pipeline/pass_configlink.c src/pipeline/json_prop.c src/pipeline/pass_route_nodes.c src/pipeline/url_path.c src/pipeline/sveltekit_file_kind.c src/pipeline/sveltekit_server_method.c src/pipeline/pass_enrichment.c src/pipeline/envscan_classifiers.c src/pipeline/pass_envscan.c src/pipeline/split_command.c src/pipeline/pass_compile_commands.c src/pipeline/infrascan_json.c src/pipeline/pass_infrascan.c src/pipeline/k8s_text_helpers.c src/pipeline/pass_k8s.c src/pipeline/similarity_fp.c src/pipeline/pass_similarity.c src/pipeline/pass_semantic_edges.c src/pipeline/pass_complexity.c src/pipeline/pass_cross_repo.c src/pipeline/artifact.c src/pipeline/artifact_path.c src/pipeline/pass_pkgmap.c src/simhash/minhash_jaccard.c src/simhash/minhash.c src/semantic/semantic.c src/semantic/ast_profile.c src/semantic/camel_break.c src/semantic/token_delim.c src/semantic/ast_profile_classifiers.c src/traces/traces.c src/watcher/watcher.c src/watcher/poll_interval.c src/git/git_context.c src/git/path_absolute.c src/git/json_escaped_len.c src/git/trim_newlines.c src/cli/archive_helpers.c src/cli/cli.c src/cli/progress_sink.c src/cli/hook_augment.c src/ui/config.c src/ui/http_server.c src/ui/layout3d.c src/ui/httpd.c src/ui/embedded_stub.c vendored/yyjson/yyjson.c \
+		internal/cbm/cbm.c internal/cbm/extract_defs.c internal/cbm/extract_calls.c internal/cbm/extract_imports.c internal/cbm/extract_usages.c internal/cbm/extract_unified.c internal/cbm/extract_semantic.c internal/cbm/extract_type_refs.c internal/cbm/extract_type_assigns.c internal/cbm/extract_env_accesses.c internal/cbm/extract_channels.c internal/cbm/extract_k8s.c internal/cbm/helpers.c internal/cbm/lang_specs.c internal/cbm/service_patterns.c internal/cbm/ac.c internal/cbm/lz4_store.c internal/cbm/zstd_store.c internal/cbm/sqlite_writer.c \
+		build/c/rust-mcp-search-path-arg-wrapper/prod_mimalloc.o build/c/rust-mcp-search-path-arg-wrapper/prod_sqlite3.o  build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_ada.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_agda.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_apex.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_assembly.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_astro.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_awk.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_bash.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_beancount.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_bibtex.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_bicep.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_bitbake.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_blade.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_c_sharp.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_c.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_cairo.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_capnp.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_cfml.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_cfscript.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_clojure.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_cmake.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_cobol.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_commonlisp.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_cpp.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_crystal.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_css.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_csv.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_cuda.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_d.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_dart.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_devicetree.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_diff.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_dockerfile.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_dotenv.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_elisp.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_elixir.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_elm.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_erlang.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_fennel.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_fish.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_form.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_fortran.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_fsharp.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_func.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_gdscript.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_gitattributes.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_gitignore.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_gleam.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_glsl.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_gn.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_go.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_gomod.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_gotemplate.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_graphql.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_groovy.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_hare.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_haskell.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_hcl.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_hlsl.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_html.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_hyprlang.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_ini.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_ispc.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_janet.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_java.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_javascript.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_jinja2.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_jsdoc.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_json.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_json5.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_jsonnet.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_julia.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_just.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_kconfig.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_kdl.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_kotlin.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_lean.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_linkerscript.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_liquid.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_llvm.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_lua.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_luau.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_magma.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_makefile.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_markdown.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_matlab.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_mermaid.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_meson.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_move.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_nasm.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_nickel.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_nix.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_objc.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_ocaml.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_odin.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_pascal.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_perl.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_php.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_pine.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_pkl.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_po.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_pony.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_powershell.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_prisma.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_properties.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_protobuf.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_puppet.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_purescript.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_python.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_qml.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_r.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_racket.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_regex.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_requirements.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_rescript.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_ron.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_rst.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_ruby.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_rust.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_scala.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_scheme.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_scss.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_slang.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_smali.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_smithy.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_solidity.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_soql.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_sosl.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_sql.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_squirrel.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_sshconfig.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_starlark.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_svelte.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_sway.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_swift.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_systemverilog.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_tablegen.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_tcl.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_teal.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_templ.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_thrift.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_tlaplus.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_toml.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_tsx.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_typescript.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_typst.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_verilog.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_vhdl.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_vim.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_vue.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_wgsl.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_wit.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_wolfram.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_xml.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_yaml.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_zig.o build/c/rust-mcp-search-path-arg-wrapper/prod_grammar_zsh.o build/c/rust-mcp-search-path-arg-wrapper/prod_ts_runtime.o build/c/rust-mcp-search-path-arg-wrapper/prod_lsp_all.o build/c/rust-mcp-search-path-arg-wrapper/prod_preprocessor.o build/c/rust-mcp-search-path-arg-wrapper/prod_lz4.o build/c/rust-mcp-search-path-arg-wrapper/prod_lz4hc.o build/c/rust-mcp-search-path-arg-wrapper/prod_zstd.o build/c/rust-mcp-search-path-arg-wrapper/unixcoder_blob.o target/cbm-default/release/libcbm_core.a \
+		-lm -lstdc++ -lpthread -lz   
+Built: build/c/rust-mcp-search-path-arg-wrapper/codebase-memory-mcp
+cd /Users/jeff/Documents/repos/codebase-memory-mcp && build/c/rust-mcp-search-path-arg-wrapper/codebase-memory-mcp --version
+codebase-memory-mcp dev

@@ -8,8 +8,25 @@
 #include "../src/foundation/log.h"
 #include "test_framework.h"
 #include <mcp/mcp.h>
+#include <mcp/search_code_score.h>
+#include <mcp/search_top_dir.h>
+#include <mcp/detect_changes_scope.h>
+#include <mcp/detect_changes_label.h>
+#include <mcp/detect_changes_status.h>
+#include <mcp/node_resolution_score.h>
+#include <mcp/utf8_is_cont.h>
+#include <mcp/adr_mode.h>
+#include <mcp/trace_mode_edge_mask.h>
+#include <mcp/trace_is_test_file.h>
+#include <mcp/project_db_file_name.h>
+#include <mcp/sanitize_ascii_in_place.h>
+#include <mcp/sanitize_utf8_lossy.h>
+#include <mcp/architecture_aspect_wanted.h>
+#include <mcp/bm25_file_pattern_like.h>
+#include <mcp/bm25_build_match.h>
 #include <store/store.h>
 #include <yyjson/yyjson.h>
+#include <stdint.h>
 #include <string.h>
 #include <stdlib.h>
 #include <stdbool.h>
@@ -1627,6 +1644,302 @@ TEST(search_code_multi_word) {
 
     cleanup_snippet_dir(tmp);
     cbm_mcp_server_free(srv);
+    PASS();
+}
+
+TEST(search_code_score_contract) {
+    ASSERT_EQ(cbm_mcp_search_code_score(NULL, NULL, 7), 7);
+    ASSERT_EQ(cbm_mcp_search_code_score("Function", "src/app.c", 3), 13);
+    ASSERT_EQ(cbm_mcp_search_code_score("Method", "src/app.c", 3), 13);
+    ASSERT_EQ(cbm_mcp_search_code_score("Route", "src/app.c", 3), 18);
+    ASSERT_EQ(cbm_mcp_search_code_score("Class", "src/app.c", 3), 3);
+    ASSERT_EQ(cbm_mcp_search_code_score("Function", "vendor/test_api.c", 3), -42);
+    ASSERT_EQ(cbm_mcp_search_code_score("Function", "src/spec/helper.c", 3), 8);
+
+    const char label_with_tail[] = "Function\0Route";
+    const char file_with_tail[] = "src/\0vendor/test.c";
+    ASSERT_EQ(cbm_mcp_search_code_score(label_with_tail, file_with_tail, 3), 13);
+    PASS();
+}
+
+TEST(search_top_dir_contract) {
+    char buf[16];
+    ASSERT_EQ(cbm_mcp_search_top_dir(buf, sizeof(buf), "src/app.c"), strlen("src/"));
+    ASSERT_STR_EQ(buf, "src/");
+    ASSERT_EQ(cbm_mcp_search_top_dir(buf, sizeof(buf), "/abs/app.c"), strlen("/"));
+    ASSERT_STR_EQ(buf, "/");
+    ASSERT_EQ(cbm_mcp_search_top_dir(buf, sizeof(buf), "app.c"), strlen("app.c"));
+    ASSERT_STR_EQ(buf, "app.c");
+
+    char short_buf[5];
+    ASSERT_EQ(cbm_mcp_search_top_dir(short_buf, sizeof(short_buf), "verylong/path.c"),
+              strlen("verylong/"));
+    ASSERT_STR_EQ(short_buf, "very");
+
+    char unchanged[] = "keep";
+    ASSERT_TRUE(cbm_mcp_search_top_dir(unchanged, sizeof(unchanged), NULL) == SIZE_MAX);
+    ASSERT_STR_EQ(unchanged, "keep");
+    ASSERT_EQ(cbm_mcp_search_top_dir(NULL, 0, "src/app.c"), strlen("src/"));
+
+    char zero_buf[] = "keep";
+    ASSERT_EQ(cbm_mcp_search_top_dir(zero_buf, 0, "src/app.c"), strlen("src/"));
+    ASSERT_STR_EQ(zero_buf, "keep");
+
+    const char file_with_tail[] = "src/\0vendor/test.c";
+    ASSERT_EQ(cbm_mcp_search_top_dir(buf, sizeof(buf), file_with_tail), strlen("src/"));
+    ASSERT_STR_EQ(buf, "src/");
+
+    char empty_buf[] = "x";
+    ASSERT_EQ(cbm_mcp_search_top_dir(empty_buf, sizeof(empty_buf), ""), 0);
+    ASSERT_STR_EQ(empty_buf, "");
+    PASS();
+}
+
+TEST(detect_changes_scope_contract) {
+    ASSERT_TRUE(cbm_mcp_detect_changes_wants_symbols(NULL));
+    ASSERT_TRUE(cbm_mcp_detect_changes_wants_symbols("symbols"));
+    ASSERT_TRUE(cbm_mcp_detect_changes_wants_symbols("impact"));
+    ASSERT_FALSE(cbm_mcp_detect_changes_wants_symbols(""));
+    ASSERT_FALSE(cbm_mcp_detect_changes_wants_symbols("files"));
+    ASSERT_FALSE(cbm_mcp_detect_changes_wants_symbols("Symbols"));
+    ASSERT_FALSE(cbm_mcp_detect_changes_wants_symbols("symbols "));
+
+    const char scope_with_tail[] = "symbols\0files";
+    ASSERT_TRUE(cbm_mcp_detect_changes_wants_symbols(scope_with_tail));
+    PASS();
+}
+
+TEST(detect_changes_label_contract) {
+    ASSERT_FALSE(cbm_mcp_detect_changes_impacted_label(NULL));
+    ASSERT_FALSE(cbm_mcp_detect_changes_impacted_label("File"));
+    ASSERT_FALSE(cbm_mcp_detect_changes_impacted_label("Folder"));
+    ASSERT_FALSE(cbm_mcp_detect_changes_impacted_label("Project"));
+    ASSERT_TRUE(cbm_mcp_detect_changes_impacted_label(""));
+    ASSERT_TRUE(cbm_mcp_detect_changes_impacted_label("Function"));
+    ASSERT_TRUE(cbm_mcp_detect_changes_impacted_label("file"));
+    ASSERT_TRUE(cbm_mcp_detect_changes_impacted_label("Project "));
+
+    const char label_with_tail[] = "File\0Function";
+    ASSERT_FALSE(cbm_mcp_detect_changes_impacted_label(label_with_tail));
+    PASS();
+}
+
+TEST(detect_changes_status_contract) {
+    ASSERT_EQ(cbm_mcp_detect_changes_status_path_offset(NULL), SIZE_MAX);
+    ASSERT_EQ(cbm_mcp_detect_changes_status_path_offset(""), SIZE_MAX);
+    ASSERT_EQ(cbm_mcp_detect_changes_status_path_offset("src/mcp/mcp.c"), 0);
+    ASSERT_EQ(cbm_mcp_detect_changes_status_path_offset("?? src/new.c"), 3);
+    ASSERT_EQ(cbm_mcp_detect_changes_status_path_offset("A  src/a.c"), 3);
+    ASSERT_EQ(cbm_mcp_detect_changes_status_path_offset(" M src/m.c"), 3);
+    ASSERT_EQ(cbm_mcp_detect_changes_status_path_offset("R  old/name.c -> new/name.c"), 17);
+    ASSERT_EQ(cbm_mcp_detect_changes_status_path_offset("R  old -> "), SIZE_MAX);
+    ASSERT_EQ(cbm_mcp_detect_changes_status_path_offset("ZZ weird"), 0);
+
+    const char line_with_tail[] = "?? src/new.c\0R  old -> new";
+    ASSERT_EQ(cbm_mcp_detect_changes_status_path_offset(line_with_tail), 3);
+    PASS();
+}
+
+TEST(node_resolution_score_contract) {
+    ASSERT_EQ(cbm_mcp_node_resolution_score(NULL, 10, 20), 10);
+    ASSERT_EQ(cbm_mcp_node_resolution_score("", 10, 20), 1000010);
+    ASSERT_EQ(cbm_mcp_node_resolution_score("Function", 10, 20), 2000010);
+    ASSERT_EQ(cbm_mcp_node_resolution_score("Method", 10, 20), 2000010);
+    ASSERT_EQ(cbm_mcp_node_resolution_score("Class", 10, 20), 1000010);
+    ASSERT_EQ(cbm_mcp_node_resolution_score("Module", 10, 20), 10);
+    ASSERT_EQ(cbm_mcp_node_resolution_score("File", 10, 20), 10);
+    ASSERT_EQ(cbm_mcp_node_resolution_score("Function", 20, 10), 2000000);
+
+    const char label_with_tail[] = "Function\0Module";
+    ASSERT_EQ(cbm_mcp_node_resolution_score(label_with_tail, 10, 20), 2000010);
+    PASS();
+}
+
+TEST(utf8_is_cont_contract) {
+    ASSERT_TRUE(cbm_mcp_utf8_is_cont_byte(0x80));
+    ASSERT_TRUE(cbm_mcp_utf8_is_cont_byte(0xBF));
+    ASSERT_FALSE(cbm_mcp_utf8_is_cont_byte(0x7F));
+    ASSERT_FALSE(cbm_mcp_utf8_is_cont_byte(0xC0));
+    ASSERT_FALSE(cbm_mcp_utf8_is_cont_byte(0x00));
+    ASSERT_TRUE(cbm_mcp_utf8_is_cont_byte(0x180));
+    ASSERT_TRUE(cbm_mcp_utf8_is_cont_byte(-128));
+    PASS();
+}
+
+TEST(adr_mode_contract) {
+    const char sections_first_nul[] = {'s', 'e', 'c', 't', 'i', 'o', 'n', 's', '\0', 'x'};
+
+    ASSERT_EQ(cbm_mcp_adr_mode(NULL), 0);
+    ASSERT_EQ(cbm_mcp_adr_mode(""), 0);
+    ASSERT_EQ(cbm_mcp_adr_mode("get"), 0);
+    ASSERT_EQ(cbm_mcp_adr_mode("update"), 1);
+    ASSERT_EQ(cbm_mcp_adr_mode("store"), 1);
+    ASSERT_EQ(cbm_mcp_adr_mode("sections"), 2);
+    ASSERT_EQ(cbm_mcp_adr_mode("Update"), 0);
+    ASSERT_EQ(cbm_mcp_adr_mode("update "), 0);
+    ASSERT_EQ(cbm_mcp_adr_mode(sections_first_nul), 2);
+    PASS();
+}
+
+TEST(trace_mode_edge_mask_contract) {
+    const char data_flow_first_nul[] = {'d', 'a', 't', 'a', '_', 'f', 'l', 'o', 'w', '\0', 'x'};
+    const uint32_t cross_service_mask = 0x3FFu;
+
+    ASSERT_EQ(cbm_mcp_trace_mode_edge_mask(NULL), 1);
+    ASSERT_EQ(cbm_mcp_trace_mode_edge_mask(""), 1);
+    ASSERT_EQ(cbm_mcp_trace_mode_edge_mask("calls"), 1);
+    ASSERT_EQ(cbm_mcp_trace_mode_edge_mask("data_flow"), 3);
+    ASSERT_EQ(cbm_mcp_trace_mode_edge_mask("cross_service"), cross_service_mask);
+    ASSERT_EQ(cbm_mcp_trace_mode_edge_mask("Data_Flow"), 1);
+    ASSERT_EQ(cbm_mcp_trace_mode_edge_mask("data_flow "), 1);
+    ASSERT_EQ(cbm_mcp_trace_mode_edge_mask(data_flow_first_nul), 3);
+    PASS();
+}
+
+TEST(trace_is_test_file_contract) {
+    const char test_file_first_nul[] = {'s', 'r', 'c', '/', 'f', 'o', 'o', '_', 't', 'e', 's', 't', '.',
+                                        'g', 'o', '\0', 'x'};
+
+    ASSERT_FALSE(cbm_mcp_trace_is_test_file(NULL));
+    ASSERT_FALSE(cbm_mcp_trace_is_test_file(""));
+    ASSERT_TRUE(cbm_mcp_trace_is_test_file("src/testdata/helper.go"));
+    ASSERT_TRUE(cbm_mcp_trace_is_test_file("test_handler.py"));
+    ASSERT_TRUE(cbm_mcp_trace_is_test_file("src/foo_test.go"));
+    ASSERT_TRUE(cbm_mcp_trace_is_test_file("src/tests/helper.c"));
+    ASSERT_TRUE(cbm_mcp_trace_is_test_file("src/spec/helper.rb"));
+    ASSERT_TRUE(cbm_mcp_trace_is_test_file("handler.test.ts"));
+    ASSERT_FALSE(cbm_mcp_trace_is_test_file("src/contest/helper.c"));
+    ASSERT_FALSE(cbm_mcp_trace_is_test_file("src/mytests/helper.c"));
+    ASSERT_FALSE(cbm_mcp_trace_is_test_file("handler.spec.ts"));
+    ASSERT_FALSE(cbm_mcp_trace_is_test_file("C:\\repo\\tests\\helper.py"));
+    ASSERT_TRUE(cbm_mcp_trace_is_test_file(test_file_first_nul));
+    PASS();
+}
+
+TEST(project_db_file_name_contract) {
+    const char project_first_nul[] = {'x', '.', 'd', 'b', '\0', '-', 'w', 'a', 'l'};
+
+    ASSERT_FALSE(cbm_mcp_project_db_file_name(NULL));
+    ASSERT_FALSE(cbm_mcp_project_db_file_name(""));
+    ASSERT_FALSE(cbm_mcp_project_db_file_name(".db"));
+    ASSERT_TRUE(cbm_mcp_project_db_file_name("x.db"));
+    ASSERT_TRUE(cbm_mcp_project_db_file_name("alpha704.db"));
+    ASSERT_TRUE(cbm_mcp_project_db_file_name("tmp-bench.db"));
+    ASSERT_TRUE(cbm_mcp_project_db_file_name("tmp-.db"));
+    ASSERT_FALSE(cbm_mcp_project_db_file_name("alpha704.db-wal"));
+    ASSERT_FALSE(cbm_mcp_project_db_file_name("alpha704.sqlite"));
+    ASSERT_FALSE(cbm_mcp_project_db_file_name("_internal.db"));
+    ASSERT_FALSE(cbm_mcp_project_db_file_name(":memory:"));
+    ASSERT_FALSE(cbm_mcp_project_db_file_name(":memory:.db"));
+    ASSERT_TRUE(cbm_mcp_project_db_file_name(project_first_nul));
+    PASS();
+}
+
+TEST(sanitize_ascii_in_place_contract) {
+    char mixed[] = {'a', (char)0x7f, (char)0x80, (char)0xc3, (char)0xa9, 'z', (char)0xff, '\0'};
+    char first_nul[] = {(char)0x80, '\0', (char)0xff, '\0'};
+    char empty[] = "";
+
+    cbm_mcp_sanitize_ascii_in_place(NULL);
+    cbm_mcp_sanitize_ascii_in_place(mixed);
+    ASSERT_EQ(mixed[0], 'a');
+    ASSERT_EQ((unsigned char)mixed[1], 0x7f);
+    ASSERT_EQ(mixed[2], '?');
+    ASSERT_EQ(mixed[3], '?');
+    ASSERT_EQ(mixed[4], '?');
+    ASSERT_EQ(mixed[5], 'z');
+    ASSERT_EQ(mixed[6], '?');
+    cbm_mcp_sanitize_ascii_in_place(first_nul);
+    ASSERT_EQ(first_nul[0], '?');
+    ASSERT_EQ((unsigned char)first_nul[2], 0xff);
+    cbm_mcp_sanitize_ascii_in_place(empty);
+    ASSERT_EQ(empty[0], '\0');
+    PASS();
+}
+
+TEST(sanitize_utf8_lossy_contract) {
+    const char first_nul[] = {'a', (char)0xff, '\0', (char)0xff, '\0'};
+    char *out = cbm_mcp_sanitize_utf8_lossy(NULL);
+    ASSERT_NULL(out);
+    out = cbm_mcp_sanitize_utf8_lossy("hello");
+    ASSERT_NOT_NULL(out);
+    ASSERT_STR_EQ(out, "hello");
+    free(out);
+    out = cbm_mcp_sanitize_utf8_lossy("hello \xff world");
+    ASSERT_NOT_NULL(out);
+    ASSERT_STR_EQ(out, "hello \xef\xbf\xbd world");
+    free(out);
+    out = cbm_mcp_sanitize_utf8_lossy(first_nul);
+    ASSERT_NOT_NULL(out);
+    ASSERT_STR_EQ(out, "a\xef\xbf\xbd");
+    free(out);
+    PASS();
+}
+
+TEST(architecture_aspect_wanted_contract) {
+    const char first_nul[] = {'{', '"', 'a', 's', 'p', 'e', 'c', 't', 's', '"', ':', '[', '"',
+                              's', 't', 'r', 'u', 'c', 't', 'u', 'r', 'e', '"', ']', '}', '\0',
+                              'x'};
+
+    ASSERT_TRUE(cbm_mcp_architecture_aspect_wanted(NULL, "structure"));
+    ASSERT_TRUE(cbm_mcp_architecture_aspect_wanted("", "structure"));
+    ASSERT_TRUE(cbm_mcp_architecture_aspect_wanted("{}", "structure"));
+    ASSERT_TRUE(cbm_mcp_architecture_aspect_wanted("{\"aspects\":null}", "structure"));
+    ASSERT_FALSE(cbm_mcp_architecture_aspect_wanted("{\"aspects\":[]}", "structure"));
+    ASSERT_TRUE(cbm_mcp_architecture_aspect_wanted("{\"aspects\":[\"all\"]}", "structure"));
+    ASSERT_TRUE(cbm_mcp_architecture_aspect_wanted("{\"aspects\":[\"structure\"]}", "structure"));
+    ASSERT_FALSE(
+        cbm_mcp_architecture_aspect_wanted("{\"aspects\":[\"structure\"]}", "dependencies"));
+    ASSERT_TRUE(cbm_mcp_architecture_aspect_wanted("{\"aspects\":[]} trailing", "structure"));
+    ASSERT_TRUE(cbm_mcp_architecture_aspect_wanted(first_nul, "structure"));
+    PASS();
+}
+
+TEST(bm25_file_pattern_like_contract) {
+    const char first_nul[] = {'*', '.', 'g', 'o', '\0', 'x'};
+    char buf[32];
+    char short_buf[6];
+
+    ASSERT_EQ(cbm_mcp_bm25_file_pattern_like(buf, sizeof(buf), NULL), SIZE_MAX);
+    ASSERT_EQ(cbm_mcp_bm25_file_pattern_like(NULL, 0, "src/lib"), strlen("%src/lib%"));
+    ASSERT_EQ(cbm_mcp_bm25_file_pattern_like(buf, sizeof(buf), "src/lib"), strlen("%src/lib%"));
+    ASSERT_STR_EQ(buf, "%src/lib%");
+    ASSERT_EQ(cbm_mcp_bm25_file_pattern_like(buf, sizeof(buf), ""), strlen("%%"));
+    ASSERT_STR_EQ(buf, "%%");
+    ASSERT_EQ(cbm_mcp_bm25_file_pattern_like(buf, sizeof(buf), "*.go"), strlen("%.go"));
+    ASSERT_STR_EQ(buf, "%.go");
+    ASSERT_EQ(cbm_mcp_bm25_file_pattern_like(buf, sizeof(buf), "src/api/*"), strlen("src/api/%"));
+    ASSERT_STR_EQ(buf, "src/api/%");
+    ASSERT_EQ(cbm_mcp_bm25_file_pattern_like(buf, sizeof(buf), "f???.txt"), strlen("f___.txt"));
+    ASSERT_STR_EQ(buf, "f___.txt");
+    ASSERT_EQ(cbm_mcp_bm25_file_pattern_like(short_buf, sizeof(short_buf), "src/lib"),
+              strlen("%src/lib%"));
+    ASSERT_STR_EQ(short_buf, "%src/");
+    ASSERT_EQ(cbm_mcp_bm25_file_pattern_like(buf, sizeof(buf), first_nul), strlen("%.go"));
+    ASSERT_STR_EQ(buf, "%.go");
+    PASS();
+}
+
+TEST(bm25_build_match_contract) {
+    const char first_nul[] = {'a', 'l', 'p', 'h', 'a', '\0', ' ', 'b', 'e', 't', 'a'};
+    char buf[64];
+
+    memset(buf, 'X', sizeof(buf));
+    ASSERT_EQ(cbm_mcp_bm25_build_match("abc", NULL, sizeof(buf)), 0);
+    ASSERT_EQ(cbm_mcp_bm25_build_match(NULL, buf, sizeof(buf)), 0);
+    ASSERT_EQ(buf[0], 'X');
+    ASSERT_EQ(cbm_mcp_bm25_build_match("abc", buf, 1), 0);
+    ASSERT_EQ(buf[0], 'X');
+    ASSERT_EQ(cbm_mcp_bm25_build_match("!!!", buf, sizeof(buf)), 0);
+    ASSERT_STR_EQ(buf, "");
+    ASSERT_EQ(cbm_mcp_bm25_build_match("update settings", buf, sizeof(buf)), 2);
+    ASSERT_STR_EQ(buf, "update OR settings");
+    ASSERT_EQ(cbm_mcp_bm25_build_match("foo-bar baz.qux", buf, sizeof(buf)), 4);
+    ASSERT_STR_EQ(buf, "foo OR bar OR baz OR qux");
+    ASSERT_EQ(cbm_mcp_bm25_build_match("alpha beta", buf, 10), 1);
+    ASSERT_STR_EQ(buf, "alpha");
+    ASSERT_EQ(cbm_mcp_bm25_build_match(first_nul, buf, sizeof(buf)), 1);
+    ASSERT_STR_EQ(buf, "alpha");
     PASS();
 }
 
@@ -3764,6 +4077,22 @@ SUITE(mcp) {
     RUN_TEST(tool_search_code_missing_pattern);
     RUN_TEST(tool_search_code_no_project);
     RUN_TEST(search_code_multi_word);
+    RUN_TEST(search_code_score_contract);
+    RUN_TEST(search_top_dir_contract);
+    RUN_TEST(detect_changes_scope_contract);
+    RUN_TEST(detect_changes_label_contract);
+    RUN_TEST(detect_changes_status_contract);
+    RUN_TEST(node_resolution_score_contract);
+    RUN_TEST(utf8_is_cont_contract);
+    RUN_TEST(adr_mode_contract);
+    RUN_TEST(trace_mode_edge_mask_contract);
+    RUN_TEST(trace_is_test_file_contract);
+    RUN_TEST(project_db_file_name_contract);
+    RUN_TEST(sanitize_ascii_in_place_contract);
+    RUN_TEST(sanitize_utf8_lossy_contract);
+    RUN_TEST(architecture_aspect_wanted_contract);
+    RUN_TEST(bm25_file_pattern_like_contract);
+    RUN_TEST(bm25_build_match_contract);
     RUN_TEST(search_code_sanitizes_non_ascii_source_bytes);
     RUN_TEST(search_code_invalid_regex_errors_issue283);
     RUN_TEST(search_code_literal_pipe_warns_issue282);

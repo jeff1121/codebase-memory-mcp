@@ -23,6 +23,7 @@
 #include "pipeline/json_prop.h"
 #include "pipeline/lsp_cross_classifiers.h"
 #include "pipeline/split_command.h"
+#include "pipeline/enrichment_tokens.h"
 #include "pipeline/route_node_classifiers.h"
 #include "pipeline/rust_plan.h"
 #include "discover/discover.h"
@@ -44,7 +45,7 @@ extern int cbm_rs_discover_has_trailing_sep_v1(const char *value);
 extern void cbm_rs_discover_path_join_v1(const char *base, const char *relative, char *buf,
                                          size_t bufsize);
 extern size_t cbm_rs_discover_local_rel_path_offset_v1(const char *rel_path,
-                                                        const char *local_prefix);
+                                                       const char *local_prefix);
 extern size_t cbm_discover_local_rel_path_offset(const char *rel_path, const char *local_prefix);
 extern int cbm_rs_watcher_poll_interval_ms_v1(int file_count);
 extern int cbm_rs_pipeline_sveltekit_file_kind_v1(const char *file_path);
@@ -67,7 +68,8 @@ extern bool cbm_discover_ascii_ieq(const char *left, const char *right);
 extern bool cbm_discover_has_trailing_sep(const char *value);
 #endif
 #ifdef CBM_USE_RUST_DISCOVER_PATH_JOIN_ONLY
-extern void cbm_discover_path_join(const char *base, const char *relative, char *buf, size_t bufsize);
+extern void cbm_discover_path_join(const char *base, const char *relative, char *buf,
+                                   size_t bufsize);
 #endif
 #ifdef CBM_USE_RUST_PIPELINE_INCREMENTAL_EDGE_ONLY
 extern bool cbm_pipeline_incremental_edge_type_is_recomputed(const char *edge_type);
@@ -292,8 +294,7 @@ extern int64_t cbm_rs_profile_rate_per_s(int64_t items, int64_t us);
 extern size_t cbm_rs_pipeline_project_name_from_path(char *buf, size_t bufsize,
                                                      const char *abs_path);
 extern int cbm_rs_pipeline_is_env_var_name_v1(const char *value);
-extern int cbm_rs_pipeline_normalize_config_key_v1(const char *key, char *norm_out,
-                                                   size_t norm_sz);
+extern int cbm_rs_pipeline_normalize_config_key_v1(const char *key, char *norm_out, size_t norm_sz);
 extern int cbm_rs_pipeline_has_config_extension_v1(const char *path);
 extern int cbm_rs_pipeline_is_dockerfile_v1(const char *name);
 extern int cbm_rs_pipeline_is_compose_file_v1(const char *name);
@@ -360,14 +361,10 @@ _Static_assert(offsetof(CbmRsTraceResourceV1, attr_count) == 8,
                "TraceResourceV1.attr_count offset drift");
 _Static_assert(sizeof(CbmRsTraceSpanV1) == 40, "TraceSpanV1 ABI size drift");
 _Static_assert(offsetof(CbmRsTraceSpanV1, kind) == 0, "TraceSpanV1.kind offset drift");
-_Static_assert(offsetof(CbmRsTraceSpanV1, attributes) == 8,
-               "TraceSpanV1.attributes offset drift");
-_Static_assert(offsetof(CbmRsTraceSpanV1, attr_count) == 16,
-               "TraceSpanV1.attr_count offset drift");
-_Static_assert(offsetof(CbmRsTraceSpanV1, start_time) == 24,
-               "TraceSpanV1.start_time offset drift");
-_Static_assert(offsetof(CbmRsTraceSpanV1, end_time) == 32,
-               "TraceSpanV1.end_time offset drift");
+_Static_assert(offsetof(CbmRsTraceSpanV1, attributes) == 8, "TraceSpanV1.attributes offset drift");
+_Static_assert(offsetof(CbmRsTraceSpanV1, attr_count) == 16, "TraceSpanV1.attr_count offset drift");
+_Static_assert(offsetof(CbmRsTraceSpanV1, start_time) == 24, "TraceSpanV1.start_time offset drift");
+_Static_assert(offsetof(CbmRsTraceSpanV1, end_time) == 32, "TraceSpanV1.end_time offset drift");
 _Static_assert(sizeof(CbmRsHttpSpanInfoV1) == 48, "HttpSpanInfoV1 ABI size drift");
 _Static_assert(offsetof(CbmRsHttpSpanInfoV1, service_name) == 0,
                "HttpSpanInfoV1.service_name offset drift");
@@ -382,8 +379,7 @@ _Static_assert(offsetof(CbmRsHttpSpanInfoV1, duration_ns) == 40,
 
 extern const char *cbm_rs_traces_extract_service_name_v1(const CbmRsTraceResourceV1 *r);
 extern bool cbm_rs_traces_extract_http_info_v1(const CbmRsTraceSpanV1 *span,
-                                               const char *service_name,
-                                               CbmRsHttpSpanInfoV1 *out);
+                                               const char *service_name, CbmRsHttpSpanInfoV1 *out);
 extern const char *cbm_rs_traces_extract_path_from_url_v1(const char *url, char *buf,
                                                           size_t buf_sz);
 extern int64_t cbm_rs_traces_parse_duration_v1(const char *start_nano, const char *end_nano);
@@ -1045,31 +1041,29 @@ static void test_traces_exports(void) {
         .end_time = "1050000000",
     };
     CbmRsHttpSpanInfoV1 info = {0};
-    check_bool("traces_http_info",
-               cbm_rs_traces_extract_http_info_v1(&span, "svc", &info), true);
+    check_bool("traces_http_info", cbm_rs_traces_extract_http_info_v1(&span, "svc", &info), true);
     check_str("traces_http_info_method", info.method, "GET");
     check_str("traces_http_info_path", info.path, "/api/orders");
     check_str("traces_http_info_status", info.status_code, "200");
     check_str("traces_http_info_service_name", info.service_name, "svc");
     check_int("traces_http_info_kind", info.span_kind, 2);
     check_i64("traces_http_info_duration", info.duration_ns, 50000000);
-    check_bool("traces_http_info_non_http",
-               cbm_rs_traces_extract_http_info_v1(NULL, "svc", &info), false);
+    check_bool("traces_http_info_non_http", cbm_rs_traces_extract_http_info_v1(NULL, "svc", &info),
+               false);
 
     char buf[256];
     check_str("traces_path_from_url",
-              cbm_rs_traces_extract_path_from_url_v1(
-                  "http://localhost:8080/health?check=true", buf, sizeof(buf)),
+              cbm_rs_traces_extract_path_from_url_v1("http://localhost:8080/health?check=true", buf,
+                                                     sizeof(buf)),
               "/health");
     check_str("traces_path_from_url_invalid",
               cbm_rs_traces_extract_path_from_url_v1("not-a-url", buf, sizeof(buf)), "");
     check_str("traces_path_from_url_null",
               cbm_rs_traces_extract_path_from_url_v1(NULL, buf, sizeof(buf)), "");
-    check_i64("traces_parse_duration",
-              cbm_rs_traces_parse_duration_v1("1000000000", "1050000000"), 50000000);
+    check_i64("traces_parse_duration", cbm_rs_traces_parse_duration_v1("1000000000", "1050000000"),
+              50000000);
     check_i64("traces_parse_duration_zero", cbm_rs_traces_parse_duration_v1("1000", "500"), 0);
-    check_i64("traces_parse_duration_null",
-              cbm_rs_traces_parse_duration_v1(NULL, "1000"), 0);
+    check_i64("traces_parse_duration_null", cbm_rs_traces_parse_duration_v1(NULL, "1000"), 0);
 
     int64_t values[] = {10, 20, 30, 40, 50, 60, 70, 80, 90, 100};
     check_i64("traces_calculate_p99", cbm_rs_traces_calculate_p99_v1(values, 10), 100);
@@ -1332,28 +1326,22 @@ static void test_discover_string_helpers_exports(void) {
 }
 
 static void test_discover_trailing_sep_export(void) {
-    check_bool("discover_trailing_sep_slash",
-               cbm_rs_discover_has_trailing_sep_v1("src/"), true);
-    check_bool("discover_trailing_sep_backslash",
-               cbm_rs_discover_has_trailing_sep_v1("src\\"), true);
-    check_bool("discover_trailing_sep_plain",
-               cbm_rs_discover_has_trailing_sep_v1("src"), false);
-    check_bool("discover_trailing_sep_empty",
-               cbm_rs_discover_has_trailing_sep_v1(""), false);
-    check_bool("discover_trailing_sep_null",
-               cbm_rs_discover_has_trailing_sep_v1(NULL), false);
+    check_bool("discover_trailing_sep_slash", cbm_rs_discover_has_trailing_sep_v1("src/"), true);
+    check_bool("discover_trailing_sep_backslash", cbm_rs_discover_has_trailing_sep_v1("src\\"),
+               true);
+    check_bool("discover_trailing_sep_plain", cbm_rs_discover_has_trailing_sep_v1("src"), false);
+    check_bool("discover_trailing_sep_empty", cbm_rs_discover_has_trailing_sep_v1(""), false);
+    check_bool("discover_trailing_sep_null", cbm_rs_discover_has_trailing_sep_v1(NULL), false);
 
 #ifdef CBM_USE_RUST_DISCOVER_TRAILING_SEP_ONLY
-    check_bool("discover_trailing_sep_direct_slash",
-               cbm_discover_has_trailing_sep("direct/"), true);
-    check_bool("discover_trailing_sep_direct_backslash",
-               cbm_discover_has_trailing_sep("direct\\"), true);
-    check_bool("discover_trailing_sep_direct_plain",
-               cbm_discover_has_trailing_sep("direct"), false);
-    check_bool("discover_trailing_sep_direct_empty",
-               cbm_discover_has_trailing_sep(""), false);
-    check_bool("discover_trailing_sep_direct_null",
-               cbm_discover_has_trailing_sep(NULL), false);
+    check_bool("discover_trailing_sep_direct_slash", cbm_discover_has_trailing_sep("direct/"),
+               true);
+    check_bool("discover_trailing_sep_direct_backslash", cbm_discover_has_trailing_sep("direct\\"),
+               true);
+    check_bool("discover_trailing_sep_direct_plain", cbm_discover_has_trailing_sep("direct"),
+               false);
+    check_bool("discover_trailing_sep_direct_empty", cbm_discover_has_trailing_sep(""), false);
+    check_bool("discover_trailing_sep_direct_null", cbm_discover_has_trailing_sep(NULL), false);
 #endif
 }
 
@@ -1389,35 +1377,26 @@ static void test_discover_path_join_export(void) {
 
 static void test_discover_local_rel_path_export(void) {
     check_size("discover_local_rel_path_v1_strip",
-               cbm_rs_discover_local_rel_path_offset_v1("local/src/main.c", "local"),
-               6);
+               cbm_rs_discover_local_rel_path_offset_v1("local/src/main.c", "local"), 6);
     check_size("discover_local_rel_path_v1_boundary",
-               cbm_rs_discover_local_rel_path_offset_v1("locality/src/main.c", "local"),
-               0);
+               cbm_rs_discover_local_rel_path_offset_v1("locality/src/main.c", "local"), 0);
     check_size("discover_local_rel_path_v1_null",
-               cbm_rs_discover_local_rel_path_offset_v1(NULL, "local"),
-               0);
+               cbm_rs_discover_local_rel_path_offset_v1(NULL, "local"), 0);
 
     check_size("discover_local_rel_path_bridge_strip",
-               cbm_discover_local_rel_path_offset("local/src/main.c", "local"),
-               6);
+               cbm_discover_local_rel_path_offset("local/src/main.c", "local"), 6);
     check_size("discover_local_rel_path_bridge_boundary",
-               cbm_discover_local_rel_path_offset("locality/src/main.c", "local"),
-               0);
+               cbm_discover_local_rel_path_offset("locality/src/main.c", "local"), 0);
     check_size("discover_local_rel_path_bridge_null",
-               cbm_discover_local_rel_path_offset(NULL, "local"),
-               0);
+               cbm_discover_local_rel_path_offset(NULL, "local"), 0);
 
 #ifdef CBM_USE_RUST_DISCOVER_LOCAL_REL_PATH_ONLY
     check_size("discover_local_rel_path_direct_strip",
-               cbm_discover_local_rel_path_offset("local/src/main.c", "local"),
-               6);
+               cbm_discover_local_rel_path_offset("local/src/main.c", "local"), 6);
     check_size("discover_local_rel_path_direct_boundary",
-               cbm_discover_local_rel_path_offset("locality/src/main.c", "local"),
-               0);
+               cbm_discover_local_rel_path_offset("locality/src/main.c", "local"), 0);
     check_size("discover_local_rel_path_direct_null",
-               cbm_discover_local_rel_path_offset(NULL, "local"),
-               0);
+               cbm_discover_local_rel_path_offset(NULL, "local"), 0);
 #endif
 }
 
@@ -2014,18 +1993,14 @@ static void test_pipeline_configures_direct_abi_exports(void) {
 #endif
 
 static void test_pipeline_infrascan_exports(void) {
-    check_int("infrascan_dockerfile_name",
-              cbm_rs_pipeline_is_dockerfile_v1("Dockerfile"), 1);
-    check_int("infrascan_dockerfile_lower",
-              cbm_rs_pipeline_is_dockerfile_v1("dockerfile"), 1);
-    check_int("infrascan_dockerfile_prod",
-              cbm_rs_pipeline_is_dockerfile_v1("Dockerfile.prod"), 1);
-    check_int("infrascan_dockerfile_suffix",
-              cbm_rs_pipeline_is_dockerfile_v1("app.dockerfile"), 1);
-    check_int("infrascan_dockerfile_bare_suffix",
-              cbm_rs_pipeline_is_dockerfile_v1(".dockerfile"), 0);
-    check_int("infrascan_dockerfile_false",
-              cbm_rs_pipeline_is_dockerfile_v1("docker-compose.yml"), 0);
+    check_int("infrascan_dockerfile_name", cbm_rs_pipeline_is_dockerfile_v1("Dockerfile"), 1);
+    check_int("infrascan_dockerfile_lower", cbm_rs_pipeline_is_dockerfile_v1("dockerfile"), 1);
+    check_int("infrascan_dockerfile_prod", cbm_rs_pipeline_is_dockerfile_v1("Dockerfile.prod"), 1);
+    check_int("infrascan_dockerfile_suffix", cbm_rs_pipeline_is_dockerfile_v1("app.dockerfile"), 1);
+    check_int("infrascan_dockerfile_bare_suffix", cbm_rs_pipeline_is_dockerfile_v1(".dockerfile"),
+              0);
+    check_int("infrascan_dockerfile_false", cbm_rs_pipeline_is_dockerfile_v1("docker-compose.yml"),
+              0);
     check_int("infrascan_dockerfile_null", cbm_rs_pipeline_is_dockerfile_v1(NULL), 0);
 
     check_int("infrascan_helm_chart_yaml", cbm_rs_pipeline_is_helm_chart_file_v1("Chart.yaml"), 1);
@@ -2033,11 +2008,11 @@ static void test_pipeline_infrascan_exports(void) {
     check_int("infrascan_helm_chart_lower", cbm_rs_pipeline_is_helm_chart_file_v1("chart.yaml"), 0);
     check_int("infrascan_gomod", cbm_rs_pipeline_is_gomod_file_v1("go.mod"), 1);
     check_int("infrascan_gomod_sum", cbm_rs_pipeline_is_gomod_file_v1("go.sum"), 0);
-    check_int("infrascan_requirements", cbm_rs_pipeline_is_requirements_file_v1("requirements.txt"), 1);
+    check_int("infrascan_requirements", cbm_rs_pipeline_is_requirements_file_v1("requirements.txt"),
+              1);
     check_int("infrascan_requirements_null", cbm_rs_pipeline_is_requirements_file_v1(NULL), 0);
 
-    check_int("infrascan_compose_yml", cbm_rs_pipeline_is_compose_file_v1("docker-compose.yml"),
-              1);
+    check_int("infrascan_compose_yml", cbm_rs_pipeline_is_compose_file_v1("docker-compose.yml"), 1);
     check_int("infrascan_compose_yaml", cbm_rs_pipeline_is_compose_file_v1("docker-compose.yaml"),
               1);
     check_int("infrascan_compose_prod",
@@ -2045,8 +2020,7 @@ static void test_pipeline_infrascan_exports(void) {
     check_int("infrascan_compose_short", cbm_rs_pipeline_is_compose_file_v1("compose.yml"), 1);
     check_int("infrascan_compose_case", cbm_rs_pipeline_is_compose_file_v1("compose.YAML"), 1);
     check_int("infrascan_compose_false", cbm_rs_pipeline_is_compose_file_v1("mycompose.yml"), 0);
-    check_int("infrascan_compose_txt", cbm_rs_pipeline_is_compose_file_v1("docker-compose.txt"),
-              0);
+    check_int("infrascan_compose_txt", cbm_rs_pipeline_is_compose_file_v1("docker-compose.txt"), 0);
     check_int("infrascan_compose_null", cbm_rs_pipeline_is_compose_file_v1(NULL), 0);
 
     check_int("infrascan_env_exact", cbm_rs_pipeline_is_env_file_v1(".env"), 1);
@@ -2063,8 +2037,8 @@ static void test_pipeline_infrascan_exports(void) {
               1);
     check_int("infrascan_cloudbuild_prod",
               cbm_rs_pipeline_is_cloudbuild_file_v1("cloudbuild-prod.yaml"), 1);
-    check_int("infrascan_cloudbuild_case",
-              cbm_rs_pipeline_is_cloudbuild_file_v1("Cloudbuild.yml"), 1);
+    check_int("infrascan_cloudbuild_case", cbm_rs_pipeline_is_cloudbuild_file_v1("Cloudbuild.yml"),
+              1);
     check_int("infrascan_cloudbuild_prefix_false",
               cbm_rs_pipeline_is_cloudbuild_file_v1("mycloudbuild.yaml"), 0);
     check_int("infrascan_cloudbuild_no_ext", cbm_rs_pipeline_is_cloudbuild_file_v1("cloudbuild"),
@@ -2073,44 +2047,39 @@ static void test_pipeline_infrascan_exports(void) {
 
     check_int("infrascan_kustomize_yaml",
               cbm_rs_pipeline_is_kustomize_file_v1("kustomization.yaml"), 1);
-    check_int("infrascan_kustomize_yml",
-              cbm_rs_pipeline_is_kustomize_file_v1("kustomization.yml"), 1);
+    check_int("infrascan_kustomize_yml", cbm_rs_pipeline_is_kustomize_file_v1("kustomization.yml"),
+              1);
     check_int("infrascan_kustomize_case",
               cbm_rs_pipeline_is_kustomize_file_v1("KUSTOMIZATION.YAML"), 1);
-    check_int("infrascan_kustomize_false",
-              cbm_rs_pipeline_is_kustomize_file_v1("deployment.yaml"), 0);
+    check_int("infrascan_kustomize_false", cbm_rs_pipeline_is_kustomize_file_v1("deployment.yaml"),
+              0);
     check_int("infrascan_kustomize_suffix_false",
               cbm_rs_pipeline_is_kustomize_file_v1("kustomization.yml.bak"), 0);
     check_int("infrascan_kustomize_null", cbm_rs_pipeline_is_kustomize_file_v1(NULL), 0);
 
-    check_int("infrascan_shell_sh",
-              cbm_rs_pipeline_is_shell_script_v1("run.sh", ".sh"), 1);
-    check_int("infrascan_shell_bash",
-              cbm_rs_pipeline_is_shell_script_v1("deploy.bash", ".bash"), 1);
-    check_int("infrascan_shell_zsh",
-              cbm_rs_pipeline_is_shell_script_v1("init.zsh", ".zsh"), 1);
-    check_int("infrascan_shell_false_py",
-              cbm_rs_pipeline_is_shell_script_v1("main.py", ".py"), 0);
-    check_int("infrascan_shell_false_empty",
-              cbm_rs_pipeline_is_shell_script_v1("Dockerfile", ""), 0);
-    check_int("infrascan_shell_false_null_ext",
-              cbm_rs_pipeline_is_shell_script_v1("run.sh", NULL), 0);
+    check_int("infrascan_shell_sh", cbm_rs_pipeline_is_shell_script_v1("run.sh", ".sh"), 1);
+    check_int("infrascan_shell_bash", cbm_rs_pipeline_is_shell_script_v1("deploy.bash", ".bash"),
+              1);
+    check_int("infrascan_shell_zsh", cbm_rs_pipeline_is_shell_script_v1("init.zsh", ".zsh"), 1);
+    check_int("infrascan_shell_false_py", cbm_rs_pipeline_is_shell_script_v1("main.py", ".py"), 0);
+    check_int("infrascan_shell_false_empty", cbm_rs_pipeline_is_shell_script_v1("Dockerfile", ""),
+              0);
+    check_int("infrascan_shell_false_null_ext", cbm_rs_pipeline_is_shell_script_v1("run.sh", NULL),
+              0);
 }
 
 static void test_pipeline_githistory_export(void) {
     check_int("githistory_trackable_source", cbm_rs_pipeline_is_trackable_file_v1("main.go"), 1);
-    check_int("githistory_trackable_readme", cbm_rs_pipeline_is_trackable_file_v1("README.md"),
-              1);
+    check_int("githistory_trackable_readme", cbm_rs_pipeline_is_trackable_file_v1("README.md"), 1);
     check_int("githistory_skip_node_modules",
               cbm_rs_pipeline_is_trackable_file_v1("node_modules/pkg/index.js"), 0);
-    check_int("githistory_skip_vendor", cbm_rs_pipeline_is_trackable_file_v1("vendor/lib.go"),
-              0);
+    check_int("githistory_skip_vendor", cbm_rs_pipeline_is_trackable_file_v1("vendor/lib.go"), 0);
     check_int("githistory_skip_lock_basename",
               cbm_rs_pipeline_is_trackable_file_v1("package-lock.json"), 0);
     check_int("githistory_skip_sum", cbm_rs_pipeline_is_trackable_file_v1("go.sum"), 0);
     check_int("githistory_skip_image", cbm_rs_pipeline_is_trackable_file_v1("image.png"), 0);
-    check_int("githistory_skip_minified",
-              cbm_rs_pipeline_is_trackable_file_v1("src/app.min.js"), 0);
+    check_int("githistory_skip_minified", cbm_rs_pipeline_is_trackable_file_v1("src/app.min.js"),
+              0);
     check_int("githistory_null", cbm_rs_pipeline_is_trackable_file_v1(NULL), 0);
 }
 
@@ -2145,8 +2114,8 @@ static void test_pipeline_gitdiff_name_status_export(void) {
         char old_path[512];
     } files[16];
     int n = cbm_rs_pipeline_parse_name_status_v1(
-        "M\tinternal/store/nodes.go\nA\tpackage-lock.json\nR100\tsrc/old.go\tsrc/new.go\n",
-        files, 16);
+        "M\tinternal/store/nodes.go\nA\tpackage-lock.json\nR100\tsrc/old.go\tsrc/new.go\n", files,
+        16);
     check_int("gitdiff_name_status_count", n, 2);
     check_str("gitdiff_name_status_first_status", files[0].status, "M");
     check_str("gitdiff_name_status_first_path", files[0].path, "internal/store/nodes.go");
@@ -2174,11 +2143,10 @@ static void test_pipeline_gitdiff_hunks_export(void) {
         int start_line;
         int end_line;
     } hunks[16];
-    int n = cbm_rs_pipeline_parse_hunks_v1(
-        "+++ b/main.go\n@@ -10,3 +10,5 @@ func main() {\n"
-        "+++ b/binary.png\n@@ -1 +1 @@ ignored\n"
-        "+++ b/utils.go\n@@ -50,0 +52,2 @@ func helper() {\n",
-        hunks, 16);
+    int n = cbm_rs_pipeline_parse_hunks_v1("+++ b/main.go\n@@ -10,3 +10,5 @@ func main() {\n"
+                                           "+++ b/binary.png\n@@ -1 +1 @@ ignored\n"
+                                           "+++ b/utils.go\n@@ -50,0 +52,2 @@ func helper() {\n",
+                                           hunks, 16);
     check_int("gitdiff_hunks_count", n, 2);
     check_str("gitdiff_hunks_first_path", hunks[0].path, "main.go");
     check_int("gitdiff_hunks_first_start", hunks[0].start_line, 10);
@@ -2259,14 +2227,15 @@ static void test_pipeline_route_args_export(void) {
     check_int("route_args_route_path", cbm_rs_pipeline_is_path_keyword_v1("route_path"), 1);
     check_int("route_args_handler", cbm_rs_pipeline_is_path_keyword_v1("handler"), 0);
     check_int("route_args_null_keyword", cbm_rs_pipeline_is_path_keyword_v1(NULL), 0);
-    check_int("route_args_normalize", cbm_rs_pipeline_normalize_url_arg_v1(
-                                         out, sizeof(out), "`/users/${id}/posts`"), 1);
+    check_int("route_args_normalize",
+              cbm_rs_pipeline_normalize_url_arg_v1(out, sizeof(out), "`/users/${id}/posts`"), 1);
     check_str("route_args_normalized_out", out, "/users/:id/posts");
     check_int("route_args_reject_relative",
               cbm_rs_pipeline_normalize_url_arg_v1(out, sizeof(out), "users/${id}"), 0);
-    check_int("route_args_reject_short", cbm_rs_pipeline_normalize_url_arg_v1(out, sizeof(out), "/api"),
+    check_int("route_args_reject_short",
+              cbm_rs_pipeline_normalize_url_arg_v1(out, sizeof(out), "/api"), 0);
+    check_int("route_args_null_input", cbm_rs_pipeline_normalize_url_arg_v1(out, sizeof(out), NULL),
               0);
-    check_int("route_args_null_input", cbm_rs_pipeline_normalize_url_arg_v1(out, sizeof(out), NULL), 0);
 }
 
 #ifdef CBM_USE_RUST_PIPELINE_ROUTE_ARGS_ONLY
@@ -2284,8 +2253,8 @@ static void test_pipeline_route_args_direct_exports(void) {
               cbm_pipeline_normalize_url_arg("users/${id}", out, (int)sizeof(out)), 0);
     check_int("route_args_direct_reject_short",
               cbm_pipeline_normalize_url_arg("/api", out, (int)sizeof(out)), 0);
-    check_int("route_args_direct_null_input", cbm_pipeline_normalize_url_arg(NULL, out, (int)sizeof(out)),
-              0);
+    check_int("route_args_direct_null_input",
+              cbm_pipeline_normalize_url_arg(NULL, out, (int)sizeof(out)), 0);
 }
 #endif
 
@@ -2305,14 +2274,15 @@ static void test_pipeline_route_node_classifiers_export(void) {
               cbm_rs_pipeline_is_hash_segment_v1(max_hash, sizeof(max_hash) - 1), 1);
     check_int("route_node_hash_too_long",
               cbm_rs_pipeline_is_hash_segment_v1(too_long_hash, sizeof(too_long_hash) - 1), 0);
-    check_int("route_node_hash_empty", cbm_rs_pipeline_is_hash_segment_v1((const unsigned char *)"", 0),
-              0);
+    check_int("route_node_hash_empty",
+              cbm_rs_pipeline_is_hash_segment_v1((const unsigned char *)"", 0), 0);
     check_int("route_node_hash_null", cbm_rs_pipeline_is_hash_segment_v1(NULL, 1), 0);
     check_int("route_node_broker_kafka",
               cbm_rs_pipeline_is_broker_route_v1("__route__kafka__topic"), 1);
-    check_int("route_node_broker_case",
-              cbm_rs_pipeline_is_broker_route_v1("__route__KAFKA__topic"), 0);
-    check_int("route_node_broker_http", cbm_rs_pipeline_is_broker_route_v1("__route__GET__/api"), 0);
+    check_int("route_node_broker_case", cbm_rs_pipeline_is_broker_route_v1("__route__KAFKA__topic"),
+              0);
+    check_int("route_node_broker_http", cbm_rs_pipeline_is_broker_route_v1("__route__GET__/api"),
+              0);
     check_int("route_node_broker_null", cbm_rs_pipeline_is_broker_route_v1(NULL), 0);
 
     check_int("route_node_bridge_hash_digits",
@@ -2394,8 +2364,7 @@ static void test_pipeline_extract_json_prop_export(void) {
     char json_59[80];
 
     check_int("pipeline_json_prop_v1_null_json",
-              cbm_rs_pipeline_extract_json_prop_v1(NULL, "route_path", v1_buf,
-                                                    (int)sizeof(v1_buf)),
+              cbm_rs_pipeline_extract_json_prop_v1(NULL, "route_path", v1_buf, (int)sizeof(v1_buf)),
               0);
     check_int("pipeline_json_prop_v1_null_json_sentinel", (unsigned char)v1_buf[0], 'V');
     check_int("pipeline_json_prop_v1_null_key",
@@ -2405,10 +2374,10 @@ static void test_pipeline_extract_json_prop_export(void) {
               cbm_rs_pipeline_extract_json_prop_v1(json, "route_path", NULL, (int)sizeof(v1_buf)),
               0);
 
-    check_bool("pipeline_json_prop_bridge_null_json",
-               cbm_pipeline_extract_json_prop(NULL, "route_path", bridge_buf,
-                                              (int)sizeof(bridge_buf)),
-               false);
+    check_bool(
+        "pipeline_json_prop_bridge_null_json",
+        cbm_pipeline_extract_json_prop(NULL, "route_path", bridge_buf, (int)sizeof(bridge_buf)),
+        false);
     check_int("pipeline_json_prop_bridge_null_json_sentinel", (unsigned char)bridge_buf[0], 'B');
     check_bool("pipeline_json_prop_bridge_null_key",
                cbm_pipeline_extract_json_prop(json, NULL, bridge_buf, (int)sizeof(bridge_buf)),
@@ -2433,27 +2402,28 @@ static void test_pipeline_extract_json_prop_export(void) {
     check_int("pipeline_json_prop_bridge_bufsz_zero_sentinel", (unsigned char)bridge_buf[0], 'B');
     check_bool("pipeline_json_prop_bridge_bufsz_negative",
                cbm_pipeline_extract_json_prop(json, "route_path", bridge_buf, -1), false);
-    check_int("pipeline_json_prop_bridge_bufsz_negative_sentinel", (unsigned char)bridge_buf[0], 'B');
+    check_int("pipeline_json_prop_bridge_bufsz_negative_sentinel", (unsigned char)bridge_buf[0],
+              'B');
     check_bool("pipeline_json_prop_bridge_bufsz_int_min",
                cbm_pipeline_extract_json_prop(json, "route_path", bridge_buf, INT_MIN), false);
-    check_int("pipeline_json_prop_bridge_bufsz_int_min_sentinel", (unsigned char)bridge_buf[0], 'B');
+    check_int("pipeline_json_prop_bridge_bufsz_int_min_sentinel", (unsigned char)bridge_buf[0],
+              'B');
 
     check_int("pipeline_json_prop_v1_empty_key",
-              cbm_rs_pipeline_extract_json_prop_v1(empty_key_json, "", v1_buf,
-                                                    (int)sizeof(v1_buf)),
+              cbm_rs_pipeline_extract_json_prop_v1(empty_key_json, "", v1_buf, (int)sizeof(v1_buf)),
               1);
     check_str("pipeline_json_prop_v1_empty_key_value", v1_buf, "empty");
-    check_bool("pipeline_json_prop_bridge_empty_key",
-               cbm_pipeline_extract_json_prop(empty_key_json, "", bridge_buf,
-                                              (int)sizeof(bridge_buf)),
-               true);
+    check_bool(
+        "pipeline_json_prop_bridge_empty_key",
+        cbm_pipeline_extract_json_prop(empty_key_json, "", bridge_buf, (int)sizeof(bridge_buf)),
+        true);
     check_str("pipeline_json_prop_bridge_empty_key_value", bridge_buf, "empty");
 
     v1_buf[0] = 'V';
     bridge_buf[0] = 'B';
     check_int("pipeline_json_prop_v1_empty_value",
               cbm_rs_pipeline_extract_json_prop_v1(empty_value_json, "route_path", v1_buf,
-                                                    (int)sizeof(v1_buf)),
+                                                   (int)sizeof(v1_buf)),
               0);
     check_int("pipeline_json_prop_v1_empty_value_sentinel", (unsigned char)v1_buf[0], 'V');
     check_bool("pipeline_json_prop_bridge_empty_value",
@@ -2464,7 +2434,7 @@ static void test_pipeline_extract_json_prop_export(void) {
 
     check_int("pipeline_json_prop_v1_exact_buffer",
               cbm_rs_pipeline_extract_json_prop_v1(short_value_json, "route_path", v1_exact,
-                                                    (int)sizeof(v1_exact)),
+                                                   (int)sizeof(v1_exact)),
               1);
     check_str("pipeline_json_prop_v1_exact_buffer_value", v1_exact, "GET");
     check_bool("pipeline_json_prop_bridge_exact_buffer",
@@ -2475,14 +2445,15 @@ static void test_pipeline_extract_json_prop_export(void) {
 
     check_int("pipeline_json_prop_v1_short_buffer",
               cbm_rs_pipeline_extract_json_prop_v1(short_value_json, "route_path", v1_short,
-                                                    (int)sizeof(v1_short)),
+                                                   (int)sizeof(v1_short)),
               0);
     check_int("pipeline_json_prop_v1_short_buffer_sentinel", (unsigned char)v1_short[0], 'V');
     check_bool("pipeline_json_prop_bridge_short_buffer",
                cbm_pipeline_extract_json_prop(short_value_json, "route_path", bridge_short,
                                               (int)sizeof(bridge_short)),
                false);
-    check_int("pipeline_json_prop_bridge_short_buffer_sentinel", (unsigned char)bridge_short[0], 'B');
+    check_int("pipeline_json_prop_bridge_short_buffer_sentinel", (unsigned char)bridge_short[0],
+              'B');
 
     memset(key_59, 'k', sizeof(key_59) - 1);
     key_59[sizeof(key_59) - 1] = '\0';
@@ -2512,14 +2483,15 @@ static void test_pipeline_extract_json_prop_export(void) {
     bridge_buf[0] = 'B';
     check_int("pipeline_json_prop_v1_nul_truncation",
               cbm_rs_pipeline_extract_json_prop_v1(nul_truncated_json, "route_path", v1_buf,
-                                                    (int)sizeof(v1_buf)),
+                                                   (int)sizeof(v1_buf)),
               0);
     check_int("pipeline_json_prop_v1_nul_truncation_sentinel", (unsigned char)v1_buf[0], 'V');
     check_bool("pipeline_json_prop_bridge_nul_truncation",
                cbm_pipeline_extract_json_prop(nul_truncated_json, "route_path", bridge_buf,
                                               (int)sizeof(bridge_buf)),
                false);
-    check_int("pipeline_json_prop_bridge_nul_truncation_sentinel", (unsigned char)bridge_buf[0], 'B');
+    check_int("pipeline_json_prop_bridge_nul_truncation_sentinel", (unsigned char)bridge_buf[0],
+              'B');
 }
 
 static void test_pipeline_url_path_export(void) {
@@ -2563,8 +2535,8 @@ static void test_pipeline_route_node_classifiers_direct_exports(void) {
               cbm_pipeline_is_hash_segment(max_hash, sizeof(max_hash) - 1), 1);
     check_int("route_node_direct_hash_too_long",
               cbm_pipeline_is_hash_segment(too_long_hash, sizeof(too_long_hash) - 1), 0);
-    check_int("route_node_direct_hash_empty", cbm_pipeline_is_hash_segment((const unsigned char *)"", 0),
-              0);
+    check_int("route_node_direct_hash_empty",
+              cbm_pipeline_is_hash_segment((const unsigned char *)"", 0), 0);
     check_int("route_node_direct_hash_null", cbm_pipeline_is_hash_segment(NULL, 1), 0);
     check_int("route_node_direct_broker_kafka",
               cbm_pipeline_is_broker_route("__route__kafka__topic"), 1);
@@ -2662,8 +2634,7 @@ static void test_pipeline_test_to_prod_path_export(void) {
 
     memset(small, 'Z', sizeof(small));
     check_size("pipeline_test_to_prod_short",
-               cbm_rs_pipeline_test_to_prod_path_v1(small, sizeof(small), "foo_test.go"),
-               SIZE_MAX);
+               cbm_rs_pipeline_test_to_prod_path_v1(small, sizeof(small), "foo_test.go"), SIZE_MAX);
     check_int("pipeline_test_to_prod_short_unchanged", small[0], 'Z');
 }
 
@@ -2692,7 +2663,8 @@ static void test_pipeline_checked_exception_direct_exports(void) {
               cbm_pipeline_is_checked_exception("NotFoundException"), 1);
     check_int("pipeline_checked_exception_direct_error",
               cbm_pipeline_is_checked_exception("NotFoundError"), 0);
-    check_int("pipeline_checked_exception_direct_panic", cbm_pipeline_is_checked_exception("panic"), 0);
+    check_int("pipeline_checked_exception_direct_panic", cbm_pipeline_is_checked_exception("panic"),
+              0);
     check_int("pipeline_checked_exception_direct_client_panic",
               cbm_pipeline_is_checked_exception("ClientPanic"), 0);
     check_int("pipeline_checked_exception_direct_lower_error",
@@ -2758,8 +2730,7 @@ static void test_pipeline_artifact_path_export(void) {
 
     memset(out, 'Z', sizeof(out));
     check_int("pipeline_artifact_path_bridge_full_ok",
-              cbm_pipeline_artifact_path(out, sizeof(out), "/tmp/repo", CBM_ARTIFACT_FILENAME),
-              1);
+              cbm_pipeline_artifact_path(out, sizeof(out), "/tmp/repo", CBM_ARTIFACT_FILENAME), 1);
     check_str("pipeline_artifact_path_bridge_full_out", out,
               "/tmp/repo/.codebase-memory/" CBM_ARTIFACT_FILENAME);
 
@@ -2772,8 +2743,7 @@ static void test_pipeline_artifact_path_export(void) {
     check_int("pipeline_artifact_path_bridge_short_nul", short_buf[sizeof(short_buf) - 1], '\0');
 
     check_int("pipeline_artifact_path_bridge_null_buf",
-              cbm_pipeline_artifact_path(NULL, sizeof(out), "/tmp/repo", CBM_ARTIFACT_FILENAME),
-              0);
+              cbm_pipeline_artifact_path(NULL, sizeof(out), "/tmp/repo", CBM_ARTIFACT_FILENAME), 0);
 
     memset(out, 'Z', sizeof(out));
     check_int("pipeline_artifact_path_bridge_zero_bufsize",
@@ -4547,8 +4517,8 @@ static void test_registry_is_test_qn_export(void) {
 }
 
 static void test_registry_is_test_qn_bridge(void) {
-    const char *positives[] = {"Test", "test", "Mock", "mock", "Stub", "stub", "Fake",
-                               "fake", "Fixture", "spec"};
+    const char *positives[] = {"Test", "test", "Mock", "mock",    "Stub",
+                               "stub", "Fake", "fake", "Fixture", "spec"};
     for (size_t i = 0; i < sizeof(positives) / sizeof(positives[0]); i++) {
         check_int("registry_test_qn_bridge_needle",
                   cbm_pipeline_registry_is_test_qn(positives[i]) ? 1 : 0, 1);
@@ -4556,17 +4526,16 @@ static void test_registry_is_test_qn_bridge(void) {
 
     check_int("registry_test_qn_bridge_null", cbm_pipeline_registry_is_test_qn(NULL) ? 1 : 0, 0);
     check_int("registry_test_qn_bridge_empty", cbm_pipeline_registry_is_test_qn("") ? 1 : 0, 0);
-    check_int("registry_test_qn_bridge_case", cbm_pipeline_registry_is_test_qn("TEST") ? 1 : 0,
-              0);
+    check_int("registry_test_qn_bridge_case", cbm_pipeline_registry_is_test_qn("TEST") ? 1 : 0, 0);
     check_int("registry_test_qn_bridge_fixture_case",
               cbm_pipeline_registry_is_test_qn("fixture") ? 1 : 0, 0);
-    check_int("registry_test_qn_bridge_substring", cbm_pipeline_registry_is_test_qn("contest") ? 1 : 0,
-              1);
+    check_int("registry_test_qn_bridge_substring",
+              cbm_pipeline_registry_is_test_qn("contest") ? 1 : 0, 1);
 
     const char non_utf8_with_spec[] = "pkg.\xff"
                                       "spec.Anchor";
     const char non_utf8_without_needle[] = "pkg.\xff"
-                                         "plain.Anchor";
+                                           "plain.Anchor";
     check_int("registry_test_qn_bridge_non_utf8_spec",
               cbm_pipeline_registry_is_test_qn(non_utf8_with_spec) ? 1 : 0, 1);
     check_int("registry_test_qn_bridge_non_utf8_plain",
@@ -5492,17 +5461,18 @@ static void test_mcp_content_length_export(void) {
 }
 
 static void test_mcp_content_length_raw_export(void) {
-    check_i64("mcp_content_length_raw_basic", cbm_rs_mcp_content_length_raw_v1("Content-Length: 42"),
-              42);
-    check_i64("mcp_content_length_raw_no_space", cbm_rs_mcp_content_length_raw_v1("Content-Length:42"),
-              42);
-    check_i64("mcp_content_length_raw_plus", cbm_rs_mcp_content_length_raw_v1("Content-Length:\t+7"),
-              7);
-    check_i64("mcp_content_length_raw_trailing", cbm_rs_mcp_content_length_raw_v1("Content-Length:12 trailing"),
-              12);
-    check_i64("mcp_content_length_raw_zero", cbm_rs_mcp_content_length_raw_v1("Content-Length:0"), 0);
-    check_i64("mcp_content_length_raw_negative", cbm_rs_mcp_content_length_raw_v1("Content-Length:-1"),
-              -1);
+    check_i64("mcp_content_length_raw_basic",
+              cbm_rs_mcp_content_length_raw_v1("Content-Length: 42"), 42);
+    check_i64("mcp_content_length_raw_no_space",
+              cbm_rs_mcp_content_length_raw_v1("Content-Length:42"), 42);
+    check_i64("mcp_content_length_raw_plus",
+              cbm_rs_mcp_content_length_raw_v1("Content-Length:\t+7"), 7);
+    check_i64("mcp_content_length_raw_trailing",
+              cbm_rs_mcp_content_length_raw_v1("Content-Length:12 trailing"), 12);
+    check_i64("mcp_content_length_raw_zero", cbm_rs_mcp_content_length_raw_v1("Content-Length:0"),
+              0);
+    check_i64("mcp_content_length_raw_negative",
+              cbm_rs_mcp_content_length_raw_v1("Content-Length:-1"), -1);
     check_i64("mcp_content_length_raw_missing_digits",
               cbm_rs_mcp_content_length_raw_v1("Content-Length:"), -1);
     check_i64("mcp_content_length_raw_bad_prefix",
@@ -6398,6 +6368,8 @@ static void test_mcp_edge_type_valid_export(void) {
 }
 
 static void test_mcp_search_path_arg_valid_export(void) {
+    extern bool cbm_mcp_search_path_arg_valid(const char *input);
+
     check_int("mcp_search_path_null", cbm_rs_mcp_search_path_arg_valid_v1(NULL), 0);
     check_int("mcp_search_path_empty", cbm_rs_mcp_search_path_arg_valid_v1(""), 1);
     check_int("mcp_search_path_simple", cbm_rs_mcp_search_path_arg_valid_v1("src/main.go"), 1);
@@ -6418,9 +6390,15 @@ static void test_mcp_search_path_arg_valid_export(void) {
 #else
     check_int("mcp_search_path_backslash", cbm_rs_mcp_search_path_arg_valid_v1("src\\main.go"), 1);
 #endif
+    /* 公開 bridge */
+    check_bool("mcp_search_path_bridge_null", cbm_mcp_search_path_arg_valid(NULL), false);
+    check_bool("mcp_search_path_bridge_ok", cbm_mcp_search_path_arg_valid("src/main.go"), true);
+    check_bool("mcp_search_path_bridge_pipe", cbm_mcp_search_path_arg_valid("|"), false);
 }
 
 static void test_mcp_search_args_valid_export(void) {
+    extern bool cbm_mcp_search_args_valid(const char *root_path, const char *file_pattern);
+
     check_int("mcp_search_args_root_null", cbm_rs_mcp_search_args_valid_v1(NULL, NULL), 0);
     check_int("mcp_search_args_root_empty", cbm_rs_mcp_search_args_valid_v1("", NULL), 1);
     check_int("mcp_search_args_root_only", cbm_rs_mcp_search_args_valid_v1("src/main.go", NULL), 1);
@@ -6433,6 +6411,9 @@ static void test_mcp_search_args_valid_export(void) {
               0);
     check_int("mcp_search_args_bad_pattern_lf",
               cbm_rs_mcp_search_args_valid_v1("src/main.go", "bad\npattern"), 0);
+    check_bool("mcp_search_args_bridge_ok", cbm_mcp_search_args_valid("src/a.c", NULL), true);
+    check_bool("mcp_search_args_bridge_null", cbm_mcp_search_args_valid(NULL, NULL), false);
+    check_bool("mcp_search_args_bridge_bad", cbm_mcp_search_args_valid("src", ";"), false);
 }
 
 static void test_mcp_strip_root_prefix_offset_export(void) {
@@ -6463,6 +6444,8 @@ static void test_mcp_strip_root_prefix_offset_export(void) {
 }
 
 static void test_mcp_search_mode_export(void) {
+    extern int cbm_mcp_search_mode(const char *mode_str);
+
     check_int("mcp_search_mode_null", cbm_rs_mcp_search_mode_v1(NULL), 0);
     check_int("mcp_search_mode_empty", cbm_rs_mcp_search_mode_v1(""), 0);
     check_int("mcp_search_mode_compact", cbm_rs_mcp_search_mode_v1("compact"), 0);
@@ -6471,9 +6454,16 @@ static void test_mcp_search_mode_export(void) {
     check_int("mcp_search_mode_case", cbm_rs_mcp_search_mode_v1("Full"), 0);
     check_int("mcp_search_mode_trailing", cbm_rs_mcp_search_mode_v1("files "), 0);
     check_int("mcp_search_mode_unknown", cbm_rs_mcp_search_mode_v1("unknown"), 0);
+    /* 公開 bridge（default/wrapper 連 C CU；direct 連 Rust 同名 ABI） */
+    check_int("mcp_search_mode_bridge_null", cbm_mcp_search_mode(NULL), 0);
+    check_int("mcp_search_mode_bridge_full", cbm_mcp_search_mode("full"), 1);
+    check_int("mcp_search_mode_bridge_files", cbm_mcp_search_mode("files"), 2);
+    check_int("mcp_search_mode_bridge_compact", cbm_mcp_search_mode("compact"), 0);
 }
 
 static void test_mcp_index_mode_export(void) {
+    extern int cbm_mcp_index_mode(const char *mode_str);
+
     check_int("mcp_index_mode_null", cbm_rs_mcp_index_mode_v1(NULL), CBM_MODE_FULL);
     check_int("mcp_index_mode_empty", cbm_rs_mcp_index_mode_v1(""), CBM_MODE_FULL);
     check_int("mcp_index_mode_full", cbm_rs_mcp_index_mode_v1("full"), CBM_MODE_FULL);
@@ -6483,6 +6473,12 @@ static void test_mcp_index_mode_export(void) {
     check_int("mcp_index_mode_case", cbm_rs_mcp_index_mode_v1("Fast"), CBM_MODE_FULL);
     check_int("mcp_index_mode_trailing", cbm_rs_mcp_index_mode_v1("fast "), CBM_MODE_FULL);
     check_int("mcp_index_mode_unknown", cbm_rs_mcp_index_mode_v1("unknown"), CBM_MODE_FULL);
+    /* 公開 bridge（default/wrapper 連 C CU；direct 連 Rust 同名 ABI） */
+    check_int("mcp_index_mode_bridge_null", cbm_mcp_index_mode(NULL), CBM_MODE_FULL);
+    check_int("mcp_index_mode_bridge_moderate", cbm_mcp_index_mode("moderate"), CBM_MODE_MODERATE);
+    check_int("mcp_index_mode_bridge_fast", cbm_mcp_index_mode("fast"), CBM_MODE_FAST);
+    check_int("mcp_index_mode_bridge_cross", cbm_mcp_index_mode("cross-repo-intelligence"), 3);
+    check_int("mcp_index_mode_bridge_unknown", cbm_mcp_index_mode("unknown"), CBM_MODE_FULL);
 }
 
 static void test_mcp_trace_mode_edge_mask_export(void) {
@@ -6520,6 +6516,17 @@ static void test_mcp_trace_mode_edge_mask_export(void) {
               (int)cbm_rs_mcp_trace_mode_edge_mask_v1("data_flow "), TRACE_EDGE_CALLS);
     check_int("mcp_trace_mode_edges_unknown", (int)cbm_rs_mcp_trace_mode_edge_mask_v1("unknown"),
               TRACE_EDGE_CALLS);
+
+#ifdef CBM_USE_RUST_MCP_TRACE_MODE_EDGE_MASK_ONLY
+    extern uint32_t cbm_mcp_trace_mode_edge_mask(const char *input);
+    check_int("mcp_trace_mode_edges_direct_null", (int)cbm_mcp_trace_mode_edge_mask(NULL),
+              TRACE_EDGE_CALLS);
+    check_int("mcp_trace_mode_edges_direct_data_flow",
+              (int)cbm_mcp_trace_mode_edge_mask("data_flow"),
+              TRACE_EDGE_CALLS | TRACE_EDGE_DATA_FLOWS);
+    check_int("mcp_trace_mode_edges_direct_cross_service",
+              (int)cbm_mcp_trace_mode_edge_mask("cross_service"), (int)cross_service);
+#endif
 }
 
 static void test_mcp_sanitize_ascii_export(void) {
@@ -6542,6 +6549,15 @@ static void test_mcp_sanitize_ascii_export(void) {
     char empty[] = "";
     cbm_rs_mcp_sanitize_ascii_in_place_v1(empty);
     check_str("mcp_sanitize_ascii_empty", empty, "");
+
+#ifdef CBM_USE_RUST_MCP_SANITIZE_ASCII_IN_PLACE_ONLY
+    extern void cbm_mcp_sanitize_ascii_in_place(char *input);
+    char direct[] = {(char)0x80, '\0', (char)0xff, '\0'};
+    cbm_mcp_sanitize_ascii_in_place(NULL);
+    cbm_mcp_sanitize_ascii_in_place(direct);
+    check_int("mcp_sanitize_ascii_direct_replaced", direct[0], '?');
+    check_int("mcp_sanitize_ascii_direct_first_nul", (unsigned char)direct[2], 0xff);
+#endif
 }
 
 static void test_mcp_search_code_score_export(void) {
@@ -6570,14 +6586,25 @@ static void test_mcp_search_code_score_export(void) {
               cbm_rs_mcp_search_code_score_v1("Function", "src/foo_test.c", 3), 8);
     check_int("mcp_search_score_vendor_test",
               cbm_rs_mcp_search_code_score_v1("Route", "vendor/test_api.c", 3), -37);
+
+#ifdef CBM_USE_RUST_MCP_SEARCH_CODE_SCORE_ONLY
+    extern int cbm_mcp_search_code_score(const char *label, const char *file, int in_degree);
+    check_int("mcp_search_score_direct_null", cbm_mcp_search_code_score(NULL, NULL, 7), 7);
+    check_int("mcp_search_score_direct_route",
+              cbm_mcp_search_code_score("Route", "vendor/test_api.c", 3), -37);
+#endif
 }
 
 static void test_mcp_search_score_cmp_export(void) {
+    extern int cbm_mcp_search_score_cmp(int left_score, int right_score);
+
     check_int("mcp_search_cmp_left_higher", cbm_rs_mcp_search_score_cmp_v1(20, 10), -10);
     check_int("mcp_search_cmp_right_higher", cbm_rs_mcp_search_score_cmp_v1(10, 20), 10);
     check_int("mcp_search_cmp_equal", cbm_rs_mcp_search_score_cmp_v1(7, 7), 0);
     check_int("mcp_search_cmp_negative_left", cbm_rs_mcp_search_score_cmp_v1(-5, 5), 10);
     check_int("mcp_search_cmp_negative_right", cbm_rs_mcp_search_score_cmp_v1(5, -5), -10);
+    check_int("mcp_search_cmp_bridge_left", cbm_mcp_search_score_cmp(20, 10), -10);
+    check_int("mcp_search_cmp_bridge_eq", cbm_mcp_search_score_cmp(7, 7), 0);
 }
 
 static void test_mcp_search_top_dir_export(void) {
@@ -6597,11 +6624,38 @@ static void test_mcp_search_top_dir_export(void) {
     check_size("mcp_search_top_dir_null", cbm_rs_mcp_search_top_dir_v1(buf, sizeof(buf), NULL),
                SIZE_MAX);
 
+    char unchanged[] = "keep";
+    check_size("mcp_search_top_dir_null_no_write",
+               cbm_rs_mcp_search_top_dir_v1(unchanged, sizeof(unchanged), NULL), SIZE_MAX);
+    check_str("mcp_search_top_dir_null_unchanged", unchanged, "keep");
+    check_size("mcp_search_top_dir_length_only", cbm_rs_mcp_search_top_dir_v1(NULL, 0, "src/app.c"),
+               strlen("src/"));
+
+    char zero_buf[] = "keep";
+    check_size("mcp_search_top_dir_zero_buffer",
+               cbm_rs_mcp_search_top_dir_v1(zero_buf, 0, "src/app.c"), strlen("src/"));
+    check_str("mcp_search_top_dir_zero_unchanged", zero_buf, "keep");
+
     char short_buf[5];
     check_size("mcp_search_top_dir_short_len",
                cbm_rs_mcp_search_top_dir_v1(short_buf, sizeof(short_buf), "verylong/path.c"),
                strlen("verylong/"));
     check_str("mcp_search_top_dir_short", short_buf, "very");
+
+    const char file_with_tail[] = "src/\0vendor/test.c";
+    check_size("mcp_search_top_dir_first_nul",
+               cbm_rs_mcp_search_top_dir_v1(buf, sizeof(buf), file_with_tail), strlen("src/"));
+    check_str("mcp_search_top_dir_first_nul_value", buf, "src/");
+
+#ifdef CBM_USE_RUST_MCP_SEARCH_TOP_DIR_ONLY
+    extern size_t cbm_mcp_search_top_dir(char *buf, size_t bufsize, const char *file);
+    check_size("mcp_search_top_dir_direct",
+               cbm_mcp_search_top_dir(buf, sizeof(buf), "src/nested/app.c"), strlen("src/"));
+    check_str("mcp_search_top_dir_direct_value", buf, "src/");
+    check_size("mcp_search_top_dir_direct_null",
+               cbm_mcp_search_top_dir(unchanged, sizeof(unchanged), NULL), SIZE_MAX);
+    check_str("mcp_search_top_dir_direct_unchanged", unchanged, "keep");
+#endif
 }
 
 static void test_mcp_detect_changes_wants_symbols_export(void) {
@@ -6614,6 +6668,14 @@ static void test_mcp_detect_changes_wants_symbols_export(void) {
     check_int("mcp_detect_scope_trailing", cbm_rs_mcp_detect_changes_wants_symbols_v1("symbols "),
               0);
     check_int("mcp_detect_scope_unknown", cbm_rs_mcp_detect_changes_wants_symbols_v1("unknown"), 0);
+
+#ifdef CBM_USE_RUST_MCP_DETECT_CHANGES_SCOPE_ONLY
+    extern bool cbm_mcp_detect_changes_wants_symbols(const char *scope);
+    check_int("mcp_detect_scope_direct_null", cbm_mcp_detect_changes_wants_symbols(NULL), 1);
+    check_int("mcp_detect_scope_direct_symbols", cbm_mcp_detect_changes_wants_symbols("symbols"),
+              1);
+    check_int("mcp_detect_scope_direct_files", cbm_mcp_detect_changes_wants_symbols("files"), 0);
+#endif
 }
 
 static void test_mcp_detect_changes_impacted_label_export(void) {
@@ -6630,6 +6692,14 @@ static void test_mcp_detect_changes_impacted_label_export(void) {
     check_int("mcp_detect_label_case", cbm_rs_mcp_detect_changes_impacted_label_v1("file"), 1);
     check_int("mcp_detect_label_trailing", cbm_rs_mcp_detect_changes_impacted_label_v1("Project "),
               1);
+
+#ifdef CBM_USE_RUST_MCP_DETECT_CHANGES_LABEL_ONLY
+    extern bool cbm_mcp_detect_changes_impacted_label(const char *label);
+    check_int("mcp_detect_label_direct_null", cbm_mcp_detect_changes_impacted_label(NULL), 0);
+    check_int("mcp_detect_label_direct_file", cbm_mcp_detect_changes_impacted_label("File"), 0);
+    check_int("mcp_detect_label_direct_function", cbm_mcp_detect_changes_impacted_label("Function"),
+              1);
+#endif
 }
 
 static void test_mcp_detect_changes_status_path_offset_export(void) {
@@ -6651,15 +6721,30 @@ static void test_mcp_detect_changes_status_path_offset_export(void) {
                cbm_rs_mcp_detect_changes_status_path_offset_v1("R  old -> "), SIZE_MAX);
     check_size("mcp_detect_status_path_unknown_prefix",
                cbm_rs_mcp_detect_changes_status_path_offset_v1("ZZ weird"), 0);
+
+#ifdef CBM_USE_RUST_MCP_DETECT_CHANGES_STATUS_ONLY
+    extern size_t cbm_mcp_detect_changes_status_path_offset(const char *line);
+    check_size("mcp_detect_status_path_direct_null",
+               cbm_mcp_detect_changes_status_path_offset(NULL), SIZE_MAX);
+    check_size("mcp_detect_status_path_direct_rename",
+               cbm_mcp_detect_changes_status_path_offset("R  old -> new"), 10);
+    check_size("mcp_detect_status_path_direct_plain",
+               cbm_mcp_detect_changes_status_path_offset("src/new.c"), 0);
+#endif
 }
 
 static void test_mcp_search_line_match_span_export(void) {
+    extern int cbm_mcp_search_line_match_span(int start_line, int end_line, int line);
+
     check_int("mcp_search_line_span_hit", cbm_rs_mcp_search_line_match_span_v1(10, 20, 15), 10);
     check_int("mcp_search_line_span_start", cbm_rs_mcp_search_line_match_span_v1(10, 20, 10), 10);
     check_int("mcp_search_line_span_end", cbm_rs_mcp_search_line_match_span_v1(10, 20, 20), 10);
     check_int("mcp_search_line_span_before", cbm_rs_mcp_search_line_match_span_v1(10, 20, 9), -1);
     check_int("mcp_search_line_span_after", cbm_rs_mcp_search_line_match_span_v1(10, 20, 21), -1);
     check_int("mcp_search_line_span_invalid", cbm_rs_mcp_search_line_match_span_v1(20, 10, 15), -1);
+    /* 公開 bridge */
+    check_int("mcp_search_line_span_bridge_hit", cbm_mcp_search_line_match_span(10, 20, 15), 10);
+    check_int("mcp_search_line_span_bridge_miss", cbm_mcp_search_line_match_span(10, 20, 9), -1);
 }
 
 static void test_mcp_search_pick_resolved_index_export(void) {
@@ -6713,6 +6798,13 @@ static void test_mcp_utf8_is_cont_export(void) {
     check_int("mcp_utf8_is_cont_7f", cbm_rs_mcp_utf8_is_cont_v1(0x7F), 0);
     check_int("mcp_utf8_is_cont_c0", cbm_rs_mcp_utf8_is_cont_v1(0xC0), 0);
     check_int("mcp_utf8_is_cont_180", cbm_rs_mcp_utf8_is_cont_v1(0x180), 1);
+
+#ifdef CBM_USE_RUST_MCP_UTF8_IS_CONT_ONLY
+    extern bool cbm_mcp_utf8_is_cont_byte(int byte);
+    check_int("mcp_utf8_is_cont_direct_80", cbm_mcp_utf8_is_cont_byte(0x80), 1);
+    check_int("mcp_utf8_is_cont_direct_c0", cbm_mcp_utf8_is_cont_byte(0xC0), 0);
+    check_int("mcp_utf8_is_cont_direct_low_byte", cbm_mcp_utf8_is_cont_byte(0x180), 1);
+#endif
 }
 
 static void test_mcp_node_resolution_score_export(void) {
@@ -6731,9 +6823,20 @@ static void test_mcp_node_resolution_score_export(void) {
               cbm_rs_mcp_node_resolution_score_v1("Function", 20, 10), 2000000);
     check_i64("mcp_node_score_case_sensitive",
               cbm_rs_mcp_node_resolution_score_v1("function", 10, 20), 1000010);
+
+#ifdef CBM_USE_RUST_MCP_NODE_RESOLUTION_SCORE_ONLY
+    extern long cbm_mcp_node_resolution_score(const char *label, int start_line, int end_line);
+    check_i64("mcp_node_score_direct_null", cbm_mcp_node_resolution_score(NULL, 10, 20), 10);
+    check_i64("mcp_node_score_direct_function",
+              cbm_mcp_node_resolution_score("Function", 10, 20), 2000010);
+    check_i64("mcp_node_score_direct_negative_span",
+              cbm_mcp_node_resolution_score("Method", 20, 10), 2000000);
+#endif
 }
 
 static void test_mcp_adr_mode_export(void) {
+    const char sections_first_nul[] = {'s', 'e', 'c', 't', 'i', 'o', 'n', 's', '\0', 'x'};
+
     check_int("mcp_adr_mode_null", cbm_rs_mcp_adr_mode_v1(NULL), 0);
     check_int("mcp_adr_mode_empty", cbm_rs_mcp_adr_mode_v1(""), 0);
     check_int("mcp_adr_mode_get", cbm_rs_mcp_adr_mode_v1("get"), 0);
@@ -6743,6 +6846,14 @@ static void test_mcp_adr_mode_export(void) {
     check_int("mcp_adr_mode_case", cbm_rs_mcp_adr_mode_v1("Update"), 0);
     check_int("mcp_adr_mode_trailing", cbm_rs_mcp_adr_mode_v1("update "), 0);
     check_int("mcp_adr_mode_unknown", cbm_rs_mcp_adr_mode_v1("unknown"), 0);
+    check_int("mcp_adr_mode_first_nul", cbm_rs_mcp_adr_mode_v1(sections_first_nul), 2);
+
+#ifdef CBM_USE_RUST_MCP_ADR_MODE_ONLY
+    extern int cbm_mcp_adr_mode(const char *input);
+    check_int("mcp_adr_mode_direct_null", cbm_mcp_adr_mode(NULL), 0);
+    check_int("mcp_adr_mode_direct_store", cbm_mcp_adr_mode("store"), 1);
+    check_int("mcp_adr_mode_direct_sections", cbm_mcp_adr_mode(sections_first_nul), 2);
+#endif
 }
 
 static void test_mcp_adr_sections_json_export(void) {
@@ -6805,6 +6916,20 @@ static void test_mcp_bm25_build_match_export(void) {
     memset(buf, 'X', sizeof(buf));
     check_int("mcp_bm25_bufsize_one", cbm_rs_mcp_bm25_build_match_v1(buf, 1, "abc"), 0);
     check_int("mcp_bm25_bufsize_one_unchanged", buf[0], 'X');
+
+#ifdef CBM_USE_RUST_MCP_BM25_BUILD_MATCH_ONLY
+    extern int cbm_mcp_bm25_build_match(const char *input, char *buf, size_t bufsize);
+    const char first_nul[] = {'a', 'l', 'p', 'h', 'a', '\0', ' ', 'b', 'e', 't', 'a'};
+    char direct_buf[64];
+    check_int("mcp_bm25_direct_null",
+              cbm_mcp_bm25_build_match(NULL, direct_buf, sizeof(direct_buf)), 0);
+    check_int("mcp_bm25_direct_words",
+              cbm_mcp_bm25_build_match("update settings", direct_buf, sizeof(direct_buf)), 2);
+    check_str("mcp_bm25_direct_words_value", direct_buf, "update OR settings");
+    check_int("mcp_bm25_direct_first_nul",
+              cbm_mcp_bm25_build_match(first_nul, direct_buf, sizeof(direct_buf)), 1);
+    check_str("mcp_bm25_direct_first_nul_value", direct_buf, "alpha");
+#endif
 }
 
 static void test_mcp_bm25_file_pattern_like_export(void) {
@@ -6832,11 +6957,28 @@ static void test_mcp_bm25_file_pattern_like_export(void) {
                strlen("f___.txt"));
     check_str("mcp_bm25_like_question_value", buf, "f___.txt");
 
+    const char first_nul[] = {'*', '.', 'g', 'o', '\0', 'x'};
+    check_size("mcp_bm25_like_first_nul",
+               cbm_rs_mcp_bm25_file_pattern_like_v1(buf, sizeof(buf), first_nul), strlen("%.go"));
+    check_str("mcp_bm25_like_first_nul_value", buf, "%.go");
+
     char small[6];
     check_size("mcp_bm25_like_short",
                cbm_rs_mcp_bm25_file_pattern_like_v1(small, sizeof(small), "src/lib"),
                strlen("%src/lib%"));
     check_str("mcp_bm25_like_short_value", small, "%src/");
+
+#ifdef CBM_USE_RUST_MCP_BM25_FILE_PATTERN_LIKE_ONLY
+    extern size_t cbm_mcp_bm25_file_pattern_like(char *buf, size_t bufsize, const char *input);
+    check_size("mcp_bm25_like_direct_null",
+               cbm_mcp_bm25_file_pattern_like(buf, sizeof(buf), NULL), SIZE_MAX);
+    check_size("mcp_bm25_like_direct_contains",
+               cbm_mcp_bm25_file_pattern_like(buf, sizeof(buf), "src/lib"), strlen("%src/lib%"));
+    check_str("mcp_bm25_like_direct_contains_value", buf, "%src/lib%");
+    check_size("mcp_bm25_like_direct_first_nul",
+               cbm_mcp_bm25_file_pattern_like(buf, sizeof(buf), first_nul), strlen("%.go"));
+    check_str("mcp_bm25_like_direct_first_nul_value", buf, "%.go");
+#endif
 }
 
 static void test_mcp_sanitize_utf8_lossy_export(void) {
@@ -6852,6 +6994,24 @@ static void test_mcp_sanitize_utf8_lossy_export(void) {
     check_size("mcp_sanitize_utf8_invalid",
                cbm_rs_mcp_sanitize_utf8_lossy_v1(buf, sizeof(buf), "hello \xff world"), 15);
     check_str("mcp_sanitize_utf8_invalid_val", buf, "hello \xef\xbf\xbd world");
+
+#ifdef CBM_USE_RUST_MCP_SANITIZE_UTF8_LOSSY_ONLY
+    extern char *cbm_mcp_sanitize_utf8_lossy(const char *input);
+    const char first_nul[] = {'a', (char)0xff, '\0', (char)0xff, '\0'};
+    check_null("mcp_sanitize_utf8_direct_null", cbm_mcp_sanitize_utf8_lossy(NULL));
+    char *direct = cbm_mcp_sanitize_utf8_lossy("hello \xff world");
+    check_not_null("mcp_sanitize_utf8_direct_invalid", direct);
+    if (direct) {
+        check_str("mcp_sanitize_utf8_direct_invalid_value", direct, "hello \xef\xbf\xbd world");
+        free(direct);
+    }
+    direct = cbm_mcp_sanitize_utf8_lossy(first_nul);
+    check_not_null("mcp_sanitize_utf8_direct_first_nul", direct);
+    if (direct) {
+        check_str("mcp_sanitize_utf8_direct_first_nul_value", direct, "a\xef\xbf\xbd");
+        free(direct);
+    }
+#endif
 }
 
 static void test_mcp_architecture_aspect_wanted_export(void) {
@@ -6882,9 +7042,28 @@ static void test_mcp_architecture_aspect_wanted_export(void) {
     check_int("mcp_arch_aspect_trailing_invalid",
               cbm_rs_mcp_architecture_aspect_wanted_v1("{\"aspects\":[]} trailing", "structure"),
               1);
+
+#ifdef CBM_USE_RUST_MCP_ARCHITECTURE_ASPECT_WANTED_ONLY
+    extern int cbm_mcp_architecture_aspect_wanted(const char *input, const char *name);
+    const char first_nul[] = {'{', '"', 'a', 's', 'p', 'e', 'c', 't', 's', '"', ':', '[', '"',
+                              's', 't', 'r', 'u', 'c', 't', 'u', 'r', 'e', '"', ']', '}', '\0',
+                              'x'};
+    check_int("mcp_arch_aspect_direct_null", cbm_mcp_architecture_aspect_wanted(NULL, "structure"),
+              1);
+    check_int("mcp_arch_aspect_direct_match",
+              cbm_mcp_architecture_aspect_wanted("{\"aspects\":[\"structure\"]}", "structure"),
+              1);
+    check_int("mcp_arch_aspect_direct_no_match",
+              cbm_mcp_architecture_aspect_wanted("{\"aspects\":[\"structure\"]}", "routes"), 0);
+    check_int("mcp_arch_aspect_direct_first_nul",
+              cbm_mcp_architecture_aspect_wanted(first_nul, "structure"), 1);
+#endif
 }
 
 static void test_mcp_trace_is_test_file_export(void) {
+    const char test_file_first_nul[] = {'s', 'r', 'c', '/', 'f', 'o', 'o', '_', 't', 'e', 's', 't', '.',
+                                        'g', 'o', '\0', 'x'};
+
     check_int("mcp_trace_test_file_null", cbm_rs_mcp_trace_is_test_file_v1(NULL), 0);
     check_int("mcp_trace_test_file_empty", cbm_rs_mcp_trace_is_test_file_v1(""), 0);
     check_int("mcp_trace_test_file_testdata",
@@ -6905,9 +7084,21 @@ static void test_mcp_trace_is_test_file_export(void) {
               cbm_rs_mcp_trace_is_test_file_v1("handler.spec.ts"), 0);
     check_int("mcp_trace_test_file_windows",
               cbm_rs_mcp_trace_is_test_file_v1("C:\\repo\\tests\\helper.py"), 0);
+    check_int("mcp_trace_test_file_first_nul", cbm_rs_mcp_trace_is_test_file_v1(test_file_first_nul), 1);
+
+#ifdef CBM_USE_RUST_MCP_TRACE_IS_TEST_FILE_ONLY
+    extern bool cbm_mcp_trace_is_test_file(const char *input);
+    check_int("mcp_trace_test_file_direct_null", cbm_mcp_trace_is_test_file(NULL), 0);
+    check_int("mcp_trace_test_file_direct_testdata",
+              cbm_mcp_trace_is_test_file("src/testdata/helper.go"), 1);
+    check_int("mcp_trace_test_file_direct_non_test",
+              cbm_mcp_trace_is_test_file("src/contest/helper.c"), 0);
+#endif
 }
 
 static void test_mcp_project_db_file_name_export(void) {
+    const char project_first_nul[] = {'x', '.', 'd', 'b', '\0', '-', 'w', 'a', 'l'};
+
     check_int("mcp_project_db_null", cbm_rs_mcp_project_db_file_name_v1(NULL), 0);
     check_int("mcp_project_db_empty", cbm_rs_mcp_project_db_file_name_v1(""), 0);
     check_int("mcp_project_db_dotdb", cbm_rs_mcp_project_db_file_name_v1(".db"), 0);
@@ -6919,6 +7110,14 @@ static void test_mcp_project_db_file_name_export(void) {
     check_int("mcp_project_db_internal", cbm_rs_mcp_project_db_file_name_v1("_internal.db"), 0);
     check_int("mcp_project_db_memory", cbm_rs_mcp_project_db_file_name_v1(":memory:"), 0);
     check_int("mcp_project_db_memory_db", cbm_rs_mcp_project_db_file_name_v1(":memory:.db"), 0);
+    check_int("mcp_project_db_first_nul", cbm_rs_mcp_project_db_file_name_v1(project_first_nul), 1);
+
+#ifdef CBM_USE_RUST_MCP_PROJECT_DB_FILE_NAME_ONLY
+    extern bool cbm_mcp_project_db_file_name(const char *input);
+    check_int("mcp_project_db_direct_null", cbm_mcp_project_db_file_name(NULL), 0);
+    check_int("mcp_project_db_direct_valid", cbm_mcp_project_db_file_name("tmp-bench.db"), 1);
+    check_int("mcp_project_db_direct_internal", cbm_mcp_project_db_file_name("_internal.db"), 0);
+#endif
 }
 
 static void test_mcp_cancel_request_matches_export(void) {
@@ -7226,8 +7425,8 @@ static void test_mcp_jsonrpc_parse_export(void) {
 }
 
 #if !defined(CBM_USE_RUST_DISCOVER_USERCONFIG_ONLY) || \
-    defined(CBM_USE_RUST_DISCOVER_LANGUAGE_ONLY) || \
-    defined(CBM_USE_RUST_DISCOVER_LANGUAGE_NAME) || \
+    defined(CBM_USE_RUST_DISCOVER_LANGUAGE_ONLY) ||    \
+    defined(CBM_USE_RUST_DISCOVER_LANGUAGE_NAME) ||    \
     defined(CBM_USE_RUST_DISCOVER_LANGUAGE_NAME_ONLY)
 static void test_discover_language_name_public_exports(void) {
     const char *go = cbm_language_name(CBM_LANG_GO);
@@ -7239,12 +7438,10 @@ static void test_discover_language_name_public_exports(void) {
 
     check_int("discover_language_name_public_go", go ? strcmp(go, "Go") : -1, 0);
     check_int("discover_language_name_public_static", go == go_again, 1);
-    check_int("discover_language_name_public_negative",
-              negative ? strcmp(negative, "Unknown") : -1,
+    check_int("discover_language_name_public_negative", negative ? strcmp(negative, "Unknown") : -1,
               0);
     check_int("discover_language_name_public_count", count ? strcmp(count, "Unknown") : -1, 0);
-    check_int("discover_language_name_public_cfscript",
-              cfscript ? strcmp(cfscript, "CFML") : -1,
+    check_int("discover_language_name_public_cfscript", cfscript ? strcmp(cfscript, "CFML") : -1,
               0);
     check_int("discover_language_name_public_cfml", cfml ? strcmp(cfml, "CFML") : -1, 0);
 }
@@ -7264,9 +7461,7 @@ static void test_discover_language_name_v1_exports(void) {
     check_int("discover_language_name_v1_static", go == go_again, 1);
     check_int("discover_language_name_v1_negative", negative ? strcmp(negative, "Unknown") : -1, 0);
     check_int("discover_language_name_v1_count", count ? strcmp(count, "Unknown") : -1, 0);
-    check_int("discover_language_name_v1_cfscript",
-              cfscript ? strcmp(cfscript, "CFML") : -1,
-              0);
+    check_int("discover_language_name_v1_cfscript", cfscript ? strcmp(cfscript, "CFML") : -1, 0);
     check_int("discover_language_name_v1_cfml", cfml ? strcmp(cfml, "CFML") : -1, 0);
 }
 #endif
@@ -7301,7 +7496,7 @@ static void test_discover_userconfig_exports(void) {
 #endif
 
 #if defined(CBM_USE_RUST_DISCOVER_USERCONFIG_ONLY) && \
-    (defined(CBM_USE_RUST_DISCOVER_LANGUAGE_NAME) || \
+    (defined(CBM_USE_RUST_DISCOVER_LANGUAGE_NAME) ||  \
      defined(CBM_USE_RUST_DISCOVER_LANGUAGE_NAME_ONLY))
 static void test_discover_userconfig_language_name_exports(void) {
     const char *dir = "/tmp/cbm-rust-userconfig-language-name-smoke";
@@ -7320,8 +7515,7 @@ static void test_discover_userconfig_language_name_exports(void) {
     fclose(file);
 
     cbm_userconfig_t *cfg = cbm_userconfig_load(dir);
-    if (!cfg || cfg->count != 1 ||
-        cbm_userconfig_lookup(cfg, ".cfml") != CBM_LANG_CFSCRIPT) {
+    if (!cfg || cfg->count != 1 || cbm_userconfig_lookup(cfg, ".cfml") != CBM_LANG_CFSCRIPT) {
         fprintf(stderr, "userconfig language name smoke: Rust ABI mismatch\n");
         cbm_userconfig_free(cfg);
         remove(path);
@@ -7333,54 +7527,49 @@ static void test_discover_userconfig_language_name_exports(void) {
 #endif
 
 static void test_discover_filter_exports(void) {
-    check_bool("discover_filters_full_root_dot_git",
-              cbm_should_skip_dir(".git", CBM_MODE_FULL),
-              true);
+    check_bool("discover_filters_full_root_dot_git", cbm_should_skip_dir(".git", CBM_MODE_FULL),
+               true);
     check_bool("discover_filters_full_root_src", cbm_should_skip_dir("src", CBM_MODE_FULL), false);
-    check_bool("discover_filters_full_root_docs", cbm_should_skip_dir("docs", CBM_MODE_FULL), false);
-    check_bool("discover_filters_moderate_docs",
-              cbm_should_skip_dir("docs", CBM_MODE_MODERATE),
-              true);
+    check_bool("discover_filters_full_root_docs", cbm_should_skip_dir("docs", CBM_MODE_FULL),
+               false);
+    check_bool("discover_filters_moderate_docs", cbm_should_skip_dir("docs", CBM_MODE_MODERATE),
+               true);
     check_bool("discover_filters_fast_docs", cbm_should_skip_dir("docs", CBM_MODE_FAST), true);
     check_bool("discover_filters_full_null_dir", cbm_should_skip_dir(NULL, CBM_MODE_FULL), false);
 
     check_bool("discover_filters_suffix_full_pyc",
-              cbm_has_ignored_suffix("module.pyc", CBM_MODE_FULL),
-              true);
+               cbm_has_ignored_suffix("module.pyc", CBM_MODE_FULL), true);
     check_bool("discover_filters_suffix_full_zip",
-              cbm_has_ignored_suffix("archive.zip", CBM_MODE_FULL),
-              false);
+               cbm_has_ignored_suffix("archive.zip", CBM_MODE_FULL), false);
     check_bool("discover_filters_suffix_moderate_zip",
-              cbm_has_ignored_suffix("archive.zip", CBM_MODE_MODERATE),
-              true);
+               cbm_has_ignored_suffix("archive.zip", CBM_MODE_MODERATE), true);
     check_bool("discover_filters_suffix_fast_min_css",
-              cbm_has_ignored_suffix("style.min.css", CBM_MODE_FAST),
-              true);
+               cbm_has_ignored_suffix("style.min.css", CBM_MODE_FAST), true);
     check_bool("discover_filters_suffix_null", cbm_has_ignored_suffix(NULL, CBM_MODE_FAST), false);
 
     check_bool("discover_filters_filename_full_license",
-              cbm_should_skip_filename("LICENSE", CBM_MODE_FULL),
-              false);
-    check_bool("discover_filters_filename_moderate_license", cbm_should_skip_filename("LICENSE",
-                                                                                    CBM_MODE_MODERATE),
-              true);
+               cbm_should_skip_filename("LICENSE", CBM_MODE_FULL), false);
+    check_bool("discover_filters_filename_moderate_license",
+               cbm_should_skip_filename("LICENSE", CBM_MODE_MODERATE), true);
     check_bool("discover_filters_filename_fast_mock",
-              cbm_should_skip_filename("MOCK_", CBM_MODE_FAST),
-              false);
-    check_bool("discover_filters_filename_null", cbm_should_skip_filename(NULL, CBM_MODE_FAST), false);
+               cbm_should_skip_filename("MOCK_", CBM_MODE_FAST), false);
+    check_bool("discover_filters_filename_null", cbm_should_skip_filename(NULL, CBM_MODE_FAST),
+               false);
 
     check_bool("discover_filters_pattern_full", cbm_matches_fast_pattern("foo.d.ts", CBM_MODE_FULL),
-              false);
+               false);
     check_bool("discover_filters_pattern_fast", cbm_matches_fast_pattern("foo.d.ts", CBM_MODE_FAST),
-              true);
+               true);
     check_bool("discover_filters_pattern_fast_generated",
-              cbm_matches_fast_pattern("foo.generated.rs", CBM_MODE_FAST),
-              true);
-    check_bool("discover_filters_pattern_null", cbm_matches_fast_pattern(NULL, CBM_MODE_FAST), false);
+               cbm_matches_fast_pattern("foo.generated.rs", CBM_MODE_FAST), true);
+    check_bool("discover_filters_pattern_null", cbm_matches_fast_pattern(NULL, CBM_MODE_FAST),
+               false);
     check_bool("discover_filters_invalid_dir", cbm_should_skip_dir("src", 99), false);
     check_bool("discover_filters_invalid_suffix", cbm_has_ignored_suffix("plain.txt", 99), false);
-    check_bool("discover_filters_invalid_filename", cbm_should_skip_filename("plain.txt", 99), false);
-    check_bool("discover_filters_invalid_pattern", cbm_matches_fast_pattern("plain.txt", 99), false);
+    check_bool("discover_filters_invalid_filename", cbm_should_skip_filename("plain.txt", 99),
+               false);
+    check_bool("discover_filters_invalid_pattern", cbm_matches_fast_pattern("plain.txt", 99),
+               false);
 }
 
 #ifdef CBM_USE_RUST_MEM_ONLY
@@ -7437,7 +7626,8 @@ static void test_diagnostics_direct_exports(void) {
         .queries = snapshot,
         .pid = 4242,
     };
-    if (cbm_diag_format_json(json, sizeof(json), &fixture) < 0 || strstr(json, "uptime_s") == NULL) {
+    if (cbm_diag_format_json(json, sizeof(json), &fixture) < 0 ||
+        strstr(json, "uptime_s") == NULL) {
         fprintf(stderr, "diagnostics smoke: JSON formatter failed\n");
         exit(EXIT_FAILURE);
     }
@@ -7507,8 +7697,8 @@ static void test_cli_hook_token_export(void) {
     check_int("cli_hook_token_longest",
               cbm_rs_cli_hook_extract_token_v1("**/OrderHandler.py", out, sizeof(out)), 1);
     check_str("cli_hook_token_longest_value", out, "OrderHandler");
-    check_int("cli_hook_token_short",
-              cbm_rs_cli_hook_extract_token_v1("foo/bar", out, sizeof(out)), 0);
+    check_int("cli_hook_token_short", cbm_rs_cli_hook_extract_token_v1("foo/bar", out, sizeof(out)),
+              0);
     check_int("cli_hook_token_truncated",
               cbm_rs_cli_hook_extract_token_v1("prefix_abcdefghijklmnopqrstuvwxyz", out, 8), 1);
     check_str("cli_hook_token_truncated_value", out, "prefix_");
@@ -7713,8 +7903,8 @@ int main(void) {
     test_mcp_text_result_export();
     test_mcp_jsonrpc_parse_export();
 #if !defined(CBM_USE_RUST_DISCOVER_USERCONFIG_ONLY) || \
-    defined(CBM_USE_RUST_DISCOVER_LANGUAGE_ONLY) || \
-    defined(CBM_USE_RUST_DISCOVER_LANGUAGE_NAME) || \
+    defined(CBM_USE_RUST_DISCOVER_LANGUAGE_ONLY) ||    \
+    defined(CBM_USE_RUST_DISCOVER_LANGUAGE_NAME) ||    \
     defined(CBM_USE_RUST_DISCOVER_LANGUAGE_NAME_ONLY)
     test_discover_language_name_public_exports();
 #endif
@@ -7726,7 +7916,7 @@ int main(void) {
     test_discover_userconfig_exports();
 #endif
 #if defined(CBM_USE_RUST_DISCOVER_USERCONFIG_ONLY) && \
-    (defined(CBM_USE_RUST_DISCOVER_LANGUAGE_NAME) || \
+    (defined(CBM_USE_RUST_DISCOVER_LANGUAGE_NAME) ||  \
      defined(CBM_USE_RUST_DISCOVER_LANGUAGE_NAME_ONLY))
     test_discover_userconfig_language_name_exports();
 #endif
@@ -7786,6 +7976,8 @@ int main(void) {
     test_rust_cross_repo_json_exports();
     extern void test_rust_enrichment_exports(void);
     test_rust_enrichment_exports();
+    extern void test_pipeline_enrichment_public_abi(void);
+    test_pipeline_enrichment_public_abi();
     extern void test_rust_calls_json_exports(void);
     test_rust_calls_json_exports();
     extern void test_rust_envscan_exports(void);
@@ -7975,32 +8167,39 @@ void test_rust_pipeline_pkgmap_exports(void) {
                                                             const char *path);
     extern size_t cbm_rs_pipeline_pkgmap_join_and_strip_v1(char *buf, size_t bufsize,
                                                            const char *dir, const char *entry);
-    extern size_t cbm_rs_pipeline_pkgmap_build_entry_path_v1(char *buf, size_t bufsize,
-                                                              const char *rel_path,
-                                                              const char *suffix);
+    extern size_t cbm_rs_pipeline_pkgmap_build_entry_path_v1(
+        char *buf, size_t bufsize, const char *rel_path, const char *suffix);
     const char *source = "other\n  module github.com/acme/project\nnext";
     char dirname[64];
     char stem[64];
     char joined[128];
     char built[128];
+    char truncated[4] = {'x', 'x', 'x', 'x'};
     if (cbm_rs_pipeline_pkgmap_at_prefix_v1("name=", 5, "name=", 5) == 0 ||
         cbm_rs_pipeline_pkgmap_at_prefix_v1("name", 4, "name=", 5) != 0 ||
+        cbm_rs_pipeline_pkgmap_at_prefix_v1(NULL, 0, "name=", 5) != 0 ||
         cbm_rs_pipeline_pkgmap_find_line_value_offset_v1(source, (int)strlen(source), "module ") !=
             15 ||
         cbm_rs_pipeline_pkgmap_find_line_value_offset_v1(source, (int)strlen(source), "missing") !=
             -1 ||
-        cbm_rs_pipeline_pkgmap_path_dirname_v1(dirname, sizeof(dirname),
-                                               "packages/foo/package.json") != strlen("packages/foo") ||
+        cbm_rs_pipeline_pkgmap_find_line_value_offset_v1(NULL, 0, "module ") != -1 ||
+        cbm_rs_pipeline_pkgmap_path_dirname_v1(
+            dirname, sizeof(dirname), "packages/foo/package.json") != strlen("packages/foo") ||
         strcmp(dirname, "packages/foo") != 0 ||
+        cbm_rs_pipeline_pkgmap_path_dirname_v1(
+            truncated, sizeof(truncated), "packages/foo/package.json") != strlen("packages/foo") ||
+        strcmp(truncated, "pac") != 0 ||
+        cbm_rs_pipeline_pkgmap_path_dirname_v1(NULL, 0, NULL) != 0 ||
         cbm_rs_pipeline_pkgmap_strip_extension_v1(stem, sizeof(stem), "src/index.ts") !=
             strlen("src/index") ||
         strcmp(stem, "src/index") != 0 ||
         cbm_rs_pipeline_pkgmap_join_and_strip_v1(joined, sizeof(joined), "packages/foo",
-                                                 "./src/index.ts") != strlen("packages/foo/src/index") ||
+                                                 "./src/index.ts") !=
+            strlen("packages/foo/src/index") ||
         strcmp(joined, "packages/foo/src/index") != 0 ||
         cbm_rs_pipeline_pkgmap_build_entry_path_v1(built, sizeof(built),
-                                                   "packages/foo/package.toml", "src/lib") !=
-            strlen("packages/foo/src/lib") ||
+                                                   "packages/foo/package.toml",
+                                                   "src/lib") != strlen("packages/foo/src/lib") ||
         strcmp(built, "packages/foo/src/lib") != 0) {
         fprintf(stderr, "Rust pipeline pkgmap text smoke test failed\n");
         exit(EXIT_FAILURE);
@@ -8013,9 +8212,8 @@ void test_rust_pipeline_configlink_exports(void) {
     extern int cbm_rs_pipeline_configlink_is_cargo_dep_section_v1(const char *value);
     extern void cbm_rs_pipeline_configlink_lowercase_into_v1(const char *value, char *buf,
                                                              size_t bufsize);
-    extern double cbm_rs_pipeline_configlink_match_dep_to_import_v1(const char *target_name,
-                                                                     const char *target_qn,
-                                                                     const char *dep_lower);
+    extern double cbm_rs_pipeline_configlink_match_dep_to_import_v1(
+        const char *target_name, const char *target_qn, const char *dep_lower);
     if (cbm_rs_pipeline_configlink_is_manifest_file_v1("Cargo.toml") == 0 ||
         cbm_rs_pipeline_configlink_is_manifest_file_v1("main.rs") != 0 ||
         cbm_rs_pipeline_configlink_is_dep_section_v1("devDependencies") == 0 ||
@@ -8081,8 +8279,7 @@ void test_pipeline_split_command_public_abi(void) {
     int count = cbm_split_command("cc -I\"include path\" 'file name.c'", tokens, 4);
     if (count != 3 || !tokens[0] || !tokens[1] || !tokens[2] || strcmp(tokens[0], "cc") != 0 ||
         strcmp(tokens[1], "-Iinclude path") != 0 || strcmp(tokens[2], "file name.c") != 0 ||
-        tokens[0][strlen("cc")] != '\0' ||
-        tokens[1][strlen("-Iinclude path")] != '\0' ||
+        tokens[0][strlen("cc")] != '\0' || tokens[1][strlen("-Iinclude path")] != '\0' ||
         tokens[2][strlen("file name.c")] != '\0') {
         fprintf(stderr, "Pipeline split command public ABI quote test failed\n");
         for (int i = 0; i < 4; i++) {
@@ -8132,13 +8329,10 @@ void test_pipeline_split_command_public_abi(void) {
 void test_rust_cross_repo_json_exports(void) {
     extern int cbm_rs_pipeline_cross_repo_json_str_prop_v1(const char *json, const char *key,
                                                            char *buf, size_t bufsz);
-    extern size_t cbm_rs_pipeline_cross_repo_build_props_v1(char *buf, size_t bufsz,
-                                                            const char *target_project,
-                                                            const char *target_function,
-                                                            const char *target_file,
-                                                            const char *url_or_channel,
-                                                            const char *extra_key,
-                                                            const char *extra_val);
+    extern size_t cbm_rs_pipeline_cross_repo_build_props_v1(
+        char *buf, size_t bufsz, const char *target_project, const char *target_function,
+        const char *target_file, const char *url_or_channel, const char *extra_key,
+        const char *extra_val);
     char value[32];
     char small[5];
     char props[256];
@@ -8150,9 +8344,8 @@ void test_rust_cross_repo_json_exports(void) {
         cbm_rs_pipeline_cross_repo_json_str_prop_v1(json, "missing", value, sizeof(value)) != 0 ||
         cbm_rs_pipeline_cross_repo_build_props_v1(props, sizeof(props), "target", "handler",
                                                   "src.rs", "/api", "url_path", "GET") == 0 ||
-        strcmp(props,
-               "{\"target_project\":\"target\",\"target_function\":\"handler\",\"target_file\":\"src.rs\",\"url_path\":\"/api\",\"transport\":\"GET\"}") !=
-            0) {
+        strcmp(props, "{\"target_project\":\"target\",\"target_function\":\"handler\",\"target_"
+                      "file\":\"src.rs\",\"url_path\":\"/api\",\"transport\":\"GET\"}") != 0) {
         fprintf(stderr, "Rust cross-repo JSON smoke test failed\n");
         exit(EXIT_FAILURE);
     }
@@ -8164,7 +8357,8 @@ void test_rust_enrichment_exports(void) {
     char *parts[8] = {NULL};
     char *tokens[8] = {NULL};
     int part_count = cbm_rs_pipeline_split_camel_case_v1("loadHTTPServer", parts, 8);
-    int token_count = cbm_rs_pipeline_tokenize_decorator_v1("@router.getUser_config(arg)", tokens, 8);
+    int token_count =
+        cbm_rs_pipeline_tokenize_decorator_v1("@router.getUser_config(arg)", tokens, 8);
     if (part_count != 2 || strcmp(parts[0], "load") != 0 || strcmp(parts[1], "HTTPServer") != 0 ||
         token_count != 2 || strcmp(tokens[0], "user") != 0 || strcmp(tokens[1], "config") != 0) {
         fprintf(stderr, "Rust enrichment tokenizer smoke test failed\n");
@@ -8184,15 +8378,53 @@ void test_rust_enrichment_exports(void) {
     }
 }
 
+void test_pipeline_enrichment_public_abi(void) {
+    char sentinel_zero[] = "sentinel-zero";
+    char sentinel_one[] = "sentinel-one";
+    char *output[2] = {sentinel_zero, sentinel_one};
+    int count = 0;
+
+    if (cbm_split_camel_case(NULL, output, 2) != 0 || output[0] != sentinel_zero ||
+        output[1] != sentinel_one || cbm_split_camel_case("postMapping", NULL, 2) != 0 ||
+        cbm_tokenize_decorator("@PostMapping", output, 0) != 0 || output[0] != sentinel_zero ||
+        output[1] != sentinel_one) {
+        fprintf(stderr, "Pipeline enrichment public ABI sentinel test failed\n");
+        exit(EXIT_FAILURE);
+    }
+
+    count = cbm_split_camel_case("loadHTTPServerNext", output, 2);
+    if (count != 2 || strcmp(output[0], "load") != 0 || strcmp(output[1], "HTTPServer") != 0) {
+        fprintf(stderr, "Pipeline enrichment public ABI split test failed\n");
+        for (int i = 0; i < count && i < 2; i++) {
+            free(output[i]);
+        }
+        exit(EXIT_FAILURE);
+    }
+    for (int i = 0; i < count; i++) {
+        free(output[i]);
+    }
+
+    count = cbm_tokenize_decorator("@M\xc9thod", output, 2);
+    if (count != 1 || strcmp(output[0], "m\xc9thod") != 0) {
+        fprintf(stderr, "Pipeline enrichment public ABI ASCII test failed\n");
+        for (int i = 0; i < count && i < 2; i++) {
+            free(output[i]);
+        }
+        exit(EXIT_FAILURE);
+    }
+    free(output[0]);
+}
+
 void test_rust_calls_json_exports(void) {
     extern size_t cbm_rs_pipeline_calls_extract_local_name_v1(char *buf, size_t bufsize,
                                                               const char *json);
     char value[32];
     const char *json = "{\"local_name\":\"client\",\"module\":\"pkg\"}";
-    if (cbm_rs_pipeline_calls_extract_local_name_v1(value, sizeof(value), json) != strlen("client") ||
+    if (cbm_rs_pipeline_calls_extract_local_name_v1(value, sizeof(value), json) !=
+            strlen("client") ||
         strcmp(value, "client") != 0 ||
-        cbm_rs_pipeline_calls_extract_local_name_v1(value, sizeof(value), "{\"local_name\":\"\"}") !=
-            SIZE_MAX) {
+        cbm_rs_pipeline_calls_extract_local_name_v1(value, sizeof(value),
+                                                    "{\"local_name\":\"\"}") != SIZE_MAX) {
         fprintf(stderr, "Rust calls JSON smoke test failed\n");
         exit(EXIT_FAILURE);
     }
@@ -8377,8 +8609,8 @@ void test_rust_pipeline_definitions_json_export(void) {
     length = cbm_rs_pipeline_definitions_json_escape_char(output, sizeof(output), 0xe9);
     check_int("definitions_json_escape_unsigned_len", length, 1);
     check_int("definitions_json_escape_unsigned_byte", (unsigned char)output[0], 0xe9);
-    check_int("definitions_json_escape_len", (int)cbm_rs_pipeline_definitions_json_escaped_len("a\"b\\c\nd"),
-              10);
+    check_int("definitions_json_escape_len",
+              (int)cbm_rs_pipeline_definitions_json_escaped_len("a\"b\\c\nd"), 10);
     check_int("definitions_json_escape_null_len",
               (int)cbm_rs_pipeline_definitions_json_escaped_len(NULL), 0);
 
@@ -8414,8 +8646,8 @@ void test_rust_pipeline_similarity_fp_export(void) {
     props[520] = '\0';
     check_int("similarity_fp_valid", cbm_rs_pipeline_similarity_parse_fp_v1(props, output), 1);
     check_int("similarity_fp_zero", (int)output[0], 0);
-    check_int("similarity_fp_short", cbm_rs_pipeline_similarity_parse_fp_v1("{\"fp\":\"00\"}", output),
-              0);
+    check_int("similarity_fp_short",
+              cbm_rs_pipeline_similarity_parse_fp_v1("{\"fp\":\"00\"}", output), 0);
     check_int("similarity_fp_null", cbm_rs_pipeline_similarity_parse_fp_v1(NULL, output), 0);
     check_int("similarity_fp_null_output", cbm_rs_pipeline_similarity_parse_fp_v1(props, NULL), 0);
 
@@ -8448,31 +8680,32 @@ void test_rust_cli_archive_exports(void) {
     check_int("cli_archive_tar_nonzero", cbm_rs_cli_archive_tar_end_v1(header), 0);
     check_int("cli_archive_tar_null", cbm_rs_cli_archive_tar_end_v1(NULL), 0);
     check_int("cli_archive_zip_u16", cbm_rs_cli_archive_zip_read_u16_v1(zip_header, 0), 0x1234);
-    check_int("cli_archive_zip_u32", (int)cbm_rs_cli_archive_zip_read_u32_v1(zip_word, 0), 0x12345678);
+    check_int("cli_archive_zip_u32", (int)cbm_rs_cli_archive_zip_read_u32_v1(zip_word, 0),
+              0x12345678);
     check_int("cli_archive_zip_negative", cbm_rs_cli_archive_zip_read_u16_v1(zip_header, -1), 0);
 }
 
 extern size_t cbm_rs_pipeline_k8s_basename_offset_v1(const char *path);
 extern int cbm_rs_pipeline_k8s_indent_v1(const char *line);
 extern int cbm_rs_pipeline_k8s_split_kv_v1(const char *text, char *key, size_t key_size,
-                                            char *value, size_t value_size);
+                                           char *value, size_t value_size);
 
 void test_rust_pipeline_k8s_helpers_export(void) {
     char key[32];
     char value[32];
-    check_int("k8s_basename_offset", (int)cbm_rs_pipeline_k8s_basename_offset_v1("apps/deploy.yaml"),
-              5);
+    check_int("k8s_basename_offset",
+              (int)cbm_rs_pipeline_k8s_basename_offset_v1("apps/deploy.yaml"), 5);
     check_int("k8s_basename_null", (int)cbm_rs_pipeline_k8s_basename_offset_v1(NULL), 0);
     check_int("k8s_indent", cbm_rs_pipeline_k8s_indent_v1("  name"), 2);
     check_int("k8s_indent_tab", cbm_rs_pipeline_k8s_indent_v1("\tname"), 0);
-    check_int("k8s_split_kv", cbm_rs_pipeline_k8s_split_kv_v1("name: 'frontend' # comment", key,
-                                                               sizeof(key), value, sizeof(value)),
+    check_int("k8s_split_kv",
+              cbm_rs_pipeline_k8s_split_kv_v1("name: 'frontend' # comment", key, sizeof(key), value,
+                                              sizeof(value)),
               1);
     check_str("k8s_split_kv_key", key, "name");
     check_str("k8s_split_kv_value", value, "frontend");
-    check_int("k8s_split_kv_comment", cbm_rs_pipeline_k8s_split_kv_v1("# comment", key,
-                                                                      sizeof(key), value,
-                                                                      sizeof(value)),
+    check_int("k8s_split_kv_comment",
+              cbm_rs_pipeline_k8s_split_kv_v1("# comment", key, sizeof(key), value, sizeof(value)),
               0);
 }
 
@@ -8482,8 +8715,7 @@ void test_rust_pipeline_incremental_export(void) {
     check_int("incremental_recomputed_similarity",
               cbm_rs_pipeline_incremental_edge_type_is_recomputed_v1("SIMILAR_TO"), 1);
     check_int("incremental_recomputed_semantic",
-              cbm_rs_pipeline_incremental_edge_type_is_recomputed_v1("SEMANTICALLY_RELATED"),
-              1);
+              cbm_rs_pipeline_incremental_edge_type_is_recomputed_v1("SEMANTICALLY_RELATED"), 1);
     check_int("incremental_recomputed_file_changes",
               cbm_rs_pipeline_incremental_edge_type_is_recomputed_v1("FILE_CHANGES_WITH"), 1);
     check_int("incremental_recomputed_data_flows",
@@ -8499,8 +8731,8 @@ void test_rust_pipeline_incremental_export(void) {
                cbm_pipeline_incremental_edge_type_is_recomputed("SIMILAR_TO"), true);
     check_bool("incremental_direct_calls",
                cbm_pipeline_incremental_edge_type_is_recomputed("CALLS"), false);
-    check_bool("incremental_direct_null",
-               cbm_pipeline_incremental_edge_type_is_recomputed(NULL), false);
+    check_bool("incremental_direct_null", cbm_pipeline_incremental_edge_type_is_recomputed(NULL),
+               false);
 #endif
 }
 
@@ -8517,8 +8749,8 @@ void test_rust_pipeline_parallel_json_export(void) {
     check_int("parallel_json_escape_quote_value", (unsigned char)output[1], '"');
     check_int("parallel_json_escape_len",
               (int)cbm_rs_pipeline_parallel_json_escaped_len("a\"b\\c\nd"), 10);
-    check_int("parallel_json_escape_null_len",
-              (int)cbm_rs_pipeline_parallel_json_escaped_len(NULL), 0);
+    check_int("parallel_json_escape_null_len", (int)cbm_rs_pipeline_parallel_json_escaped_len(NULL),
+              0);
 
     output[0] = '?';
     output[1] = '!';
@@ -8529,8 +8761,10 @@ void test_rust_pipeline_parallel_json_export(void) {
     length = cbm_pipeline_parallel_json_escape_char(output, sizeof(output), '\f');
     check_int("parallel_json_bridge_control_len", length, 1);
     check_int("parallel_json_bridge_control_space", (unsigned char)output[0], ' ');
-    check_int("parallel_json_bridge_null_output", cbm_pipeline_parallel_json_escape_char(NULL, 2, '\t'), 2);
-    check_int("parallel_json_bridge_null_len", (int)cbm_pipeline_parallel_json_escaped_len(NULL), 0);
+    check_int("parallel_json_bridge_null_output",
+              cbm_pipeline_parallel_json_escape_char(NULL, 2, '\t'), 2);
+    check_int("parallel_json_bridge_null_len", (int)cbm_pipeline_parallel_json_escaped_len(NULL),
+              0);
 }
 
 extern int cbm_rs_discover_language_marker_v1(const char *buffer, int kind);
@@ -8539,9 +8773,12 @@ extern int cbm_discover_language_marker(const char *buffer, int kind);
 void test_rust_discover_language_markers_export(void) {
     static const char magma_nul_terminated[] = "intrinsic Foo\0(";
 
-    check_int("discover_marker_objc", cbm_rs_discover_language_marker_v1("@implementation Foo", 0), 1);
-    check_int("discover_marker_objc_false", cbm_rs_discover_language_marker_v1("function foo", 0), 0);
-    check_int("discover_marker_magma_end", cbm_rs_discover_language_marker_v1("end procedure;", 1), 1);
+    check_int("discover_marker_objc", cbm_rs_discover_language_marker_v1("@implementation Foo", 0),
+              1);
+    check_int("discover_marker_objc_false", cbm_rs_discover_language_marker_v1("function foo", 0),
+              0);
+    check_int("discover_marker_magma_end", cbm_rs_discover_language_marker_v1("end procedure;", 1),
+              1);
     check_int("discover_marker_magma_callable",
               cbm_rs_discover_language_marker_v1("intrinsic Foo(x)", 2), 1);
     check_int("discover_marker_magma_non_ascii",
@@ -8550,15 +8787,15 @@ void test_rust_discover_language_markers_export(void) {
               cbm_rs_discover_language_marker_v1("intrinsic Foo(", 2), 1);
     check_int("discover_marker_magma_empty_name",
               cbm_rs_discover_language_marker_v1("intrinsic (", 2), 0);
-    check_int("discover_marker_magma_false",
-              cbm_rs_discover_language_marker_v1("intrinsic Foo", 2), 0);
+    check_int("discover_marker_magma_false", cbm_rs_discover_language_marker_v1("intrinsic Foo", 2),
+              0);
     check_int("discover_marker_magma_nul_terminated",
               cbm_rs_discover_language_marker_v1(magma_nul_terminated, 2), 0);
     check_int("discover_marker_matlab", cbm_rs_discover_language_marker_v1("  classdef Foo", 3), 1);
     check_int("discover_marker_matlab_block", cbm_rs_discover_language_marker_v1("%{ block", 3), 0);
     check_int("discover_marker_null", cbm_rs_discover_language_marker_v1(NULL, 0), 0);
-    check_int("discover_marker_invalid_kind", cbm_rs_discover_language_marker_v1("function foo", 99),
-              0);
+    check_int("discover_marker_invalid_kind",
+              cbm_rs_discover_language_marker_v1("function foo", 99), 0);
 
     check_int("discover_marker_bridge_objc", cbm_discover_language_marker("@interface Foo", 0), 1);
     check_int("discover_marker_bridge_magma", cbm_discover_language_marker("intrinsic Foo(x)", 2),
@@ -8608,12 +8845,12 @@ void test_rust_pipeline_incremental_registry_export(void) {
 extern int cbm_rs_pipeline_semantic_fp_ends_with_v1(const char *file_path, const char *suffix);
 
 void test_rust_pipeline_semantic_suffix_export(void) {
-    check_int("semantic_fp_suffix_go", cbm_rs_pipeline_semantic_fp_ends_with_v1("pkg/api.go", ".go"),
-              1);
+    check_int("semantic_fp_suffix_go",
+              cbm_rs_pipeline_semantic_fp_ends_with_v1("pkg/api.go", ".go"), 1);
     check_int("semantic_fp_suffix_false",
               cbm_rs_pipeline_semantic_fp_ends_with_v1("pkg/api.py", ".go"), 0);
-    check_int("semantic_fp_suffix_empty", cbm_rs_pipeline_semantic_fp_ends_with_v1("pkg/api.go", ""),
-              1);
+    check_int("semantic_fp_suffix_empty",
+              cbm_rs_pipeline_semantic_fp_ends_with_v1("pkg/api.go", ""), 1);
     check_int("semantic_fp_suffix_null", cbm_rs_pipeline_semantic_fp_ends_with_v1(NULL, ".go"), 0);
     check_int("semantic_fp_suffix_case",
               cbm_rs_pipeline_semantic_fp_ends_with_v1("pkg/api.GO", ".go"), 0);
@@ -8635,8 +8872,8 @@ void test_rust_store_arch_json_prop_export(void) {
     char output[32];
     size_t length = cbm_rs_store_arch_json_prop_len_v1(json, method_key, 8);
     check_int("store_arch_json_prop_len", (int)length, 3);
-    check_int("store_arch_json_prop_copy", (int)cbm_rs_store_arch_json_prop_copy_v1(
-                                                       output, sizeof(output), json, method_key, 8),
+    check_int("store_arch_json_prop_copy",
+              (int)cbm_rs_store_arch_json_prop_copy_v1(output, sizeof(output), json, method_key, 8),
               3);
     check_str("store_arch_json_prop_value", output, "GET");
     check_int("store_arch_json_prop_missing",
@@ -8668,10 +8905,9 @@ void test_rust_ui_layout_helpers_export(void) {
     extern float cbm_rs_ui_layout_size_for_label_v1(const char *label);
     extern uint32_t cbm_rs_ui_layout_fnv1a_v1(const char *value);
     extern float cbm_rs_ui_layout_rand_float_v1(uint32_t *seed);
-    extern int cbm_rs_ui_layout_octant_v1(float ox, float oy, float oz, float x, float y,
-                                          float z);
+    extern int cbm_rs_ui_layout_octant_v1(float ox, float oy, float oz, float x, float y, float z);
     extern void cbm_rs_ui_layout_child_center_v1(float ox, float oy, float oz, float half,
-                                                  int child, float *cx, float *cy, float *cz);
+                                                 int child, float *cx, float *cy, float *cz);
     extern int cbm_rs_ui_layout_find_node_index_v1(const void *map, int count, int64_t id);
     extern int cbm_rs_ui_layout_clamp_max_nodes_v1(int requested, int cap);
 
@@ -8687,8 +8923,7 @@ void test_rust_ui_layout_helpers_export(void) {
     float jitter = cbm_rs_ui_layout_rand_float_v1(&seed);
     check_bool("ui_layout_jitter_range", jitter >= -0.5f && jitter < 0.5f, true);
     check_bool("ui_layout_jitter_seed_changed", seed != 1, true);
-    check_int("ui_layout_octant", cbm_rs_ui_layout_octant_v1(0.0f, 0.0f, 0.0f, 1.0f, -1.0f,
-                                                               1.0f),
+    check_int("ui_layout_octant", cbm_rs_ui_layout_octant_v1(0.0f, 0.0f, 0.0f, 1.0f, -1.0f, 1.0f),
               5);
     float cx = 0.0f;
     float cy = 0.0f;
@@ -8702,19 +8937,17 @@ void test_rust_ui_layout_helpers_export(void) {
         int idx;
     } test_node_id_entry_t;
     const test_node_id_entry_t map[] = {{10, 2}, {20, 4}, {30, 6}};
-    check_int("ui_layout_node_id_found",
-              cbm_rs_ui_layout_find_node_index_v1(map, 3, 20), 4);
-    check_int("ui_layout_node_id_missing",
-              cbm_rs_ui_layout_find_node_index_v1(map, 3, 25), -1);
+    check_int("ui_layout_node_id_found", cbm_rs_ui_layout_find_node_index_v1(map, 3, 20), 4);
+    check_int("ui_layout_node_id_missing", cbm_rs_ui_layout_find_node_index_v1(map, 3, 25), -1);
     check_int("ui_layout_clamp_default", cbm_rs_ui_layout_clamp_max_nodes_v1(0, 2000), 2000);
     check_int("ui_layout_clamp_requested", cbm_rs_ui_layout_clamp_max_nodes_v1(100, 2000), 100);
 }
 
 void test_rust_ui_httpd_helpers_export(void) {
     extern int cbm_rs_ui_httpd_header_name_is_v1(const char *line, size_t name_len,
-                                                  const char *name);
+                                                 const char *name);
     extern int cbm_rs_ui_httpd_copy_header_value_v1(const char *value, size_t value_len, char *out,
-                                                     size_t out_size);
+                                                    size_t out_size);
 
     check_bool("ui_httpd_header_origin", cbm_rs_ui_httpd_header_name_is_v1("Origin", 6, "origin"),
                true);
@@ -8733,8 +8966,8 @@ void test_rust_ui_httpd_helpers_export(void) {
 void test_rust_ast_profile_classifiers_export(void) {
     extern uint32_t cbm_rs_ast_profile_kind_flags_v1(const char *kind);
     extern int cbm_rs_ast_profile_halstead_insert_v1(uint32_t *set, const char *key);
-    extern int cbm_rs_ast_profile_is_param_name_v1(const char *ident, const char *const *param_names,
-                                                    int param_count);
+    extern int cbm_rs_ast_profile_is_param_name_v1(const char *ident,
+                                                   const char *const *param_names, int param_count);
     extern uint32_t cbm_ast_profile_kind_flags(const char *kind);
     extern bool cbm_ast_profile_halstead_insert(uint32_t *set, const char *key);
     extern bool cbm_ast_profile_is_param_name(const char *ident, const char **param_names,
@@ -8748,19 +8981,20 @@ void test_rust_ast_profile_classifiers_export(void) {
     check_u32("ast_profile_unknown", cbm_rs_ast_profile_kind_flags_v1("punctuation"), 0);
     check_u32("ast_profile_null", cbm_rs_ast_profile_kind_flags_v1(NULL), 0);
     uint32_t set[512] = {0};
-    check_bool("ast_profile_halstead_first", cbm_rs_ast_profile_halstead_insert_v1(set, "if"), true);
+    check_bool("ast_profile_halstead_first", cbm_rs_ast_profile_halstead_insert_v1(set, "if"),
+               true);
     check_bool("ast_profile_halstead_duplicate", cbm_rs_ast_profile_halstead_insert_v1(set, "if"),
                false);
     check_bool("ast_profile_halstead_second", cbm_rs_ast_profile_halstead_insert_v1(set, "for"),
                true);
     const char *params[] = {"count", "value"};
-    check_bool("ast_profile_param_found",
-               cbm_rs_ast_profile_is_param_name_v1("value", params, 2), true);
-    check_bool("ast_profile_param_missing",
-               cbm_rs_ast_profile_is_param_name_v1("other", params, 2), false);
+    check_bool("ast_profile_param_found", cbm_rs_ast_profile_is_param_name_v1("value", params, 2),
+               true);
+    check_bool("ast_profile_param_missing", cbm_rs_ast_profile_is_param_name_v1("other", params, 2),
+               false);
 
-    check_u32("ast_profile_bridge_boolean_operator",
-              cbm_ast_profile_kind_flags("boolean_operator"), (1u << 6) | (1u << 12));
+    check_u32("ast_profile_bridge_boolean_operator", cbm_ast_profile_kind_flags("boolean_operator"),
+              (1u << 6) | (1u << 12));
     check_u32("ast_profile_bridge_call", cbm_ast_profile_kind_flags("call_expression"), 1u << 12);
     check_u32("ast_profile_bridge_not_operator", cbm_ast_profile_kind_flags("not_operator"), 0);
     check_u32("ast_profile_bridge_null", cbm_ast_profile_kind_flags(NULL), 0);
@@ -8769,11 +9003,11 @@ void test_rust_ast_profile_classifiers_export(void) {
                cbm_ast_profile_halstead_insert(bridge_set, "if"), true);
     check_bool("ast_profile_bridge_halstead_duplicate",
                cbm_ast_profile_halstead_insert(bridge_set, "if"), false);
-    check_bool("ast_profile_bridge_halstead_empty",
-               cbm_ast_profile_halstead_insert(bridge_set, ""), true);
+    check_bool("ast_profile_bridge_halstead_empty", cbm_ast_profile_halstead_insert(bridge_set, ""),
+               true);
     uint32_t null_key_set[512] = {17};
-    check_bool("ast_profile_bridge_halstead_null_set",
-               cbm_ast_profile_halstead_insert(NULL, "if"), false);
+    check_bool("ast_profile_bridge_halstead_null_set", cbm_ast_profile_halstead_insert(NULL, "if"),
+               false);
     check_bool("ast_profile_bridge_halstead_null_key",
                cbm_ast_profile_halstead_insert(null_key_set, NULL), false);
     check_u32("ast_profile_bridge_halstead_null_key_unchanged", null_key_set[0], 17);
@@ -8795,19 +9029,34 @@ void test_rust_ast_profile_classifiers_export(void) {
 void test_rust_pipeline_usages_json_export(void) {
     extern size_t cbm_rs_pipeline_usages_local_name_len_v1(const char *json);
     extern size_t cbm_rs_pipeline_usages_local_name_copy_v1(const char *json, char *out,
-                                                             size_t out_size);
+                                                            size_t out_size);
+    extern char *cbm_pipeline_usages_extract_local_name(const char *props_json);
 
     const char *json = "{\"local_name\":\"thing\"}";
     char out[16] = {0};
-    check_size("pipeline_usages_local_name_len",
-               cbm_rs_pipeline_usages_local_name_len_v1(json), 5);
+    check_size("pipeline_usages_local_name_len", cbm_rs_pipeline_usages_local_name_len_v1(json), 5);
     check_size("pipeline_usages_local_name_copy",
                cbm_rs_pipeline_usages_local_name_copy_v1(json, out, sizeof(out)), 5);
     check_str("pipeline_usages_local_name_value", out, "thing");
-    check_size("pipeline_usages_local_name_missing",
-               cbm_rs_pipeline_usages_local_name_len_v1("{}"), SIZE_MAX);
+    check_size("pipeline_usages_local_name_missing", cbm_rs_pipeline_usages_local_name_len_v1("{}"),
+               SIZE_MAX);
     check_size("pipeline_usages_local_name_null",
                cbm_rs_pipeline_usages_local_name_copy_v1(NULL, out, sizeof(out)), SIZE_MAX);
+
+    /* 公開 bridge（default/wrapper 連 C CU；direct 連 Rust malloc ABI） */
+    char *bridge = cbm_pipeline_usages_extract_local_name(json);
+    if (!bridge || strcmp(bridge, "thing") != 0) {
+        fprintf(stderr, "pipeline_usages bridge extract failed\n");
+        free(bridge);
+        exit(EXIT_FAILURE);
+    }
+    free(bridge);
+    if (cbm_pipeline_usages_extract_local_name(NULL) != NULL ||
+        cbm_pipeline_usages_extract_local_name("{}") != NULL ||
+        cbm_pipeline_usages_extract_local_name("{\"local_name\":\"\"}") != NULL) {
+        fprintf(stderr, "pipeline_usages bridge negative cases failed\n");
+        exit(EXIT_FAILURE);
+    }
 }
 
 void test_rust_semantic_token_classifiers_export(void) {
@@ -8823,8 +9072,8 @@ void test_rust_semantic_token_classifiers_export(void) {
     check_int("semantic_token_delim_bridge_letter", cbm_semantic_is_token_delim('A'), 0);
     check_int("semantic_token_delim_bridge_high_byte", cbm_semantic_is_token_delim(0x80), 0);
     check_int("semantic_token_camel_break", cbm_rs_semantic_is_camel_break_v1("fooBar", 3), 1);
-    check_int("semantic_token_camel_break_after_upper", cbm_rs_semantic_is_camel_break_v1("FooBar", 3),
-              1);
+    check_int("semantic_token_camel_break_after_upper",
+              cbm_rs_semantic_is_camel_break_v1("FooBar", 3), 1);
     check_int("semantic_token_negative_index", cbm_rs_semantic_is_camel_break_v1("fooBar", -1), 0);
     check_int("semantic_camel_bridge_foo_bar", cbm_semantic_is_camel_break("fooBar", 3) ? 1 : 0, 1);
     check_int("semantic_camel_bridge_foo2_bar", cbm_semantic_is_camel_break("foo2Bar", 4) ? 1 : 0,

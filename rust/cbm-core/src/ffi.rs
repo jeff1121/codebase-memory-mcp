@@ -3131,6 +3131,15 @@ pub unsafe extern "C" fn cbm_rs_mcp_search_path_arg_valid_v1(input: *const c_cha
     c_int::from(mcp::search_path_arg_valid(unsafe { c_bytes(input) }))
 }
 
+#[cfg(feature = "mcp-search-path-arg-only")]
+#[no_mangle]
+/// # Safety
+///
+/// 與 v1 相同的 nullable NUL 字串契約；direct-only 匯出同名公開 bridge。
+pub unsafe extern "C" fn cbm_mcp_search_path_arg_valid(input: *const c_char) -> bool {
+    unsafe { cbm_rs_mcp_search_path_arg_valid_v1(input) != 0 }
+}
+
 #[no_mangle]
 /// # Safety
 ///
@@ -3145,6 +3154,18 @@ pub unsafe extern "C" fn cbm_rs_mcp_search_args_valid_v1(
         unsafe { c_bytes(root_path) },
         unsafe { c_bytes(file_pattern) },
     ))
+}
+
+#[cfg(feature = "mcp-search-args-only")]
+#[no_mangle]
+/// # Safety
+///
+/// 與 v1 相同 nullable NUL 字串契約；direct-only 匯出同名公開 bridge。
+pub unsafe extern "C" fn cbm_mcp_search_args_valid(
+    root_path: *const c_char,
+    file_pattern: *const c_char,
+) -> bool {
+    unsafe { cbm_rs_mcp_search_args_valid_v1(root_path, file_pattern) != 0 }
 }
 
 #[no_mangle]
@@ -3175,6 +3196,15 @@ pub unsafe extern "C" fn cbm_rs_mcp_search_mode_v1(input: *const c_char) -> c_in
     mcp::search_mode(unsafe { c_bytes(input) })
 }
 
+#[cfg(feature = "mcp-search-mode-only")]
+#[no_mangle]
+/// # Safety
+///
+/// 與 v1 相同的 nullable NUL 字串契約；direct-only 匯出同名公開 bridge。
+pub unsafe extern "C" fn cbm_mcp_search_mode(input: *const c_char) -> c_int {
+    unsafe { cbm_rs_mcp_search_mode_v1(input) }
+}
+
 #[no_mangle]
 /// # Safety
 ///
@@ -3183,6 +3213,15 @@ pub unsafe extern "C" fn cbm_rs_mcp_search_mode_v1(input: *const c_char) -> c_in
 /// 3=cross-repo-intelligence；null、空字串或未知 mode 回傳 0。
 pub unsafe extern "C" fn cbm_rs_mcp_index_mode_v1(input: *const c_char) -> c_int {
     mcp::index_mode(unsafe { c_bytes(input) })
+}
+
+#[cfg(feature = "mcp-index-mode-only")]
+#[no_mangle]
+/// # Safety
+///
+/// 與 v1 相同的 nullable NUL 字串契約；direct-only 匯出同名公開 bridge。
+pub unsafe extern "C" fn cbm_mcp_index_mode(input: *const c_char) -> c_int {
+    unsafe { cbm_rs_mcp_index_mode_v1(input) }
 }
 
 #[no_mangle]
@@ -3194,6 +3233,16 @@ pub unsafe extern "C" fn cbm_rs_mcp_index_mode_v1(input: *const c_char) -> c_int
 /// mode 回傳 CALLS。
 pub unsafe extern "C" fn cbm_rs_mcp_trace_mode_edge_mask_v1(input: *const c_char) -> u32 {
     mcp::trace_mode_edge_mask(unsafe { c_bytes(input) })
+}
+
+#[cfg(feature = "mcp-trace-mode-edge-mask-only")]
+#[no_mangle]
+/// # Safety
+///
+/// `input` 必須是 null，或指向 NUL-terminated C string。direct-only 同名公開 bridge；
+/// 回傳規則與 `cbm_rs_mcp_trace_mode_edge_mask_v1` 相同。
+pub unsafe extern "C" fn cbm_mcp_trace_mode_edge_mask(input: *const c_char) -> u32 {
+    unsafe { cbm_rs_mcp_trace_mode_edge_mask_v1(input) }
 }
 
 #[no_mangle]
@@ -3211,6 +3260,16 @@ pub unsafe extern "C" fn cbm_rs_mcp_sanitize_ascii_in_place_v1(input: *mut c_cha
     }
     let bytes = unsafe { slice::from_raw_parts_mut(input.cast::<u8>(), len) };
     mcp::sanitize_ascii_in_place(bytes);
+}
+
+#[cfg(feature = "mcp-sanitize-ascii-in-place-only")]
+#[no_mangle]
+/// # Safety
+///
+/// `input` 必須是 null，或指向可寫入的 NUL-terminated C string。direct-only 同名公開 bridge；
+/// 會就地將每個大於 127 的 byte 改為 `?`，null 為 no-op。
+pub unsafe extern "C" fn cbm_mcp_sanitize_ascii_in_place(input: *mut c_char) {
+    unsafe { cbm_rs_mcp_sanitize_ascii_in_place_v1(input) }
 }
 
 #[no_mangle]
@@ -3231,12 +3290,33 @@ pub unsafe extern "C" fn cbm_rs_mcp_search_code_score_v1(
     )
 }
 
+#[cfg(feature = "mcp-search-code-score-only")]
+#[no_mangle]
+/// # Safety
+///
+/// `label` 與 `file` 必須是 null，或指向 NUL-terminated C string。
+/// direct-only 同名公開 bridge；回傳規則與 `cbm_rs_mcp_search_code_score_v1` 相同。
+pub unsafe extern "C" fn cbm_mcp_search_code_score(
+    label: *const c_char,
+    file: *const c_char,
+    in_degree: c_int,
+) -> c_int {
+    unsafe { cbm_rs_mcp_search_code_score_v1(label, file, in_degree) }
+}
+
 #[no_mangle]
 /// `search_code` result qsort comparator score delta，對齊 C `search_result_cmp()`：
 /// left score 較高時回傳負值，right score 較高時回傳正值。此 ABI 不讀取 result
 /// struct、不排序、不碰 grep/JSON，只固定 score comparator scalar contract。
 pub extern "C" fn cbm_rs_mcp_search_score_cmp_v1(left_score: c_int, right_score: c_int) -> c_int {
     mcp::search_score_cmp(left_score, right_score)
+}
+
+#[cfg(feature = "mcp-search-score-cmp-only")]
+#[no_mangle]
+/// direct-only 同名公開 bridge。
+pub extern "C" fn cbm_mcp_search_score_cmp(left_score: c_int, right_score: c_int) -> c_int {
+    cbm_rs_mcp_search_score_cmp_v1(left_score, right_score)
 }
 
 #[no_mangle]
@@ -3255,6 +3335,21 @@ pub unsafe extern "C" fn cbm_rs_mcp_search_top_dir_v1(
     unsafe { write_c_output(buf, bufsize, output.as_deref()) }
 }
 
+#[cfg(feature = "mcp-search-top-dir-only")]
+#[no_mangle]
+/// # Safety
+///
+/// `buf` 必須是 null，或指向 `bufsize` bytes 的可寫記憶體；`file` 必須是 null，
+/// 或指向 NUL-terminated C string。direct-only 同名公開 bridge；回傳規則與
+/// `cbm_rs_mcp_search_top_dir_v1` 相同。
+pub unsafe extern "C" fn cbm_mcp_search_top_dir(
+    buf: *mut c_char,
+    bufsize: usize,
+    file: *const c_char,
+) -> usize {
+    unsafe { cbm_rs_mcp_search_top_dir_v1(buf, bufsize, file) }
+}
+
 #[no_mangle]
 /// # Safety
 ///
@@ -3263,6 +3358,16 @@ pub unsafe extern "C" fn cbm_rs_mcp_search_top_dir_v1(
 /// impacted symbols；其他值只輸出 changed files。
 pub unsafe extern "C" fn cbm_rs_mcp_detect_changes_wants_symbols_v1(scope: *const c_char) -> c_int {
     i32::from(mcp::detect_changes_wants_symbols(unsafe { c_bytes(scope) }))
+}
+
+#[cfg(feature = "mcp-detect-changes-scope-only")]
+#[no_mangle]
+/// # Safety
+///
+/// `scope` 必須是 null，或指向 NUL-terminated C string。direct-only 同名公開 bridge；
+/// 回傳規則與 `cbm_rs_mcp_detect_changes_wants_symbols_v1` 相同。
+pub unsafe extern "C" fn cbm_mcp_detect_changes_wants_symbols(scope: *const c_char) -> bool {
+    unsafe { cbm_rs_mcp_detect_changes_wants_symbols_v1(scope) != 0 }
 }
 
 #[no_mangle]
@@ -3279,6 +3384,16 @@ pub unsafe extern "C" fn cbm_rs_mcp_detect_changes_impacted_label_v1(
     }))
 }
 
+#[cfg(feature = "mcp-detect-changes-label-only")]
+#[no_mangle]
+/// # Safety
+///
+/// `label` 必須是 null，或指向 NUL-terminated C string。direct-only 同名公開 bridge；
+/// 回傳規則與 `cbm_rs_mcp_detect_changes_impacted_label_v1` 相同。
+pub unsafe extern "C" fn cbm_mcp_detect_changes_impacted_label(label: *const c_char) -> bool {
+    unsafe { cbm_rs_mcp_detect_changes_impacted_label_v1(label) != 0 }
+}
+
 #[no_mangle]
 /// # Safety
 ///
@@ -3291,6 +3406,16 @@ pub unsafe extern "C" fn cbm_rs_mcp_detect_changes_status_path_offset_v1(
     mcp::detect_changes_status_path_offset(unsafe { c_bytes(line) })
 }
 
+#[cfg(feature = "mcp-detect-changes-status-only")]
+#[no_mangle]
+/// # Safety
+///
+/// `line` 必須是 null，或指向 NUL-terminated C string。direct-only 同名公開 bridge；
+/// 回傳規則與 `cbm_rs_mcp_detect_changes_status_path_offset_v1` 相同。
+pub unsafe extern "C" fn cbm_mcp_detect_changes_status_path_offset(line: *const c_char) -> usize {
+    unsafe { cbm_rs_mcp_detect_changes_status_path_offset_v1(line) }
+}
+
 #[no_mangle]
 /// `search_code` tightest-node classifier 的單一 node span helper。
 /// 命中時回傳 `end_line - start_line`，未命中回傳 -1。
@@ -3301,6 +3426,17 @@ pub extern "C" fn cbm_rs_mcp_search_line_match_span_v1(
 ) -> c_int {
     mcp::search_line_match_span(i64::from(start_line), i64::from(end_line), i64::from(line))
         as c_int
+}
+
+#[cfg(feature = "mcp-search-line-span-only")]
+#[no_mangle]
+/// direct-only 同名公開 bridge。
+pub extern "C" fn cbm_mcp_search_line_match_span(
+    start_line: c_int,
+    end_line: c_int,
+    line: c_int,
+) -> c_int {
+    cbm_rs_mcp_search_line_match_span_v1(start_line, end_line, line)
 }
 
 #[no_mangle]
@@ -3350,6 +3486,13 @@ pub extern "C" fn cbm_rs_mcp_utf8_is_cont_v1(byte: c_int) -> c_int {
     i32::from(mcp::utf8_is_cont_byte(b))
 }
 
+#[cfg(feature = "mcp-utf8-is-cont-only")]
+#[no_mangle]
+/// direct-only 同名公開 bridge；僅判斷 `byte` 的低 8 bits。
+pub extern "C" fn cbm_mcp_utf8_is_cont_byte(byte: c_int) -> bool {
+    cbm_rs_mcp_utf8_is_cont_v1(byte) != 0
+}
+
 #[no_mangle]
 /// # Safety
 ///
@@ -3368,6 +3511,20 @@ pub unsafe extern "C" fn cbm_rs_mcp_node_resolution_score_v1(
     ) as c_long
 }
 
+#[cfg(feature = "mcp-node-resolution-score-only")]
+#[no_mangle]
+/// # Safety
+///
+/// `label` 必須是 null，或指向 NUL-terminated C string。direct-only 同名公開 bridge；
+/// 回傳規則與 `cbm_rs_mcp_node_resolution_score_v1` 相同。
+pub unsafe extern "C" fn cbm_mcp_node_resolution_score(
+    label: *const c_char,
+    start_line: c_int,
+    end_line: c_int,
+) -> c_long {
+    unsafe { cbm_rs_mcp_node_resolution_score_v1(label, start_line, end_line) }
+}
+
 #[no_mangle]
 /// # Safety
 ///
@@ -3375,6 +3532,16 @@ pub unsafe extern "C" fn cbm_rs_mcp_node_resolution_score_v1(
 /// `manage_adr.mode` dispatch：0=get/default、1=update/store、2=sections。
 pub unsafe extern "C" fn cbm_rs_mcp_adr_mode_v1(input: *const c_char) -> c_int {
     mcp::adr_mode(unsafe { c_bytes(input) })
+}
+
+#[cfg(feature = "mcp-adr-mode-only")]
+#[no_mangle]
+/// # Safety
+///
+/// `input` 必須是 null，或指向 NUL-terminated C string。direct-only 同名公開 bridge；
+/// 回傳規則與 `cbm_rs_mcp_adr_mode_v1` 相同。
+pub unsafe extern "C" fn cbm_mcp_adr_mode(input: *const c_char) -> c_int {
+    unsafe { cbm_rs_mcp_adr_mode_v1(input) }
 }
 
 #[no_mangle]
@@ -3417,6 +3584,21 @@ pub unsafe extern "C" fn cbm_rs_mcp_bm25_build_match_v1(
     tokens
 }
 
+#[cfg(feature = "mcp-bm25-build-match-only")]
+#[no_mangle]
+/// # Safety
+///
+/// `input` 必須是 null，或指向 NUL-terminated C string；`buf` 必須是 null，或指向
+/// `bufsize` bytes 的可寫記憶體。direct-only 同名公開 bridge；只輸出完整 token，並回傳
+/// 已輸出的 token 數；invalid/null/過小 buffer 回 0，且不寫入。
+pub unsafe extern "C" fn cbm_mcp_bm25_build_match(
+    input: *const c_char,
+    buf: *mut c_char,
+    bufsize: usize,
+) -> c_int {
+    unsafe { cbm_rs_mcp_bm25_build_match_v1(buf, bufsize, input) }
+}
+
 #[no_mangle]
 /// # Safety
 ///
@@ -3433,6 +3615,22 @@ pub unsafe extern "C" fn cbm_rs_mcp_bm25_file_pattern_like_v1(
     unsafe { write_c_output(buf, bufsize, output.as_deref()) }
 }
 
+#[cfg(feature = "mcp-bm25-file-pattern-like-only")]
+#[no_mangle]
+/// # Safety
+///
+/// `buf` 必須是 null，或指向 `bufsize` bytes 的可寫記憶體；`input` 必須是
+/// null，或指向 NUL-terminated C string。direct-only 同名公開 bridge；成功時回傳完整
+/// SQL LIKE pattern byte 長度，短 buffer 會截斷但 NUL-terminate，`input == NULL` 回傳
+/// `SIZE_MAX`。
+pub unsafe extern "C" fn cbm_mcp_bm25_file_pattern_like(
+    buf: *mut c_char,
+    bufsize: usize,
+    input: *const c_char,
+) -> usize {
+    unsafe { cbm_rs_mcp_bm25_file_pattern_like_v1(buf, bufsize, input) }
+}
+
 #[no_mangle]
 /// # Safety
 ///
@@ -3446,6 +3644,37 @@ pub unsafe extern "C" fn cbm_rs_mcp_sanitize_utf8_lossy_v1(
 ) -> usize {
     let output = mcp::sanitize_utf8_lossy(unsafe { c_bytes(input) });
     unsafe { write_c_output(buf, bufsize, output.as_deref()) }
+}
+
+#[cfg(feature = "mcp-sanitize-utf8-lossy-only")]
+unsafe extern "C" {
+    fn malloc(size: usize) -> *mut c_void;
+}
+
+#[cfg(feature = "mcp-sanitize-utf8-lossy-only")]
+#[no_mangle]
+/// # Safety
+///
+/// `input` 必須是 null，或指向 NUL-terminated C string。成功時回傳 C `malloc` 字串，
+/// caller 必須 `free()`；null input 或配置失敗回傳 null。
+pub unsafe extern "C" fn cbm_mcp_sanitize_utf8_lossy(input: *const c_char) -> *mut c_char {
+    let Some(output) = mcp::sanitize_utf8_lossy(unsafe { c_bytes(input) }) else {
+        return ptr::null_mut();
+    };
+    let Some(size) = output.len().checked_add(1) else {
+        return ptr::null_mut();
+    };
+    let out = unsafe { malloc(size) }.cast::<c_char>();
+    if out.is_null() {
+        return ptr::null_mut();
+    }
+    unsafe {
+        if !output.is_empty() {
+            ptr::copy_nonoverlapping(output.as_ptr().cast::<c_char>(), out, output.len());
+        }
+        *out.add(output.len()) = 0;
+    }
+    out
 }
 
 #[no_mangle]
@@ -3465,6 +3694,18 @@ pub unsafe extern "C" fn cbm_rs_mcp_architecture_aspect_wanted_v1(
     ))
 }
 
+#[cfg(feature = "mcp-architecture-aspect-wanted-only")]
+#[no_mangle]
+/// # Safety
+///
+/// `input` 與 `name` 必須是 null，或指向 NUL-terminated C string。
+pub unsafe extern "C" fn cbm_mcp_architecture_aspect_wanted(
+    input: *const c_char,
+    name: *const c_char,
+) -> c_int {
+    unsafe { cbm_rs_mcp_architecture_aspect_wanted_v1(input, name) }
+}
+
 #[no_mangle]
 /// # Safety
 ///
@@ -3475,6 +3716,16 @@ pub unsafe extern "C" fn cbm_rs_mcp_trace_is_test_file_v1(input: *const c_char) 
     c_int::from(mcp::trace_is_test_file(unsafe { c_bytes(input) }))
 }
 
+#[cfg(feature = "mcp-trace-is-test-file-only")]
+#[no_mangle]
+/// # Safety
+///
+/// `input` 必須是 null，或指向 NUL-terminated C string。direct-only 同名公開 bridge；
+/// 回傳規則與 `cbm_rs_mcp_trace_is_test_file_v1` 相同。
+pub unsafe extern "C" fn cbm_mcp_trace_is_test_file(input: *const c_char) -> bool {
+    unsafe { cbm_rs_mcp_trace_is_test_file_v1(input) != 0 }
+}
+
 #[no_mangle]
 /// # Safety
 ///
@@ -3482,6 +3733,16 @@ pub unsafe extern "C" fn cbm_rs_mcp_trace_is_test_file_v1(input: *const c_char) 
 /// MCP cache scan 可考慮的 project `.db` 檔；null 或 internal/temp marker 回傳 0。
 pub unsafe extern "C" fn cbm_rs_mcp_project_db_file_name_v1(input: *const c_char) -> c_int {
     c_int::from(mcp::project_db_file_name(unsafe { c_bytes(input) }))
+}
+
+#[cfg(feature = "mcp-project-db-file-name-only")]
+#[no_mangle]
+/// # Safety
+///
+/// `input` 必須是 null，或指向 NUL-terminated C string。direct-only 同名公開 bridge；
+/// 回傳規則與 `cbm_rs_mcp_project_db_file_name_v1` 相同。
+pub unsafe extern "C" fn cbm_mcp_project_db_file_name(input: *const c_char) -> bool {
+    unsafe { cbm_rs_mcp_project_db_file_name_v1(input) != 0 }
 }
 
 #[no_mangle]
@@ -6479,6 +6740,126 @@ pub unsafe extern "C" fn cbm_rs_pipeline_tokenize_decorator_v1(
     unsafe { cbm_rs_pipeline_enrichment_write_tokens(tokens, out) }
 }
 
+#[cfg(feature = "pipeline-enrichment-tokens-only")]
+#[no_mangle]
+/// # Safety
+///
+/// `value` 必須是 null 或有效的 NUL 結尾 C string；`out` 必須能寫入至少 `max_out` 個指標。
+pub unsafe extern "C" fn cbm_split_camel_case(
+    value: *const std::os::raw::c_char,
+    out: *mut *mut std::os::raw::c_char,
+    max_out: std::os::raw::c_int,
+) -> std::os::raw::c_int {
+    unsafe { cbm_rs_pipeline_split_camel_case_v1(value, out, max_out) }
+}
+
+#[cfg(feature = "pipeline-enrichment-tokens-only")]
+#[no_mangle]
+/// # Safety
+///
+/// `value` 必須是 null 或有效的 NUL 結尾 C string；`out` 必須能寫入至少 `max_out` 個指標。
+pub unsafe extern "C" fn cbm_tokenize_decorator(
+    value: *const std::os::raw::c_char,
+    out: *mut *mut std::os::raw::c_char,
+    max_out: std::os::raw::c_int,
+) -> std::os::raw::c_int {
+    unsafe { cbm_rs_pipeline_tokenize_decorator_v1(value, out, max_out) }
+}
+
+#[cfg(test)]
+mod pipeline_enrichment_ffi_tests {
+    use super::{cbm_rs_pipeline_split_camel_case_v1, cbm_rs_pipeline_tokenize_decorator_v1};
+    use std::ffi::{c_void, CStr};
+    use std::os::raw::c_char;
+    use std::ptr;
+
+    unsafe extern "C" {
+        #[link_name = "free"]
+        fn cbm_rs_test_free(ptr: *mut c_void);
+    }
+
+    #[test]
+    fn enrichment_rejects_invalid_arguments_without_writing_output() {
+        let value = b"postMapping\0";
+        let sentinel = value.as_ptr().cast_mut().cast::<c_char>();
+        let mut output = [sentinel; 2];
+
+        unsafe {
+            assert_eq!(
+                cbm_rs_pipeline_split_camel_case_v1(ptr::null(), output.as_mut_ptr(), 2),
+                0
+            );
+            assert_eq!(output, [sentinel; 2]);
+            assert_eq!(
+                cbm_rs_pipeline_split_camel_case_v1(value.as_ptr().cast(), ptr::null_mut(), 2),
+                0
+            );
+            assert_eq!(
+                cbm_rs_pipeline_tokenize_decorator_v1(
+                    value.as_ptr().cast(),
+                    output.as_mut_ptr(),
+                    0
+                ),
+                0
+            );
+            assert_eq!(output, [sentinel; 2]);
+            assert_eq!(
+                cbm_rs_pipeline_tokenize_decorator_v1(
+                    value.as_ptr().cast(),
+                    output.as_mut_ptr(),
+                    -1
+                ),
+                0
+            );
+            assert_eq!(output, [sentinel; 2]);
+        }
+    }
+
+    #[test]
+    fn enrichment_stops_at_first_nul_and_preserves_ascii_only_bytes() {
+        let split_value = b"loadHTTPServerNext\0ignored";
+        let decorator_value = b"@M\xC9thod\0Mapping";
+        let sentinel = split_value.as_ptr().cast_mut().cast::<c_char>();
+        let mut parts = [
+            ptr::null_mut::<c_char>(),
+            ptr::null_mut::<c_char>(),
+            sentinel,
+        ];
+        let mut tokens = [ptr::null_mut::<c_char>(); 2];
+
+        let part_count = unsafe {
+            cbm_rs_pipeline_split_camel_case_v1(split_value.as_ptr().cast(), parts.as_mut_ptr(), 2)
+        };
+        let token_count = unsafe {
+            cbm_rs_pipeline_tokenize_decorator_v1(
+                decorator_value.as_ptr().cast(),
+                tokens.as_mut_ptr(),
+                2,
+            )
+        };
+
+        assert_eq!(part_count, 2);
+        assert_eq!(unsafe { CStr::from_ptr(parts[0]) }.to_bytes(), b"load");
+        assert_eq!(
+            unsafe { CStr::from_ptr(parts[1]) }.to_bytes(),
+            b"HTTPServer"
+        );
+        assert_eq!(parts[2], sentinel);
+        assert_eq!(token_count, 1);
+        assert_eq!(
+            unsafe { CStr::from_ptr(tokens[0]) }.to_bytes(),
+            b"m\xC9thod"
+        );
+
+        for value in parts.iter().take(part_count as usize) {
+            unsafe { cbm_rs_test_free((*value).cast()) };
+        }
+        for value in tokens.iter().take(token_count as usize) {
+            unsafe { cbm_rs_test_free((*value).cast()) };
+        }
+    }
+}
+
 #[no_mangle]
 /// # Safety
 ///
@@ -6504,6 +6885,44 @@ pub unsafe extern "C" fn cbm_rs_pipeline_calls_extract_local_name_v1(
         }
     }
     output.len()
+}
+
+#[cfg(feature = "pipeline-calls-json-only")]
+unsafe extern "C" {
+    fn malloc(size: usize) -> *mut c_void;
+}
+
+#[cfg(feature = "pipeline-calls-json-only")]
+#[no_mangle]
+/// # Safety
+///
+/// `props_json` 必須是 null 或有效的 NUL 結尾 C string。成功時回傳 C `malloc` 字串，
+/// caller 必須 `free()`；失敗回傳 null。
+pub unsafe extern "C" fn cbm_pipeline_calls_extract_local_name(
+    props_json: *const std::os::raw::c_char,
+) -> *mut std::os::raw::c_char {
+    let json = if props_json.is_null() {
+        None
+    } else {
+        Some(unsafe { std::ffi::CStr::from_ptr(props_json) }.to_bytes())
+    };
+    let Some(output) = crate::pipeline_calls::extract_local_name(json) else {
+        return ptr::null_mut();
+    };
+    let Some(size) = output.len().checked_add(1) else {
+        return ptr::null_mut();
+    };
+    let out = unsafe { malloc(size) }.cast::<c_char>();
+    if out.is_null() {
+        return ptr::null_mut();
+    }
+    unsafe {
+        if !output.is_empty() {
+            ptr::copy_nonoverlapping(output.as_ptr().cast::<c_char>(), out, output.len());
+        }
+        *out.add(output.len()) = 0;
+    }
+    out
 }
 
 #[no_mangle]
@@ -6848,6 +7267,136 @@ pub unsafe extern "C" fn cbm_rs_pipeline_pkgmap_build_entry_path_v1(
     };
     let output = crate::pipeline_pkgmap::build_entry_path(rel_path, suffix);
     unsafe { cbm_rs_pipeline_pkgmap_copy_path_output(&output, buf, bufsize) }
+}
+
+#[cfg(feature = "pipeline-pkgmap-text-only")]
+unsafe fn cbm_rs_pipeline_pkgmap_allocate_path(output: &[u8]) -> *mut std::os::raw::c_char {
+    let Some(size) = output.len().checked_add(1) else {
+        return std::ptr::null_mut();
+    };
+    let allocated = unsafe { cbm_rs_malloc(size) }.cast::<u8>();
+    if allocated.is_null() {
+        return std::ptr::null_mut();
+    }
+    unsafe {
+        std::ptr::copy_nonoverlapping(output.as_ptr(), allocated, output.len());
+        *allocated.add(output.len()) = 0;
+    }
+    allocated.cast()
+}
+
+#[cfg(feature = "pipeline-pkgmap-text-only")]
+#[no_mangle]
+/// # Safety
+///
+/// 與 v1 相同契約；source 與 prefix 分別必須指向至少 available 與 prefix_len 個 byte。
+pub unsafe extern "C" fn cbm_pipeline_pkgmap_at_prefix(
+    source: *const std::os::raw::c_char,
+    available: usize,
+    prefix: *const std::os::raw::c_char,
+    prefix_len: std::os::raw::c_int,
+) -> std::os::raw::c_int {
+    unsafe { cbm_rs_pipeline_pkgmap_at_prefix_v1(source, available, prefix, prefix_len) }
+}
+
+#[cfg(feature = "pipeline-pkgmap-text-only")]
+#[no_mangle]
+/// # Safety
+///
+/// 與 v1 相同契約；成功結果借用 source，僅在 source 仍有效時可使用。
+pub unsafe extern "C" fn cbm_pipeline_pkgmap_find_line_value(
+    source: *const std::os::raw::c_char,
+    source_len: std::os::raw::c_int,
+    prefix: *const std::os::raw::c_char,
+) -> *const std::os::raw::c_char {
+    let offset =
+        unsafe { cbm_rs_pipeline_pkgmap_find_line_value_offset_v1(source, source_len, prefix) };
+    if offset < 0 {
+        return std::ptr::null();
+    }
+    unsafe { source.add(offset as usize) }
+}
+
+#[cfg(feature = "pipeline-pkgmap-text-only")]
+#[no_mangle]
+/// # Safety
+///
+/// path 必須是 null 或有效的 NUL 結尾 C string；成功結果由 C malloc 配置，caller 必須 free()。
+pub unsafe extern "C" fn cbm_pipeline_pkgmap_path_dirname(
+    path: *const std::os::raw::c_char,
+) -> *mut std::os::raw::c_char {
+    let path = if path.is_null() {
+        None
+    } else {
+        Some(unsafe { std::ffi::CStr::from_ptr(path) }.to_bytes())
+    };
+    let output = crate::pipeline_pkgmap::path_dirname(path);
+    unsafe { cbm_rs_pipeline_pkgmap_allocate_path(&output) }
+}
+
+#[cfg(feature = "pipeline-pkgmap-text-only")]
+#[no_mangle]
+/// # Safety
+///
+/// path 必須是 null 或有效的 NUL 結尾 C string；成功結果由 C malloc 配置，caller 必須 free()。
+pub unsafe extern "C" fn cbm_pipeline_pkgmap_strip_extension(
+    path: *const std::os::raw::c_char,
+) -> *mut std::os::raw::c_char {
+    let path = if path.is_null() {
+        None
+    } else {
+        Some(unsafe { std::ffi::CStr::from_ptr(path) }.to_bytes())
+    };
+    let output = crate::pipeline_pkgmap::strip_extension(path);
+    unsafe { cbm_rs_pipeline_pkgmap_allocate_path(&output) }
+}
+
+#[cfg(feature = "pipeline-pkgmap-text-only")]
+#[no_mangle]
+/// # Safety
+///
+/// dir 與 entry 必須是 null 或有效的 NUL 結尾 C string；成功結果由 C malloc 配置，caller 必須 free()。
+pub unsafe extern "C" fn cbm_pipeline_pkgmap_join_and_strip(
+    dir: *const std::os::raw::c_char,
+    entry: *const std::os::raw::c_char,
+) -> *mut std::os::raw::c_char {
+    let dir = if dir.is_null() {
+        None
+    } else {
+        Some(unsafe { std::ffi::CStr::from_ptr(dir) }.to_bytes())
+    };
+    let entry = if entry.is_null() {
+        None
+    } else {
+        Some(unsafe { std::ffi::CStr::from_ptr(entry) }.to_bytes())
+    };
+    let Some(output) = crate::pipeline_pkgmap::join_and_strip(dir, entry) else {
+        return std::ptr::null_mut();
+    };
+    unsafe { cbm_rs_pipeline_pkgmap_allocate_path(&output) }
+}
+
+#[cfg(feature = "pipeline-pkgmap-text-only")]
+#[no_mangle]
+/// # Safety
+///
+/// rel_path 與 suffix 必須是 null 或有效的 NUL 結尾 C string；結果由 C malloc 配置，caller 必須 free()。
+pub unsafe extern "C" fn cbm_pipeline_pkgmap_build_entry_path(
+    rel_path: *const std::os::raw::c_char,
+    suffix: *const std::os::raw::c_char,
+) -> *mut std::os::raw::c_char {
+    let rel_path = if rel_path.is_null() {
+        None
+    } else {
+        Some(unsafe { std::ffi::CStr::from_ptr(rel_path) }.to_bytes())
+    };
+    let suffix = if suffix.is_null() {
+        None
+    } else {
+        Some(unsafe { std::ffi::CStr::from_ptr(suffix) }.to_bytes())
+    };
+    let output = crate::pipeline_pkgmap::build_entry_path(rel_path, suffix);
+    unsafe { cbm_rs_pipeline_pkgmap_allocate_path(&output) }
 }
 
 #[no_mangle]
@@ -7715,6 +8264,44 @@ pub unsafe extern "C" fn cbm_rs_pipeline_usages_local_name_copy_v1(
         *out.add(value.len()) = 0;
     }
     value.len()
+}
+
+#[cfg(feature = "pipeline-usages-json-only")]
+unsafe extern "C" {
+    fn malloc(size: usize) -> *mut c_void;
+}
+
+#[cfg(feature = "pipeline-usages-json-only")]
+#[no_mangle]
+/// # Safety
+///
+/// `props_json` 必須是 null 或有效的 NUL 結尾 C string。成功時回傳 C `malloc` 字串，
+/// caller 必須 `free()`；失敗回傳 null。
+pub unsafe extern "C" fn cbm_pipeline_usages_extract_local_name(
+    props_json: *const std::os::raw::c_char,
+) -> *mut std::os::raw::c_char {
+    let json = if props_json.is_null() {
+        None
+    } else {
+        Some(unsafe { std::ffi::CStr::from_ptr(props_json) }.to_bytes())
+    };
+    let Some(output) = crate::pipeline_usages::extract_local_name(json) else {
+        return ptr::null_mut();
+    };
+    let Some(size) = output.len().checked_add(1) else {
+        return ptr::null_mut();
+    };
+    let out = unsafe { malloc(size) }.cast::<c_char>();
+    if out.is_null() {
+        return ptr::null_mut();
+    }
+    unsafe {
+        if !output.is_empty() {
+            ptr::copy_nonoverlapping(output.as_ptr().cast::<c_char>(), out, output.len());
+        }
+        *out.add(output.len()) = 0;
+    }
+    out
 }
 
 #[no_mangle]

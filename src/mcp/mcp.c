@@ -41,6 +41,28 @@ enum {
 #define SLEN(s) (sizeof(s) - 1)
 #include "mcp/mcp.h"
 #include "mcp/edge_type_valid.h"
+#include "mcp/search_mode.h"
+#include "mcp/index_mode.h"
+#include "mcp/search_path_arg.h"
+#include "mcp/search_line_span.h"
+#include "mcp/search_args.h"
+#include "mcp/search_code_score.h"
+#include "mcp/search_score_cmp.h"
+#include "mcp/search_top_dir.h"
+#include "mcp/detect_changes_scope.h"
+#include "mcp/detect_changes_label.h"
+#include "mcp/detect_changes_status.h"
+#include "mcp/node_resolution_score.h"
+#include "mcp/utf8_is_cont.h"
+#include "mcp/adr_mode.h"
+#include "mcp/trace_mode_edge_mask.h"
+#include "mcp/trace_is_test_file.h"
+#include "mcp/project_db_file_name.h"
+#include "mcp/sanitize_ascii_in_place.h"
+#include "mcp/sanitize_utf8_lossy.h"
+#include "mcp/architecture_aspect_wanted.h"
+#include "mcp/bm25_file_pattern_like.h"
+#include "mcp/bm25_build_match.h"
 #include "store/store.h"
 #include <sqlite3.h>
 #include "cypher/cypher.h"
@@ -207,34 +229,14 @@ extern int cbm_rs_mcp_get_int_arg_v1(const unsigned char *input, int len, const 
                                      int default_value);
 extern int cbm_rs_mcp_get_bool_arg_v1(const unsigned char *input, int len, const char *key);
 extern int cbm_rs_mcp_edge_type_valid_v1(const char *input);
-extern int cbm_rs_mcp_search_path_arg_valid_v1(const char *input);
-extern int cbm_rs_mcp_search_args_valid_v1(const char *root_path, const char *file_pattern);
+
 extern size_t cbm_rs_mcp_strip_root_prefix_offset_v1(const char *path, const char *root,
                                                      size_t root_len);
-extern int cbm_rs_mcp_search_mode_v1(const char *input);
-extern int cbm_rs_mcp_index_mode_v1(const char *input);
-extern uint32_t cbm_rs_mcp_trace_mode_edge_mask_v1(const char *input);
-extern void cbm_rs_mcp_sanitize_ascii_in_place_v1(char *input);
-extern int cbm_rs_mcp_search_code_score_v1(const char *label, const char *file, int in_degree);
-extern int cbm_rs_mcp_search_score_cmp_v1(int left_score, int right_score);
-extern size_t cbm_rs_mcp_search_top_dir_v1(char *buf, size_t bufsize, const char *file);
-extern int cbm_rs_mcp_detect_changes_wants_symbols_v1(const char *scope);
-extern int cbm_rs_mcp_detect_changes_impacted_label_v1(const char *label);
-extern size_t cbm_rs_mcp_detect_changes_status_path_offset_v1(const char *line);
-extern int cbm_rs_mcp_search_line_match_span_v1(int start_line, int end_line, int line);
 extern int cbm_rs_mcp_search_pick_resolved_index_v1(const long *scores, int count,
                                                     int *ambiguous_out);
 extern int cbm_rs_mcp_search_pick_tightest_index_v1(const int *spans, int count);
-extern int cbm_rs_mcp_utf8_is_cont_v1(int byte);
-extern long cbm_rs_mcp_node_resolution_score_v1(const char *label, int start_line, int end_line);
-extern int cbm_rs_mcp_adr_mode_v1(const char *input);
 extern size_t cbm_rs_mcp_adr_sections_json_v1(char *buf, size_t bufsize, const char *content);
-extern int cbm_rs_mcp_bm25_build_match_v1(char *buf, size_t bufsize, const char *input);
 extern size_t cbm_rs_mcp_bm25_file_pattern_like_v1(char *buf, size_t bufsize, const char *input);
-extern size_t cbm_rs_mcp_sanitize_utf8_lossy_v1(char *buf, size_t bufsize, const char *input);
-extern int cbm_rs_mcp_architecture_aspect_wanted_v1(const char *input, const char *name);
-extern int cbm_rs_mcp_trace_is_test_file_v1(const char *input);
-extern int cbm_rs_mcp_project_db_file_name_v1(const char *input);
 extern int cbm_rs_mcp_cancel_request_matches_v1(const char *params_json, int64_t active_id,
                                                 const char *active_id_str);
 extern size_t cbm_rs_mcp_jsonrpc_format_error_v1(char *buf, size_t bufsize, int64_t id, int code,
@@ -1412,14 +1414,14 @@ static const char *project_db_path(const char *project, char *buf, size_t bufsz)
  * /corrupt dbs (0-byte file, missing `projects` table, or >1 row). On success
  * the internal name is copied into name_out; if out_store is non-NULL the open
  * handle is transferred to the caller (who must cbm_store_close it). On failure
- * the store is always closed. Defined after is_project_db_file below. */
+ * the store is always closed. */
 static bool db_internal_project_name(const char *full_path, char *name_out, size_t name_sz,
                                      cbm_store_t **out_store);
 
 /* #704 fallback: scan the cache dir for the db whose sole internal project name
  * equals `project`, returning an open store handle (caller owns it) or NULL.
  * Used only when <project>.db is absent or its internal name differs from the
- * passed name (drifted filename). Defined after is_project_db_file below. */
+ * passed name (drifted filename). */
 static cbm_store_t *resolve_store_fallback_scan(const char *project);
 
 /* Open the right project's .db file for query tools.
@@ -1509,9 +1511,6 @@ static cbm_store_t *resolve_store(cbm_mcp_server_t *srv, const char *project) {
     return srv->store;
 }
 
-/* Forward decl — definition lives below alongside list_projects. */
-static bool is_project_db_file(const char *name, size_t len);
-
 /* Forward decl — definition lives below in handle_trace_call_path's helpers. */
 static void free_node_contents(cbm_node_t *n);
 
@@ -1527,8 +1526,7 @@ static int collect_db_project_names(const char *dir_path, char *out, size_t out_
     cbm_dirent_t *entry;
     while ((entry = cbm_readdir(d)) != NULL) {
         const char *n = entry->name;
-        size_t len = strlen(n);
-        if (!is_project_db_file(n, len)) {
+        if (!cbm_mcp_project_db_file_name(n)) {
             continue;
         }
         /* #704: advertise the db's INTERNAL project name, not its filename, and
@@ -1691,27 +1689,6 @@ static char *build_no_store_error(const char *project) {
 
 /* ── Tool handler implementations ─────────────────────────────── */
 
-/* Return true if filename is a valid project .db file (not temp/internal).
- *
- * Project names derived from /tmp/... source roots legitimately begin with
- * "tmp-" (cbm_project_name_from_path: "/tmp/bench/..." → "tmp-bench-...";
- * see tests/test_pipeline.c fixtures), so the prefix must NOT be excluded.
- * The "_" prefix is reserved for internal/hidden DBs, and ":memory:" is the
- * SQLite in-memory marker (defensive — never appears as a real file). */
-static bool is_project_db_file(const char *name, size_t len) {
-#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
-    (void)len;
-    return cbm_rs_mcp_project_db_file_name_v1(name) != 0;
-#endif
-    if (len < MCP_MIN_DB_NAME || strcmp(name + len - MCP_DB_EXT, ".db") != 0) {
-        return false;
-    }
-    if (strncmp(name, "_", SLEN("_")) == 0 || strncmp(name, ":memory:", SLEN(":memory:")) == 0) {
-        return false;
-    }
-    return true;
-}
-
 /* db_internal_project_name — see forward declaration above resolve_store. */
 static bool db_internal_project_name(const char *full_path, char *name_out, size_t name_sz,
                                      cbm_store_t **out_store) {
@@ -1751,8 +1728,7 @@ static cbm_store_t *resolve_store_fallback_scan(const char *project) {
     cbm_dirent_t *entry;
     while ((entry = cbm_readdir(d)) != NULL) {
         const char *n = entry->name;
-        size_t len = strlen(n);
-        if (!is_project_db_file(n, len)) {
+        if (!cbm_mcp_project_db_file_name(n)) {
             continue;
         }
         char full_path[CBM_SZ_2K];
@@ -1843,7 +1819,7 @@ static char *handle_list_projects(cbm_mcp_server_t *srv, const char *args) {
     while ((entry = cbm_readdir(d)) != NULL) {
         const char *name = entry->name;
         size_t len = strlen(name);
-        if (!is_project_db_file(name, len)) {
+        if (!cbm_mcp_project_db_file_name(name)) {
             continue;
         }
         char full_path[CBM_SZ_2K];
@@ -2008,8 +1984,6 @@ static void enrich_connected(yyjson_mut_doc *doc, yyjson_mut_val *item, cbm_stor
  * inject FTS5 operators or double-quoted phrases.  Returns the number of
  * tokens emitted (0 if the query contained no usable terms). */
 enum {
-    BM25_MIN_BUF = 2, /* minimum buffer size: at least NUL + one char */
-    BM25_SEP_RESERVE = 1,
     BM25_QUERY_BUF = 1024,
     BM25_DEFAULT_LIMIT = 100,
     BM25_COL_ID = 0,
@@ -2046,82 +2020,19 @@ static sqlite3_destructor_type mcp_sqlite_transient(void) {
 }
 #define MCP_SQLITE_TRANSIENT (mcp_sqlite_transient())
 
-static int bm25_build_match(const char *query, char *out, size_t out_size) {
-#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
-    return cbm_rs_mcp_bm25_build_match_v1(out, out_size, query);
-#endif
-    if (!query || !out || out_size < BM25_MIN_BUF) {
-        return 0;
-    }
-    size_t pos = 0;
-    int tokens = 0;
-    const char *p = query;
-    while (*p) {
-        while (*p && !((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
-                       (*p >= '0' && *p <= '9') || *p == '_')) {
-            p++;
-        }
-        if (!*p) {
-            break;
-        }
-        const char *tok_start = p;
-        while (*p && ((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
-                      (*p >= '0' && *p <= '9') || *p == '_')) {
-            p++;
-        }
-        size_t tok_len = (size_t)(p - tok_start);
-        if (tok_len == 0) {
-            continue;
-        }
-        const char *sep = (tokens > 0) ? " OR " : "";
-        size_t sep_len = strlen(sep);
-        if (pos + sep_len + tok_len + BM25_SEP_RESERVE >= out_size) {
-            break; /* out of room — stop cleanly, keep what we have */
-        }
-        memcpy(out + pos, sep, sep_len);
-        pos += sep_len;
-        memcpy(out + pos, tok_start, tok_len);
-        pos += tok_len;
-        tokens++;
-    }
-    out[pos] = '\0';
-    return tokens;
-}
-
 static char *bm25_file_pattern_like(const char *file_pattern) {
-#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
-    {
-        size_t len = cbm_rs_mcp_bm25_file_pattern_like_v1(NULL, 0, file_pattern);
-        if (len == SIZE_MAX) {
-            return NULL;
-        }
-        char *like = malloc(len + SKIP_ONE);
-        if (!like) {
-            return NULL;
-        }
-        size_t written = cbm_rs_mcp_bm25_file_pattern_like_v1(like, len + SKIP_ONE, file_pattern);
-        if (written == SIZE_MAX) {
-            free(like);
-            return NULL;
-        }
-        return like;
-    }
-#endif
-    if (!file_pattern) {
+    size_t len = cbm_mcp_bm25_file_pattern_like(NULL, 0, file_pattern);
+    if (len == SIZE_MAX) {
         return NULL;
     }
-    char *like = cbm_glob_to_like(file_pattern);
-    if (like && !strchr(file_pattern, '*') && !strchr(file_pattern, '?')) {
-        size_t len = strlen(like);
-        char *contains = malloc(len + MCP_SEPARATOR + SKIP_ONE);
-        if (contains) {
-            contains[0] = '%';
-            memcpy(contains + SKIP_ONE, like, len);
-            contains[len + SKIP_ONE] = '%';
-            contains[len + MCP_SEPARATOR] = '\0';
-            free(like);
-            like = contains;
-        }
+    char *like = malloc(len + SKIP_ONE);
+    if (!like) {
+        return NULL;
+    }
+    size_t written = cbm_mcp_bm25_file_pattern_like(like, len + SKIP_ONE, file_pattern);
+    if (written == SIZE_MAX) {
+        free(like);
+        return NULL;
     }
     return like;
 }
@@ -2136,7 +2047,7 @@ static char *bm25_search(cbm_store_t *store, const char *project, const char *qu
         return NULL;
     }
     char fts_query[BM25_QUERY_BUF];
-    int tok_count = bm25_build_match(query, fts_query, sizeof(fts_query));
+    int tok_count = cbm_mcp_bm25_build_match(query, fts_query, sizeof(fts_query));
     if (tok_count == 0) {
         return NULL;
     }
@@ -2712,23 +2623,9 @@ static char *handle_delete_project(cbm_mcp_server_t *srv, const char *args) {
 /* Check if an aspect is requested (NULL aspects = all, or array contains "all" or the name). */
 static bool aspect_wanted(yyjson_doc *aspects_doc, yyjson_val *aspects_arr, const char *name,
                           const char *args) {
-#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
-    return cbm_rs_mcp_architecture_aspect_wanted_v1(args, name);
-#endif
-    if (!aspects_arr) {
-        return true; /* no filter = all */
-    }
-    yyjson_arr_iter iter;
-    yyjson_arr_iter_init(aspects_arr, &iter);
-    yyjson_val *val;
-    while ((val = yyjson_arr_iter_next(&iter)) != NULL) {
-        const char *s = yyjson_get_str(val);
-        if (s && (strcmp(s, "all") == 0 || strcmp(s, name) == 0)) {
-            return true;
-        }
-    }
     (void)aspects_doc;
-    return false;
+    (void)aspects_arr;
+    return cbm_mcp_architecture_aspect_wanted(args, name);
 }
 
 /* Append cross_repo_links summary to architecture JSON if CROSS_* edges exist. */
@@ -3054,7 +2951,6 @@ static char *handle_get_architecture(cbm_mcp_server_t *srv, const char *args) {
     return result;
 }
 
-#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
 enum {
     TRACE_EDGE_CALLS = 1u << 0,
     TRACE_EDGE_DATA_FLOWS = 1u << 1,
@@ -3104,7 +3000,6 @@ static void fill_trace_edge_types_from_mask(uint32_t mask, const char **out_type
         out_types[(*out_count)++] = "CALLS";
     }
 }
-#endif
 
 /* Resolve edge types from args: explicit array > mode-based > default ("CALLS").
  * Writes types into out_types (max 16). Returns the parsed yyjson_doc if explicit
@@ -3134,45 +3029,8 @@ static yyjson_doc *resolve_trace_edge_types(const char *args, const char *mode,
 
     yyjson_doc_free(et_doc); /* no explicit types found, free */
 
-#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
-    fill_trace_edge_types_from_mask(cbm_rs_mcp_trace_mode_edge_mask_v1(mode), out_types, out_count);
+    fill_trace_edge_types_from_mask(cbm_mcp_trace_mode_edge_mask(mode), out_types, out_count);
     return NULL;
-#endif
-
-    static const char *mode_calls[] = {"CALLS"};
-    static const char *mode_data_flow[] = {"CALLS", "DATA_FLOWS"};
-    static const char *mode_cross_svc[] = {
-        "HTTP_CALLS",          "ASYNC_CALLS",       "DATA_FLOWS",    "CALLS",
-        "CROSS_HTTP_CALLS",    "CROSS_ASYNC_CALLS", "CROSS_CHANNEL", "CROSS_GRPC_CALLS",
-        "CROSS_GRAPHQL_CALLS", "CROSS_TRPC_CALLS"};
-
-    const char **defaults = mode_calls;
-    int n_defaults = SKIP_ONE;
-    if (mode && strcmp(mode, "data_flow") == 0) {
-        defaults = mode_data_flow;
-        n_defaults = MCP_N_DEFAULTS_2;
-    } else if (mode && strcmp(mode, "cross_service") == 0) {
-        defaults = mode_cross_svc;
-        n_defaults = (int)(sizeof(mode_cross_svc) / sizeof(mode_cross_svc[0]));
-    }
-    for (int i = 0; i < n_defaults; i++) {
-        out_types[i] = defaults[i];
-    }
-    *out_count = n_defaults;
-    return NULL;
-}
-
-/* Check if a file path looks like a test file. */
-static bool is_test_file(const char *path) {
-#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
-    return cbm_rs_mcp_trace_is_test_file_v1(path) != 0;
-#endif
-    if (!path) {
-        return false;
-    }
-    return strstr(path, "/test") != NULL || strstr(path, "test_") != NULL ||
-           strstr(path, "_test.") != NULL || strstr(path, "/tests/") != NULL ||
-           strstr(path, "/spec/") != NULL || strstr(path, ".test.") != NULL;
 }
 
 /* Convert BFS traversal results into a yyjson_mut array. */
@@ -3225,7 +3083,7 @@ static yyjson_mut_val *bfs_to_json_array(yyjson_mut_doc *doc, cbm_traverse_resul
     yyjson_mut_val *arr = yyjson_mut_arr(doc);
     for (int i = 0; i < tr->visited_count; i++) {
         const char *fp = tr->visited[i].node.file_path;
-        bool test = is_test_file(fp);
+        bool test = cbm_mcp_trace_is_test_file(fp);
         if (!include_tests && test) {
             continue;
         }
@@ -3262,38 +3120,6 @@ static yyjson_mut_val *bfs_to_json_array(yyjson_mut_doc *doc, cbm_traverse_resul
 
 static char *snippet_suggestions(const char *input, cbm_node_t *nodes, int count);
 
-/* Rank a candidate for name resolution. The label tier (callable > class-like >
- * module/file) is the primary key; WITHIN a tier the larger definition by line
- * span wins. In practice the .c-over-.h and C-main-over-shell-main preferences
- * come primarily from span (the real definition has the larger body), since the
- * competing matches usually share a tier — no file extension is hardcoded.
- * Consequence: two same-tier candidates with equal span tie and are reported
- * ambiguous (see pick_resolved_node) rather than guessed. */
-enum {
-    RES_RANK_CALLABLE = 2,     /* Function / Method */
-    RES_RANK_OTHER = 1,        /* Class / Struct / etc. */
-    RES_RANK_MODULE = 0,       /* Module / File */
-    RES_LABEL_WEIGHT = 1000000 /* label tier dominates span */
-};
-static long node_resolution_score(const cbm_node_t *n) {
-#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
-    return cbm_rs_mcp_node_resolution_score_v1(n->label, n->start_line, n->end_line);
-#endif
-    long label_rank = RES_RANK_MODULE;
-    if (n->label) {
-        if (strcmp(n->label, "Function") == 0 || strcmp(n->label, "Method") == 0) {
-            label_rank = RES_RANK_CALLABLE;
-        } else if (strcmp(n->label, "Module") != 0 && strcmp(n->label, "File") != 0) {
-            label_rank = RES_RANK_OTHER;
-        }
-    }
-    long span = (long)n->end_line - (long)n->start_line;
-    if (span < 0) {
-        span = 0;
-    }
-    return label_rank * (long)RES_LABEL_WEIGHT + span;
-}
-
 /* Pick the best-resolving node among name matches. Sets *ambiguous when the top
  * score is shared by more than one candidate (a genuine tie the caller must
  * disambiguate) so resolution never silently traces the wrong same-named node. */
@@ -3306,7 +3132,8 @@ static int pick_resolved_node(const cbm_node_t *nodes, int count, bool *ambiguou
     long *scores = malloc((size_t)count * sizeof(*scores));
     if (scores) {
         for (int i = 0; i < count; i++) {
-            scores[i] = node_resolution_score(&nodes[i]);
+            scores[i] = cbm_mcp_node_resolution_score(nodes[i].label, nodes[i].start_line,
+                                                       nodes[i].end_line);
         }
         int ambiguous_i = 0;
         int best = cbm_rs_mcp_search_pick_resolved_index_v1(scores, count, &ambiguous_i);
@@ -3318,9 +3145,11 @@ static int pick_resolved_node(const cbm_node_t *nodes, int count, bool *ambiguou
     }
 #endif
     int best = 0;
-    long best_score = node_resolution_score(&nodes[0]);
+    long best_score = cbm_mcp_node_resolution_score(nodes[0].label, nodes[0].start_line,
+                                                     nodes[0].end_line);
     for (int i = 1; i < count; i++) {
-        long s = node_resolution_score(&nodes[i]);
+        long s = cbm_mcp_node_resolution_score(nodes[i].label, nodes[i].start_line,
+                                               nodes[i].end_line);
         if (s > best_score) {
             best_score = s;
             best = i;
@@ -3328,7 +3157,8 @@ static int pick_resolved_node(const cbm_node_t *nodes, int count, bool *ambiguou
     }
     int top_count = 0;
     for (int i = 0; i < count; i++) {
-        if (node_resolution_score(&nodes[i]) == best_score) {
+        if (cbm_mcp_node_resolution_score(nodes[i].label, nodes[i].start_line, nodes[i].end_line) ==
+            best_score) {
             top_count++;
         }
     }
@@ -3827,22 +3657,7 @@ enum { INDEX_REPO_MODE_CROSS_REPO = 3 };
 /* Parse index_repository mode string. Values align with cbm_index_mode_t for
  * 0..2; INDEX_REPO_MODE_CROSS_REPO is a dispatch sentinel. */
 static int parse_index_repository_mode(const char *mode_str) {
-#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
-    return cbm_rs_mcp_index_mode_v1(mode_str);
-#endif
-    if (!mode_str) {
-        return CBM_MODE_FULL;
-    }
-    if (strcmp(mode_str, "moderate") == 0) {
-        return CBM_MODE_MODERATE;
-    }
-    if (strcmp(mode_str, "fast") == 0) {
-        return CBM_MODE_FAST;
-    }
-    if (strcmp(mode_str, "cross-repo-intelligence") == 0) {
-        return INDEX_REPO_MODE_CROSS_REPO;
-    }
-    return CBM_MODE_FULL;
+    return cbm_mcp_index_mode(mode_str);
 }
 
 static char *handle_index_repository(cbm_mcp_server_t *srv, const char *args) {
@@ -4079,93 +3894,6 @@ static char *resolve_snippet_source(const char *root_path, const char *file_path
     return NULL;
 }
 
-static bool utf8_is_cont(unsigned char c) {
-#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
-    return cbm_rs_mcp_utf8_is_cont_v1((int)c) != 0;
-#endif
-    return (c & 0xC0) == 0x80;
-}
-
-static char *sanitize_utf8_lossy(const char *s) {
-#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
-    {
-        size_t len = cbm_rs_mcp_sanitize_utf8_lossy_v1(NULL, 0, s);
-        if (len != SIZE_MAX) {
-            char *out = malloc(len + SKIP_ONE);
-            if (out) {
-                size_t written = cbm_rs_mcp_sanitize_utf8_lossy_v1(out, len + SKIP_ONE, s);
-                if (written != SIZE_MAX) {
-                    return out;
-                }
-                free(out);
-            }
-        }
-    }
-#endif
-    enum {
-        UTF8_REPLACEMENT_LEN = 3,
-        UTF8_THREE_BYTE_LEN = 3,
-        UTF8_FOUR_BYTE_LEN = 4,
-        UTF8_FOURTH_BYTE = 3,
-    };
-    if (!s) {
-        return NULL;
-    }
-    size_t len = strlen(s);
-    if (len > (((size_t)-1) - SKIP_ONE) / UTF8_REPLACEMENT_LEN) {
-        return NULL;
-    }
-    char *out = malloc(len * UTF8_REPLACEMENT_LEN + SKIP_ONE);
-    if (!out) {
-        return NULL;
-    }
-
-    const unsigned char *p = (const unsigned char *)s;
-    const unsigned char *end = p + len;
-    unsigned char *dst = (unsigned char *)out;
-    while (p < end) {
-        unsigned char c = *p;
-        size_t n = 0;
-        if (c < 0x80) {
-            n = 1;
-        } else if (c >= 0xC2 && c <= 0xDF && p + 1 < end && utf8_is_cont(p[1])) {
-            n = 2;
-        } else if (c == 0xE0 && p + 2 < end && p[1] >= 0xA0 && p[1] <= 0xBF && utf8_is_cont(p[2])) {
-            n = UTF8_THREE_BYTE_LEN;
-        } else if (c >= 0xE1 && c <= 0xEC && p + 2 < end && utf8_is_cont(p[1]) &&
-                   utf8_is_cont(p[2])) {
-            n = UTF8_THREE_BYTE_LEN;
-        } else if (c == 0xED && p + 2 < end && p[1] >= 0x80 && p[1] <= 0x9F && utf8_is_cont(p[2])) {
-            n = UTF8_THREE_BYTE_LEN;
-        } else if (c >= 0xEE && c <= 0xEF && p + 2 < end && utf8_is_cont(p[1]) &&
-                   utf8_is_cont(p[2])) {
-            n = UTF8_THREE_BYTE_LEN;
-        } else if (c == 0xF0 && p + UTF8_FOURTH_BYTE < end && p[1] >= 0x90 && p[1] <= 0xBF &&
-                   utf8_is_cont(p[2]) && utf8_is_cont(p[UTF8_FOURTH_BYTE])) {
-            n = UTF8_FOUR_BYTE_LEN;
-        } else if (c >= 0xF1 && c <= 0xF3 && p + UTF8_FOURTH_BYTE < end && utf8_is_cont(p[1]) &&
-                   utf8_is_cont(p[2]) && utf8_is_cont(p[UTF8_FOURTH_BYTE])) {
-            n = UTF8_FOUR_BYTE_LEN;
-        } else if (c == 0xF4 && p + UTF8_FOURTH_BYTE < end && p[1] >= 0x80 && p[1] <= 0x8F &&
-                   utf8_is_cont(p[2]) && utf8_is_cont(p[UTF8_FOURTH_BYTE])) {
-            n = UTF8_FOUR_BYTE_LEN;
-        }
-
-        if (n > 0) {
-            memcpy(dst, p, n);
-            dst += n;
-            p += n;
-        } else {
-            *dst++ = 0xEF;
-            *dst++ = 0xBF;
-            *dst++ = 0xBD;
-            p++;
-        }
-    }
-    *dst = '\0';
-    return out;
-}
-
 /* Build an enriched snippet response for a resolved node. */
 /* Add a string array to a JSON object (no-op if count == 0). */
 static void add_string_array(yyjson_mut_doc *doc, yyjson_mut_val *obj, const char *key,
@@ -4210,7 +3938,7 @@ static char *build_snippet_response(cbm_mcp_server_t *srv, cbm_node_t *node,
     yyjson_mut_obj_add_int(doc, root_obj, "end_line", end);
 
     if (source) {
-        char *safe_source = sanitize_utf8_lossy(source);
+        char *safe_source = cbm_mcp_sanitize_utf8_lossy(source);
         if (safe_source) {
             yyjson_mut_obj_add_strcpy(doc, root_obj, "source", safe_source);
             free(safe_source);
@@ -4376,20 +4104,6 @@ static char *handle_get_code_snippet(cbm_mcp_server_t *srv, const char *args) {
 
 /* ── search_code v2: graph-augmented code search ─────────────── */
 
-/* Strip non-ASCII bytes to guarantee valid UTF-8 JSON output */
-enum { ASCII_MAX = 127 };
-static void sanitize_ascii(char *s) {
-#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
-    cbm_rs_mcp_sanitize_ascii_in_place_v1(s);
-    return;
-#endif
-    for (unsigned char *p = (unsigned char *)s; *p; p++) {
-        if (*p > ASCII_MAX) {
-            *p = '?';
-        }
-    }
-}
-
 /* Intermediate grep match */
 typedef struct {
     char file[CBM_SZ_512];
@@ -4413,62 +4127,17 @@ typedef struct {
     int match_count;
 } search_result_t;
 
-/* Score a result for ranking: project source first, vendored last, tests lowest */
-enum { SCORE_FUNC = 10, SCORE_ROUTE = 15, SCORE_VENDORED = -50, SCORE_TEST = -5 };
 enum { MAX_LINE_SPAN = 999999 };
 
 static int compute_search_score(const search_result_t *r) {
-#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
-    return cbm_rs_mcp_search_code_score_v1(r->label, r->file, r->in_degree);
-#endif
-    int score = r->in_degree;
-    if (strcmp(r->label, "Function") == 0 || strcmp(r->label, "Method") == 0) {
-        score += SCORE_FUNC;
-    }
-    if (strcmp(r->label, "Route") == 0) {
-        score += SCORE_ROUTE;
-    }
-    if (strstr(r->file, "vendored/") || strstr(r->file, "vendor/") ||
-        strstr(r->file, "node_modules/")) {
-        score += SCORE_VENDORED;
-    }
-    /* Penalize test files */
-    if (strstr(r->file, "test") || strstr(r->file, "spec") || strstr(r->file, "_test.")) {
-        score += SCORE_TEST;
-    }
-    return score;
+    return cbm_mcp_search_code_score(r->label, r->file, r->in_degree);
 }
 
 static int search_result_cmp(const void *a, const void *b) {
     const search_result_t *ra = (const search_result_t *)a;
     const search_result_t *rb = (const search_result_t *)b;
-#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
-    return cbm_rs_mcp_search_score_cmp_v1(ra->score, rb->score);
-#endif
-    return rb->score - ra->score; /* descending */
-}
-
-static void search_result_top_dir(char *out, size_t out_sz, const char *file) {
-    if (!out || out_sz == 0) {
-        return;
-    }
-#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
-    size_t len = cbm_rs_mcp_search_top_dir_v1(out, out_sz, file);
-    if (len != SIZE_MAX) {
-        return;
-    }
-#endif
-    const char *slash = strchr(file, '/');
-    if (slash) {
-        size_t dlen = (size_t)(slash - file + SKIP_ONE);
-        if (dlen >= out_sz) {
-            dlen = out_sz - SKIP_ONE;
-        }
-        memcpy(out, file, dlen);
-        out[dlen] = '\0';
-    } else {
-        snprintf(out, out_sz, "%s", file);
-    }
+    /* descending score：search_score_cmp.c */
+    return cbm_mcp_search_score_cmp(ra->score, rb->score);
 }
 
 /* Build the grep/search command string based on scoped vs recursive mode.
@@ -4586,7 +4255,7 @@ static void attach_result_source(yyjson_mut_doc *doc, yyjson_mut_val *item, sear
     if (mode == MODE_FULL) {
         char *source = read_file_lines(abs_path, r->start_line, r->end_line);
         if (source) {
-            sanitize_ascii(source);
+            cbm_mcp_sanitize_ascii_in_place(source);
             yyjson_mut_obj_add_strcpy(doc, item, "source", source);
             free(source);
         }
@@ -4598,7 +4267,7 @@ static void attach_result_source(yyjson_mut_doc *doc, yyjson_mut_val *item, sear
         }
         char *ctx = read_file_lines(abs_path, ctx_start, ctx_end);
         if (ctx) {
-            sanitize_ascii(ctx);
+            cbm_mcp_sanitize_ascii_in_place(ctx);
             yyjson_mut_obj_add_strcpy(doc, item, "context", ctx);
             yyjson_mut_obj_add_int(doc, item, "context_start", ctx_start);
             free(ctx);
@@ -4615,7 +4284,7 @@ static yyjson_mut_val *build_dir_distribution(yyjson_mut_doc *doc, search_result
     int dir_n = 0;
     for (int di = 0; di < sr_count; di++) {
         char top[CBM_SZ_128] = "";
-        search_result_top_dir(top, sizeof(top), sr[di].file);
+        (void)cbm_mcp_search_top_dir(top, sizeof(top), sr[di].file);
         int found = CBM_NOT_FOUND;
         for (int d = 0; d < dir_n; d++) {
             if (strcmp(dir_names[d], top) == 0) {
@@ -4731,7 +4400,7 @@ static char *assemble_search_output(search_result_t *sr, int sr_count, grep_matc
 
     char *json = yy_doc_to_str(doc);
     if (json) {
-        sanitize_ascii(json);
+        cbm_mcp_sanitize_ascii_in_place(json);
     }
     yyjson_mut_doc_free(doc);
 
@@ -4806,7 +4475,7 @@ static grep_match_t *collect_grep_matches(FILE *fp, const char *root_path, size_
         snprintf(gm[gm_count].file, sizeof(gm[0].file), "%s", file);
         gm[gm_count].line = (int)strtol(sep1 + SKIP_ONE, NULL, CBM_DECIMAL_BASE);
         snprintf(gm[gm_count].content, sizeof(gm[0].content), "%s", sep2 + SKIP_ONE);
-        sanitize_ascii(gm[gm_count].content);
+        cbm_mcp_sanitize_ascii_in_place(gm[gm_count].content);
         gm_count++;
     }
 
@@ -4814,18 +4483,14 @@ static grep_match_t *collect_grep_matches(FILE *fp, const char *root_path, size_
     return gm;
 }
 
-/* Find the tightest node containing a line in a file. Returns index or -1. */
+/* Find the tightest node containing a line in a file. Returns index or -1.
+ * span 純計算：search_line_span.c（true-source selectable CU） */
 static int find_tightest_node(cbm_node_t *nodes, int count, int line) {
 #if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
     int *spans = malloc((size_t)count * sizeof(*spans));
     if (spans) {
         for (int j = 0; j < count; j++) {
-            int span =
-                cbm_rs_mcp_search_line_match_span_v1(nodes[j].start_line, nodes[j].end_line, line);
-            if (span == CBM_NOT_FOUND && nodes[j].start_line <= line && nodes[j].end_line >= line) {
-                span = nodes[j].end_line - nodes[j].start_line;
-            }
-            spans[j] = span;
+            spans[j] = cbm_mcp_search_line_match_span(nodes[j].start_line, nodes[j].end_line, line);
         }
         int best = cbm_rs_mcp_search_pick_tightest_index_v1(spans, count);
         free(spans);
@@ -4837,17 +4502,7 @@ static int find_tightest_node(cbm_node_t *nodes, int count, int line) {
     int best = CBM_NOT_FOUND;
     int best_span = MAX_LINE_SPAN;
     for (int j = 0; j < count; j++) {
-        int span = CBM_NOT_FOUND;
-#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
-        span = cbm_rs_mcp_search_line_match_span_v1(nodes[j].start_line, nodes[j].end_line, line);
-        if (span == CBM_NOT_FOUND && nodes[j].start_line <= line && nodes[j].end_line >= line) {
-            span = nodes[j].end_line - nodes[j].start_line;
-        }
-#else
-        if (nodes[j].start_line <= line && nodes[j].end_line >= line) {
-            span = nodes[j].end_line - nodes[j].start_line;
-        }
-#endif
+        int span = cbm_mcp_search_line_match_span(nodes[j].start_line, nodes[j].end_line, line);
         if (span != CBM_NOT_FOUND && span < best_span) {
             best = j;
             best_span = span;
@@ -4976,19 +4631,7 @@ static bool write_scoped_filelist(cbm_mcp_server_t *srv, const char *project, co
 
 /* Parse search mode string (0=compact, 1=full, 2=files). */
 static int parse_search_mode(const char *mode_str) {
-#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
-    return cbm_rs_mcp_search_mode_v1(mode_str);
-#endif
-    if (!mode_str) {
-        return 0;
-    }
-    if (strcmp(mode_str, "full") == 0) {
-        return SKIP_ONE;
-    }
-    if (strcmp(mode_str, "files") == 0) {
-        return MCP_RETURN_2;
-    }
-    return 0;
+    return cbm_mcp_search_mode(mode_str);
 }
 
 /* Validate shell-safe arguments for search. */
@@ -4996,48 +4639,13 @@ static int parse_search_mode(const char *mode_str) {
  * double-/single-quoted (Windows cmd/PowerShell) on the command line, which
  * neutralises '&' — a very common character in real paths (R&D, "Foo & Bar",
  * OneDrive). Accept '&' here while still rejecting every metacharacter that
- * could break out of the quoting (#272). */
+ * could break out of the quoting (#272). denylist：search_path_arg.c */
 static bool validate_search_path_arg(const char *s) {
-#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
-    return cbm_rs_mcp_search_path_arg_valid_v1(s) != 0;
-#endif
-    if (!s) {
-        return false;
-    }
-    for (const char *p = s; *p; p++) {
-        switch (*p) {
-        case '\'':
-        case '"':
-        case ';':
-        case '|':
-        case '$':
-        case '`':
-        case '<':
-        case '>':
-        case '\n':
-        case '\r':
-#ifndef _WIN32
-        case '\\':
-#endif
-            return false;
-        default:
-            break;
-        }
-    }
-    return true;
+    return cbm_mcp_search_path_arg_valid(s);
 }
 
 static bool validate_search_args(const char *root_path, const char *file_pattern) {
-#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
-    return cbm_rs_mcp_search_args_valid_v1(root_path, file_pattern) != 0;
-#endif
-    if (!validate_search_path_arg(root_path)) {
-        return false;
-    }
-    if (file_pattern && !validate_search_path_arg(file_pattern)) {
-        return false;
-    }
-    return true;
+    return cbm_mcp_search_args_valid(root_path, file_pattern);
 }
 
 /* Write pattern to a temp file for grep -f. Returns true on success. */
@@ -5300,14 +4908,6 @@ static char *handle_search_code(cbm_mcp_server_t *srv, const char *args) {
 
 /* ── detect_changes ───────────────────────────────────────────── */
 
-static bool detect_changes_impacted_label(const char *label) {
-#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
-    return cbm_rs_mcp_detect_changes_impacted_label_v1(label) != 0;
-#endif
-    return label && strcmp(label, "File") != 0 && strcmp(label, "Folder") != 0 &&
-           strcmp(label, "Project") != 0;
-}
-
 /* Find symbols defined in a file and add them to the impacted array. */
 static void detect_add_impacted_symbols(cbm_store_t *store, const char *project, const char *file,
                                         yyjson_mut_doc *doc, yyjson_mut_val *impacted) {
@@ -5315,7 +4915,7 @@ static void detect_add_impacted_symbols(cbm_store_t *store, const char *project,
     int ncount = 0;
     cbm_store_find_nodes_by_file(store, project, file, &nodes, &ncount);
     for (int i = 0; i < ncount; i++) {
-        if (detect_changes_impacted_label(nodes[i].label)) {
+        if (cbm_mcp_detect_changes_impacted_label(nodes[i].label)) {
             yyjson_mut_val *item = yyjson_mut_obj(doc);
             yyjson_mut_obj_add_strcpy(doc, item, "name", nodes[i].name ? nodes[i].name : "");
             yyjson_mut_obj_add_strcpy(doc, item, "label", nodes[i].label);
@@ -5326,13 +4926,6 @@ static void detect_add_impacted_symbols(cbm_store_t *store, const char *project,
     cbm_store_free_nodes(nodes, ncount);
 }
 
-static bool detect_changes_wants_symbols(const char *scope) {
-#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
-    return cbm_rs_mcp_detect_changes_wants_symbols_v1(scope) != 0;
-#endif
-    return !scope || strcmp(scope, "symbols") == 0 || strcmp(scope, "impact") == 0;
-}
-
 static char *handle_detect_changes(cbm_mcp_server_t *srv, const char *args) {
     char *project = get_project_arg(args);
     char *base_branch = cbm_mcp_get_string_arg(args, "base_branch");
@@ -5341,7 +4934,7 @@ static char *handle_detect_changes(cbm_mcp_server_t *srv, const char *args) {
     int depth = cbm_mcp_get_int_arg(args, "depth", MCP_DEFAULT_BFS_DEPTH);
 
     /* scope: "files" = just changed files, "symbols" = files + symbols (default) */
-    bool want_symbols = detect_changes_wants_symbols(scope);
+    bool want_symbols = cbm_mcp_detect_changes_wants_symbols(scope);
 
     /* `since` (e.g. "HEAD~10", "v0.5.0") is the documented diff base but was
      * previously parsed and never used: it takes precedence over base_branch.
@@ -5452,33 +5045,11 @@ static char *handle_detect_changes(cbm_mcp_server_t *srv, const char *args) {
          * `git diff --name-only` sources emit bare paths. Strip the porcelain
          * prefix when present so all three sources yield clean paths; for a
          * rename ("R  old -> new") keep the post-arrow destination path. */
-        char *path_line = line;
-#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
-        size_t path_offset = cbm_rs_mcp_detect_changes_status_path_offset_v1(line);
-        if (path_offset != SIZE_MAX && path_offset <= len) {
-            path_line = line + path_offset;
-        } else {
-            if (len > PAIR_LEN && line[PAIR_LEN] == ' ' && strchr(" MADRCU?!", line[0]) &&
-                strchr(" MADRCU?!", line[1])) {
-                path_line = line + PAIR_LEN + SKIP_ONE;
-                char *arrow = strstr(path_line, " -> ");
-                if (arrow) {
-                    enum { ARROW_LEN = 4 }; /* length of " -> " */
-                    path_line = arrow + ARROW_LEN;
-                }
-            }
+        size_t path_offset = cbm_mcp_detect_changes_status_path_offset(line);
+        if (path_offset == SIZE_MAX || path_offset > len) {
+            continue;
         }
-#else
-        if (len > PAIR_LEN && line[PAIR_LEN] == ' ' && strchr(" MADRCU?!", line[0]) &&
-            strchr(" MADRCU?!", line[1])) {
-            path_line = line + PAIR_LEN + SKIP_ONE;
-            char *arrow = strstr(path_line, " -> ");
-            if (arrow) {
-                enum { ARROW_LEN = 4 }; /* length of " -> " */
-                path_line = arrow + ARROW_LEN;
-            }
-        }
-#endif
+        char *path_line = line + path_offset;
         if (path_line[0] == '\0') {
             continue;
         }
@@ -5609,19 +5180,6 @@ enum {
     ADR_MODE_SECTIONS = 2,
 };
 
-static int parse_adr_mode(const char *mode_str) {
-#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
-    return cbm_rs_mcp_adr_mode_v1(mode_str);
-#endif
-    if (mode_str && (strcmp(mode_str, "update") == 0 || strcmp(mode_str, "store") == 0)) {
-        return ADR_MODE_UPDATE;
-    }
-    if (mode_str && strcmp(mode_str, "sections") == 0) {
-        return ADR_MODE_SECTIONS;
-    }
-    return ADR_MODE_GET;
-}
-
 #define ADR_EMPTY_HINT                                                             \
     "No ADR yet. Create one with manage_adr(mode='update', "                       \
     "content='## PURPOSE\\n...\\n\\n## STACK\\n...\\n\\n## ARCHITECTURE\\n..."     \
@@ -5638,7 +5196,7 @@ static char *handle_manage_adr(cbm_mcp_server_t *srv, const char *args) {
     if (!mode_str) {
         mode_str = heap_strdup("get");
     }
-    int mode = parse_adr_mode(mode_str);
+    int mode = cbm_mcp_adr_mode(mode_str);
 
     /* ADRs are stored in the SQLite store (project_summaries), the SAME
      * backend the UI /api/adr endpoints use — so writes via the MCP tool and

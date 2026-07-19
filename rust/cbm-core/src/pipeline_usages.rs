@@ -37,5 +37,9 @@ mod tests {
         assert_eq!(extract_local_name(Some(b"{\"local_name\":\"\"}")), None);
         assert_eq!(extract_local_name(Some(b"{}")), None);
         assert_eq!(extract_local_name(None), None);
+        assert_eq!(
+            extract_local_name(Some(b"{\"local_name\":\"a\\\"b\"}")),
+            Some(b"a\\".to_vec())
+        );
     }
 }

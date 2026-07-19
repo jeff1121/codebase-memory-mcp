@@ -22,6 +22,7 @@
 #include "foundation/str_util.h"
 #include "foundation/win_utf8.h"
 #include "foundation/yaml.h"
+#include "pipeline/pkgmap_text.h"
 
 #include <yyjson/yyjson.h>
 
@@ -30,19 +31,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#ifdef CBM_USE_RUST_PIPELINE_PKGMAP_TEXT
-extern int cbm_rs_pipeline_pkgmap_at_prefix_v1(const char *source, size_t available,
-                                               const char *prefix, int prefix_len);
-extern int cbm_rs_pipeline_pkgmap_find_line_value_offset_v1(const char *source, int source_len,
-                                                            const char *prefix);
-extern size_t cbm_rs_pipeline_pkgmap_path_dirname_v1(char *buf, size_t bufsize, const char *path);
-extern size_t cbm_rs_pipeline_pkgmap_strip_extension_v1(char *buf, size_t bufsize,
-                                                        const char *path);
-extern size_t cbm_rs_pipeline_pkgmap_join_and_strip_v1(char *buf, size_t bufsize, const char *dir,
-                                                       const char *entry);
-extern size_t cbm_rs_pipeline_pkgmap_build_entry_path_v1(char *buf, size_t bufsize,
-                                                         const char *rel_path, const char *suffix);
-#endif
 #include <sys/stat.h>
 
 /* Read an entire file into a malloc'd buffer. Returns NULL on failure. */
@@ -102,18 +90,6 @@ static const char *pkgmap_itoa(int val) {
     return buf;
 }
 
-/* Check if src at position p starts with literal str of known length. */
-static bool at_prefix(const char *p, const char *end, const char *prefix, int prefix_len) {
-#ifdef CBM_USE_RUST_PIPELINE_PKGMAP_TEXT
-    if (!p || !end || !prefix || end < p || prefix_len < 0) {
-        return false;
-    }
-    return cbm_rs_pipeline_pkgmap_at_prefix_v1(p, (size_t)(end - p), prefix, prefix_len) != 0;
-#else
-    return p + prefix_len <= end && memcmp(p, prefix, (size_t)prefix_len) == 0;
-#endif
-}
-
 /* ── Per-worker collection ─────────────────────────────────────── */
 
 void cbm_pkg_entries_init(cbm_pkg_entries_t *e) {
@@ -158,92 +134,6 @@ static const char *path_basename(const char *rel_path) {
     return last ? last + SKIP_ONE : rel_path;
 }
 
-/* Get the directory part of a relative path (without trailing slash).
- * Returns heap-allocated string. For "foo.json" returns "". */
-static char *path_dirname(const char *rel_path) {
-#ifdef CBM_USE_RUST_PIPELINE_PKGMAP_TEXT
-    size_t length = cbm_rs_pipeline_pkgmap_path_dirname_v1(NULL, 0, rel_path);
-    char *result = malloc(length + SKIP_ONE);
-    if (!result) {
-        return NULL;
-    }
-    if (cbm_rs_pipeline_pkgmap_path_dirname_v1(result, length + SKIP_ONE, rel_path) != length) {
-        free(result);
-        return NULL;
-    }
-    return result;
-#else
-    const char *last = strrchr(rel_path, '/');
-    if (!last) {
-        return strdup("");
-    }
-    return cbm_strndup(rel_path, (size_t)(last - rel_path));
-#endif
-}
-
-/* Strip file extension from a path. Returns heap-allocated string.
- * "src/index.ts" → "src/index", "lib/main" → "lib/main" */
-static char *strip_extension(const char *path) {
-#ifdef CBM_USE_RUST_PIPELINE_PKGMAP_TEXT
-    size_t length = cbm_rs_pipeline_pkgmap_strip_extension_v1(NULL, 0, path);
-    char *result = malloc(length + SKIP_ONE);
-    if (!result) {
-        return NULL;
-    }
-    if (cbm_rs_pipeline_pkgmap_strip_extension_v1(result, length + SKIP_ONE, path) != length) {
-        free(result);
-        return NULL;
-    }
-    return result;
-#else
-    size_t len = strlen(path);
-    for (size_t i = len; i > 0; i--) {
-        if (path[i - SKIP_ONE] == '.') {
-            return cbm_strndup(path, i - SKIP_ONE);
-        }
-        if (path[i - SKIP_ONE] == '/') {
-            break;
-        }
-    }
-    return strdup(path);
-#endif
-}
-
-/* Join directory + relative entry path, normalize.
- * "packages/foo" + "src/index.ts" → "packages/foo/src/index" (stripped ext) */
-static char *join_and_strip(const char *dir, const char *entry) {
-#ifdef CBM_USE_RUST_PIPELINE_PKGMAP_TEXT
-    size_t length = cbm_rs_pipeline_pkgmap_join_and_strip_v1(NULL, 0, dir, entry);
-    if (length == SIZE_MAX) {
-        return NULL;
-    }
-    char *result = malloc(length + SKIP_ONE);
-    if (!result) {
-        return NULL;
-    }
-    if (cbm_rs_pipeline_pkgmap_join_and_strip_v1(result, length + SKIP_ONE, dir, entry) != length) {
-        free(result);
-        return NULL;
-    }
-    return result;
-#else
-    if (!entry || entry[0] == '\0') {
-        return NULL;
-    }
-    /* Skip leading ./ from entry */
-    if (entry[0] == '.' && entry[SKIP_ONE] == '/') {
-        entry += PAIR_LEN;
-    }
-    char buf[PKGMAP_PATH_BUF];
-    if (dir[0] == '\0') {
-        snprintf(buf, sizeof(buf), "%s", entry);
-    } else {
-        snprintf(buf, sizeof(buf), "%s/%s", dir, entry);
-    }
-    return strip_extension(buf);
-#endif
-}
-
 /* Check if a string ends with a suffix. */
 static bool ends_with(const char *s, const char *suffix) {
     size_t slen = strlen(s);
@@ -252,36 +142,6 @@ static bool ends_with(const char *s, const char *suffix) {
         return false;
     }
     return strcmp(s + slen - suflen, suffix) == 0;
-}
-
-/* Find a line starting with a prefix in source. Returns pointer to first char
- * after prefix, or NULL. Handles leading whitespace. */
-static const char *find_line_value(const char *src, int src_len, const char *prefix) {
-#ifdef CBM_USE_RUST_PIPELINE_PKGMAP_TEXT
-    int offset = cbm_rs_pipeline_pkgmap_find_line_value_offset_v1(src, src_len, prefix);
-    return offset < 0 ? NULL : src + offset;
-#else
-    size_t plen = strlen(prefix);
-    const char *p = src;
-    const char *end = src + src_len;
-    while (p < end) {
-        /* Skip leading whitespace */
-        while (p < end && (*p == ' ' || *p == '\t')) {
-            p++;
-        }
-        if (p + plen <= end && memcmp(p, prefix, plen) == 0) {
-            return p + plen;
-        }
-        /* Skip to next line */
-        while (p < end && *p != '\n') {
-            p++;
-        }
-        if (p < end) {
-            p++; /* skip \n */
-        }
-    }
-    return NULL;
-#endif
 }
 
 /* Extract a quoted string value from position. Handles both "..." and '...'
@@ -374,8 +234,8 @@ static void parse_package_json(const char *source, int source_len, const char *r
 
     const char *entry = resolve_pkg_entry(root);
     if (entry) {
-        char *dir = path_dirname(rel_path);
-        char *resolved = join_and_strip(dir, entry);
+        char *dir = cbm_pipeline_pkgmap_path_dirname(rel_path);
+        char *resolved = cbm_pipeline_pkgmap_join_and_strip(dir, entry);
         if (resolved) {
             pkg_entries_push(entries, strdup(name), resolved);
         }
@@ -389,7 +249,7 @@ static void parse_package_json(const char *source, int source_len, const char *r
 static void parse_go_mod(const char *source, int source_len, const char *rel_path,
                          cbm_pkg_entries_t *entries) {
     const char *end = source + source_len;
-    const char *val = find_line_value(source, source_len, "module ");
+    const char *val = cbm_pipeline_pkgmap_find_line_value(source, source_len, "module ");
     if (!val) {
         return;
     }
@@ -405,7 +265,7 @@ static void parse_go_mod(const char *source, int source_len, const char *rel_pat
         return;
     }
     char *module_path = cbm_strndup(start, (size_t)(val - start));
-    char *dir = path_dirname(rel_path);
+    char *dir = cbm_pipeline_pkgmap_path_dirname(rel_path);
 
     /* The module path maps to the directory containing go.mod.
      * For "." dir, use empty string. */
@@ -424,10 +284,10 @@ static char *toml_extract_name(const char *section_start, const char *end) {
         if (p < end && *p == '[') {
             break;
         }
-        if (at_prefix(p, end, "name ", TOML_NAME_SP)) {
+        if (cbm_pipeline_pkgmap_at_prefix(p, (size_t)(end - p), "name ", TOML_NAME_SP)) {
             return extract_quoted(p + TOML_NAME_SP, end);
         }
-        if (at_prefix(p, end, "name=", TOML_NAME_EQ)) {
+        if (cbm_pipeline_pkgmap_at_prefix(p, (size_t)(end - p), "name=", TOML_NAME_EQ)) {
             return extract_quoted(p + TOML_NAME_EQ, end);
         }
         while (p < end && *p != '\n') {
@@ -440,33 +300,10 @@ static char *toml_extract_name(const char *section_start, const char *end) {
     return NULL;
 }
 
-/* Build entry path: dir/suffix or just suffix if dir is empty. */
-static char *build_entry_path(const char *rel_path, const char *suffix) {
-#ifdef CBM_USE_RUST_PIPELINE_PKGMAP_TEXT
-    size_t length = cbm_rs_pipeline_pkgmap_build_entry_path_v1(NULL, 0, rel_path, suffix);
-    char *result = malloc(length + SKIP_ONE);
-    if (!result) {
-        return NULL;
-    }
-    if (cbm_rs_pipeline_pkgmap_build_entry_path_v1(result, length + SKIP_ONE, rel_path, suffix) !=
-        length) {
-        free(result);
-        return NULL;
-    }
-    return result;
-#else
-    char *dir = path_dirname(rel_path);
-    char buf[PKGMAP_PATH_BUF];
-    snprintf(buf, sizeof(buf), "%s%s%s", dir[0] ? dir : "", dir[0] ? "/" : "", suffix);
-    free(dir);
-    return strdup(buf);
-#endif
-}
-
 /* Rust: Cargo.toml — [package] name */
 static void parse_cargo_toml(const char *source, int source_len, const char *rel_path,
                              cbm_pkg_entries_t *entries) {
-    const char *section = find_line_value(source, source_len, "[package]");
+    const char *section = cbm_pipeline_pkgmap_find_line_value(source, source_len, "[package]");
     if (!section) {
         return;
     }
@@ -474,7 +311,7 @@ static void parse_cargo_toml(const char *source, int source_len, const char *rel
     if (!name) {
         return;
     }
-    char *entry = build_entry_path(rel_path, "src/lib");
+    char *entry = cbm_pipeline_pkgmap_build_entry_path(rel_path, "src/lib");
     pkg_entries_push(entries, name, entry);
 }
 
@@ -490,7 +327,7 @@ static void py_normalize_name(char *name) {
 
 static void parse_pyproject_toml(const char *source, int source_len, const char *rel_path,
                                  cbm_pkg_entries_t *entries) {
-    const char *section = find_line_value(source, source_len, "[project]");
+    const char *section = cbm_pipeline_pkgmap_find_line_value(source, source_len, "[project]");
     if (!section) {
         return;
     }
@@ -503,13 +340,13 @@ static void parse_pyproject_toml(const char *source, int source_len, const char 
     /* Register src/<name>/__init__ as primary entry */
     char suffix[PKGMAP_PATH_BUF];
     snprintf(suffix, sizeof(suffix), "src/%s/__init__", name);
-    char *entry = build_entry_path(rel_path, suffix);
+    char *entry = cbm_pipeline_pkgmap_build_entry_path(rel_path, suffix);
     char *name_copy = strdup(name);
     pkg_entries_push(entries, name, entry);
 
     /* Also register <name>/__init__ as alternative (no src/ prefix) */
     snprintf(suffix, sizeof(suffix), "%s/__init__", name_copy);
-    char *alt_entry = build_entry_path(rel_path, suffix);
+    char *alt_entry = cbm_pipeline_pkgmap_build_entry_path(rel_path, suffix);
     if (name_copy && alt_entry) {
         pkg_entries_push(entries, name_copy, alt_entry);
     } else {
@@ -564,7 +401,7 @@ static void parse_composer_json(const char *source, int source_len, const char *
         return;
     }
 
-    char *dir = path_dirname(rel_path);
+    char *dir = cbm_pipeline_pkgmap_path_dirname(rel_path);
 
     /* Register package name → directory */
     yyjson_val *name_val = yyjson_obj_get(root, "name");
@@ -590,7 +427,7 @@ static void parse_pubspec_yaml(const char *source, int source_len, const char *r
     }
     const char *name = cbm_yaml_get_str(root, "name");
     if (name && name[0] != '\0') {
-        char *dir = path_dirname(rel_path);
+        char *dir = cbm_pipeline_pkgmap_path_dirname(rel_path);
         char entry[PKGMAP_PATH_BUF];
         snprintf(entry, sizeof(entry), "%s%slib", dir[0] ? dir : "", dir[0] ? "/" : "");
         pkg_entries_push(entries, strdup(name), strdup(entry));
@@ -618,13 +455,13 @@ static char *pom_find_tag(const char *source, const char *end, const char *tag, 
     const char *p = source;
     bool in_parent = false;
     while (p < end) {
-        if (at_prefix(p, end, "<parent>", XML_PARENT_OPEN)) {
+        if (cbm_pipeline_pkgmap_at_prefix(p, (size_t)(end - p), "<parent>", XML_PARENT_OPEN)) {
             in_parent = true;
         }
-        if (at_prefix(p, end, "</parent>", XML_PARENT_CLOSE)) {
+        if (cbm_pipeline_pkgmap_at_prefix(p, (size_t)(end - p), "</parent>", XML_PARENT_CLOSE)) {
             in_parent = false;
         }
-        if (!in_parent && at_prefix(p, end, tag, tag_len)) {
+        if (!in_parent && cbm_pipeline_pkgmap_at_prefix(p, (size_t)(end - p), tag, tag_len)) {
             return xml_tag_content(p + tag_len, end);
         }
         p++;
@@ -642,7 +479,7 @@ static void parse_pom_xml(const char *source, int source_len, const char *rel_pa
         /* Map: "com.myorg.myapp" → src/main/java directory */
         char pkg_name[PKGMAP_PATH_BUF];
         snprintf(pkg_name, sizeof(pkg_name), "%s.%s", group_id, artifact_id);
-        char *dir = path_dirname(rel_path);
+        char *dir = cbm_pipeline_pkgmap_path_dirname(rel_path);
         char entry[PKGMAP_PATH_BUF];
         snprintf(entry, sizeof(entry), "%s%ssrc/main/java", dir[0] ? dir : "", dir[0] ? "/" : "");
         pkg_entries_push(entries, strdup(pkg_name), strdup(entry));
@@ -664,7 +501,7 @@ static void parse_build_gradle(const char *source, int source_len, const char *r
                                cbm_pkg_entries_t *entries) {
     const char *end = source + source_len;
     /* Look for group = '...' or group '...' or group = "..." */
-    const char *val = find_line_value(source, source_len, "group");
+    const char *val = cbm_pipeline_pkgmap_find_line_value(source, source_len, "group");
     if (!val) {
         return;
     }
@@ -672,7 +509,7 @@ static void parse_build_gradle(const char *source, int source_len, const char *r
     if (!group) {
         return;
     }
-    char *dir = path_dirname(rel_path);
+    char *dir = cbm_pipeline_pkgmap_path_dirname(rel_path);
     /* Check for src/main/java or src/main/kotlin */
     char entry[PKGMAP_PATH_BUF];
     snprintf(entry, sizeof(entry), "%s%ssrc/main/java", dir[0] ? dir : "", dir[0] ? "/" : "");
@@ -685,7 +522,7 @@ static void parse_mix_exs(const char *source, int source_len, const char *rel_pa
                           cbm_pkg_entries_t *entries) {
     const char *end = source + source_len;
     /* Look for app: :app_name */
-    const char *val = find_line_value(source, source_len, "app:");
+    const char *val = cbm_pipeline_pkgmap_find_line_value(source, source_len, "app:");
     if (!val) {
         return;
     }
@@ -704,7 +541,7 @@ static void parse_mix_exs(const char *source, int source_len, const char *rel_pa
         return;
     }
     char *app_name = cbm_strndup(start, (size_t)(val - start));
-    char *dir = path_dirname(rel_path);
+    char *dir = cbm_pipeline_pkgmap_path_dirname(rel_path);
     char entry[PKGMAP_PATH_BUF];
     snprintf(entry, sizeof(entry), "%s%slib/%s", dir[0] ? dir : "", dir[0] ? "/" : "", app_name);
     /* Register with colon prefix as Elixir uses :atom syntax */
@@ -730,7 +567,7 @@ static void parse_gemspec(const char *source, int source_len, const char *rel_pa
             }
             char *name = extract_quoted(found + strlen(patterns[i]), end);
             if (name) {
-                char *dir = path_dirname(rel_path);
+                char *dir = cbm_pipeline_pkgmap_path_dirname(rel_path);
                 char entry[PKGMAP_PATH_BUF];
                 snprintf(entry, sizeof(entry), "%s%slib/%s", dir[0] ? dir : "", dir[0] ? "/" : "",
                          name);
@@ -1364,7 +1201,7 @@ static const cbm_gbuf_node_t *resolve_sibling_file(const cbm_pipeline_ctx_t *ctx
         return NULL;
     }
     /* Directory of the importing file (empty for repo-root files). */
-    char *dir = path_dirname(source_rel ? source_rel : "");
+    char *dir = cbm_pipeline_pkgmap_path_dirname(source_rel ? source_rel : "");
     if (!dir) {
         return NULL;
     }

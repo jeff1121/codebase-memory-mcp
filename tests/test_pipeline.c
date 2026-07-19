@@ -9,10 +9,12 @@
 #include "test_framework.h"
 #include "test_helpers.h"
 #include "pipeline/artifact.h"
+#include "pipeline/enrichment_tokens.h"
 #include "pipeline/json_prop.h"
 #include "pipeline/lsp_cross_classifiers.h"
 #include "pipeline/pipeline.h"
 #include "pipeline/pipeline_internal.h"
+#include "pipeline/pkgmap_text.h"
 #include "pipeline/sveltekit_file_kind.h"
 #include "pipeline/sveltekit_server_method.h"
 #include "pipeline/url_path.h"
@@ -238,10 +240,9 @@ TEST(pipeline_lsp_cross_classifiers_contract) {
     ASSERT_FALSE(dts);
 
     static const CBMLanguage cross_lsp_languages[] = {
-        CBM_LANG_GO,     CBM_LANG_C,          CBM_LANG_CPP,   CBM_LANG_CUDA,
-        CBM_LANG_PYTHON, CBM_LANG_JAVASCRIPT, CBM_LANG_TYPESCRIPT,
-        CBM_LANG_TSX,    CBM_LANG_PHP,        CBM_LANG_CSHARP,
-        CBM_LANG_JAVA,   CBM_LANG_KOTLIN,     CBM_LANG_RUST,
+        CBM_LANG_GO,         CBM_LANG_C,          CBM_LANG_CPP,  CBM_LANG_CUDA, CBM_LANG_PYTHON,
+        CBM_LANG_JAVASCRIPT, CBM_LANG_TYPESCRIPT, CBM_LANG_TSX,  CBM_LANG_PHP,  CBM_LANG_CSHARP,
+        CBM_LANG_JAVA,       CBM_LANG_KOTLIN,     CBM_LANG_RUST,
     };
     for (size_t i = 0; i < sizeof(cross_lsp_languages) / sizeof(cross_lsp_languages[0]); i++) {
         ASSERT_TRUE(cbm_pxc_has_cross_lsp(cross_lsp_languages[i]));
@@ -250,8 +251,7 @@ TEST(pipeline_lsp_cross_classifiers_contract) {
     ASSERT_FALSE(cbm_pxc_has_cross_lsp((CBMLanguage)-1));
 
     static const char *const allowed_labels[] = {
-        "Class", "Struct", "Interface", "Enum", "Type", "Trait", "Protocol", "Function",
-        "Method",
+        "Class", "Struct", "Interface", "Enum", "Type", "Trait", "Protocol", "Function", "Method",
     };
     for (size_t i = 0; i < sizeof(allowed_labels) / sizeof(allowed_labels[0]); i++) {
         ASSERT(cbm_pxc_map_label(allowed_labels[i]) == allowed_labels[i]);
@@ -279,8 +279,8 @@ TEST(pipeline_json_prop_contract) {
     ASSERT_STR_EQ(sentinel, "keep");
 
     char empty_key[2];
-    ASSERT_TRUE(cbm_pipeline_extract_json_prop("{\"\":\"v\"}", "", empty_key,
-                                               (int)sizeof(empty_key)));
+    ASSERT_TRUE(
+        cbm_pipeline_extract_json_prop("{\"\":\"v\"}", "", empty_key, (int)sizeof(empty_key)));
     ASSERT_STR_EQ(empty_key, "v");
 
     ASSERT_FALSE(cbm_pipeline_extract_json_prop("{\"empty\":\"\"}", "empty", sentinel,
@@ -288,8 +288,8 @@ TEST(pipeline_json_prop_contract) {
     ASSERT_STR_EQ(sentinel, "keep");
 
     char exact[6];
-    ASSERT_TRUE(cbm_pipeline_extract_json_prop("{\"key\":\"value\"}", "key", exact,
-                                               (int)sizeof(exact)));
+    ASSERT_TRUE(
+        cbm_pipeline_extract_json_prop("{\"key\":\"value\"}", "key", exact, (int)sizeof(exact)));
     ASSERT_STR_EQ(exact, "value");
     char short_buf[5] = "keep";
     ASSERT_FALSE(cbm_pipeline_extract_json_prop("{\"key\":\"value\"}", "key", short_buf,
@@ -1340,11 +1340,11 @@ TEST(testdetect_is_test_file) {
 
 TEST(testdetect_is_test_function) {
     /* Test function patterns */
-    ASSERT_TRUE(cbm_is_test_func_name("Test"));        /* Go */
-    ASSERT_TRUE(cbm_is_test_func_name("TestCreate"));  /* Go */
-    ASSERT_TRUE(cbm_is_test_func_name("Benchmark"));   /* Go */
+    ASSERT_TRUE(cbm_is_test_func_name("Test"));       /* Go */
+    ASSERT_TRUE(cbm_is_test_func_name("TestCreate")); /* Go */
+    ASSERT_TRUE(cbm_is_test_func_name("Benchmark"));  /* Go */
     ASSERT_TRUE(cbm_is_test_func_name("BenchmarkParse"));
-    ASSERT_TRUE(cbm_is_test_func_name("Example"));     /* Go */
+    ASSERT_TRUE(cbm_is_test_func_name("Example")); /* Go */
     ASSERT_TRUE(cbm_is_test_func_name("ExampleReader"));
     ASSERT_TRUE(cbm_is_test_func_name("test_create")); /* Python/Rust/Lua */
     ASSERT_TRUE(cbm_is_test_func_name("test"));        /* JS/TS */
@@ -3276,6 +3276,137 @@ TEST(enrichment_split_camel_case) {
     PASS();
 }
 
+TEST(enrichment_tokens_argument_and_capacity_contract) {
+    char sentinel_zero[] = "sentinel-zero";
+    char sentinel_one[] = "sentinel-one";
+    char *out[2] = {sentinel_zero, sentinel_one};
+
+    ASSERT_EQ(cbm_split_camel_case(NULL, out, 2), 0);
+    ASSERT_TRUE(out[0] == sentinel_zero);
+    ASSERT_TRUE(out[1] == sentinel_one);
+    ASSERT_EQ(cbm_split_camel_case("postMapping", NULL, 2), 0);
+    ASSERT_EQ(cbm_split_camel_case("postMapping", out, 0), 0);
+    ASSERT_TRUE(out[0] == sentinel_zero);
+    ASSERT_TRUE(out[1] == sentinel_one);
+    ASSERT_EQ(cbm_tokenize_decorator("@PostMapping", out, -1), 0);
+    ASSERT_TRUE(out[0] == sentinel_zero);
+    ASSERT_TRUE(out[1] == sentinel_one);
+
+    int count = cbm_split_camel_case("loadHTTPServerNext", out, 1);
+    ASSERT_EQ(count, 1);
+    ASSERT_STR_EQ(out[0], "load");
+    ASSERT_TRUE(out[1] == sentinel_one);
+    free(out[0]);
+
+    out[0] = sentinel_zero;
+    count = cbm_tokenize_decorator("@PostMapping", out, 1);
+    ASSERT_EQ(count, 1);
+    ASSERT_STR_EQ(out[0], "post");
+    ASSERT_TRUE(out[1] == sentinel_one);
+    free(out[0]);
+    PASS();
+}
+
+TEST(enrichment_tokens_byte_and_input_limit_contract) {
+    char *out[2] = {NULL, NULL};
+    const char decorator[] = {'@', 'M', (char)0xc9, 't', 'h', 'o', 'd', '\0'};
+    const char expected[] = {'m', (char)0xc9, 't', 'h', 'o', 'd', '\0'};
+    char with_nul[] = {'@', 'P', 'o', 's', 't', '\0', 'M', 'a', 'p', 'p', 'i', 'n', 'g', '\0'};
+    char long_decorator[CBM_SZ_256 + 1];
+
+    int count = cbm_tokenize_decorator(decorator, out, 2);
+    ASSERT_EQ(count, 1);
+    ASSERT_EQ(memcmp(out[0], expected, sizeof(expected)), 0);
+    free(out[0]);
+
+    out[0] = NULL;
+    count = cbm_tokenize_decorator(with_nul, out, 2);
+    ASSERT_EQ(count, 1);
+    ASSERT_STR_EQ(out[0], "post");
+    free(out[0]);
+
+    long_decorator[0] = '@';
+    memset(long_decorator + 1, 'a', CBM_SZ_256 - 1);
+    long_decorator[CBM_SZ_256] = '\0';
+    out[0] = NULL;
+    count = cbm_tokenize_decorator(long_decorator, out, 2);
+    ASSERT_EQ(count, 1);
+    ASSERT_EQ(strlen(out[0]), CBM_SZ_256 - 2);
+    ASSERT_EQ(out[0][CBM_SZ_256 - 3], 'a');
+    free(out[0]);
+    PASS();
+}
+
+TEST(pkgmap_text_argument_and_ownership_contract) {
+    const char source[] = {'x', '\n', ' ', '\t', 'm', 'o', 'd', '\0'};
+    const char prefix[] = {(char)0xc9, 'x'};
+    const char value[] = {(char)0xc9, 'x'};
+
+    ASSERT_EQ(cbm_pipeline_pkgmap_at_prefix(NULL, 0, value, 2), 0);
+    ASSERT_EQ(cbm_pipeline_pkgmap_at_prefix(value, 2, NULL, 2), 0);
+    ASSERT_EQ(cbm_pipeline_pkgmap_at_prefix(value, 2, value, -1), 0);
+    ASSERT_EQ(cbm_pipeline_pkgmap_at_prefix(value, 1, value, 2), 0);
+    ASSERT_EQ(cbm_pipeline_pkgmap_at_prefix(value, 2, prefix, 2), 1);
+    ASSERT_EQ(cbm_pipeline_pkgmap_at_prefix(value, 0, value, 0), 1);
+
+    ASSERT_TRUE(cbm_pipeline_pkgmap_find_line_value(NULL, 0, "mod") == NULL);
+    ASSERT_TRUE(cbm_pipeline_pkgmap_find_line_value(source, -1, "mod") == NULL);
+    const char *line = cbm_pipeline_pkgmap_find_line_value(source, (int)sizeof(source) - 1, "mod");
+    ASSERT_TRUE(line == source + 7);
+
+    char *dirname = cbm_pipeline_pkgmap_path_dirname(NULL);
+    ASSERT_NOT_NULL(dirname);
+    ASSERT_STR_EQ(dirname, "");
+    free(dirname);
+
+    char *stem = cbm_pipeline_pkgmap_strip_extension("src/.config");
+    ASSERT_NOT_NULL(stem);
+    ASSERT_STR_EQ(stem, "src/");
+    free(stem);
+
+    char *joined = cbm_pipeline_pkgmap_join_and_strip(NULL, "./src/index.ts");
+    ASSERT_NOT_NULL(joined);
+    ASSERT_STR_EQ(joined, "src/index");
+    free(joined);
+    ASSERT_TRUE(cbm_pipeline_pkgmap_join_and_strip("src", NULL) == NULL);
+
+    char *built = cbm_pipeline_pkgmap_build_entry_path(NULL, NULL);
+    ASSERT_NOT_NULL(built);
+    ASSERT_STR_EQ(built, "");
+    free(built);
+    PASS();
+}
+
+TEST(pkgmap_text_byte_and_truncation_contract) {
+    char first_nul[] = {'a', '.', 'b', '\0', '.', 'c', '\0'};
+    char long_dir[CBM_SZ_1K];
+    char long_rel[CBM_SZ_1K + 8];
+
+    char *stem = cbm_pipeline_pkgmap_strip_extension(first_nul);
+    ASSERT_NOT_NULL(stem);
+    ASSERT_STR_EQ(stem, "a");
+    free(stem);
+
+    memset(long_dir, 'd', sizeof(long_dir) - 2);
+    long_dir[sizeof(long_dir) - 2] = '\0';
+    char *joined = cbm_pipeline_pkgmap_join_and_strip(long_dir, "entry.ts");
+    ASSERT_NOT_NULL(joined);
+    ASSERT_EQ(strlen(joined), CBM_SZ_1K - 1);
+    ASSERT_EQ(joined[CBM_SZ_1K - 2], '/');
+    free(joined);
+
+    memcpy(long_rel, long_dir, sizeof(long_dir) - 1);
+    long_rel[sizeof(long_dir) - 2] = '/';
+    long_rel[sizeof(long_dir) - 1] = 'x';
+    long_rel[sizeof(long_dir)] = '\0';
+    char *built = cbm_pipeline_pkgmap_build_entry_path(long_rel, "src/lib");
+    ASSERT_NOT_NULL(built);
+    ASSERT_EQ(strlen(built), CBM_SZ_1K - 1);
+    ASSERT_EQ(built[CBM_SZ_1K - 2], '/');
+    free(built);
+    PASS();
+}
+
 TEST(enrichment_tokenize_decorator) {
     char *tokens[16];
     int n;
@@ -3603,13 +3734,13 @@ TEST(compile_commands_split_command_contract) {
     char *sentinels[4] = {sentinel0, sentinel1, sentinel2, sentinel3};
 
     ASSERT_EQ(cbm_split_command(NULL, sentinels, 4), 0);
-    ASSERT(sentinels[0] == sentinel0 && sentinels[1] == sentinel1 &&
-           sentinels[2] == sentinel2 && sentinels[3] == sentinel3);
+    ASSERT(sentinels[0] == sentinel0 && sentinels[1] == sentinel1 && sentinels[2] == sentinel2 &&
+           sentinels[3] == sentinel3);
     ASSERT_EQ(cbm_split_command("ignored", NULL, 4), 0);
     ASSERT_EQ(cbm_split_command("ignored", sentinels, 0), 0);
     ASSERT_EQ(cbm_split_command("ignored", sentinels, -1), 0);
-    ASSERT(sentinels[0] == sentinel0 && sentinels[1] == sentinel1 &&
-           sentinels[2] == sentinel2 && sentinels[3] == sentinel3);
+    ASSERT(sentinels[0] == sentinel0 && sentinels[1] == sentinel1 && sentinels[2] == sentinel2 &&
+           sentinels[3] == sentinel3);
 
     char *empty[1] = {sentinel0};
     ASSERT_EQ(cbm_split_command("", empty, 1), 0);
@@ -7528,6 +7659,10 @@ SUITE(pipeline) {
     /* HTTP link pipeline integration */
     /* Enrichment helpers */
     RUN_TEST(enrichment_split_camel_case);
+    RUN_TEST(enrichment_tokens_argument_and_capacity_contract);
+    RUN_TEST(enrichment_tokens_byte_and_input_limit_contract);
+    RUN_TEST(pkgmap_text_argument_and_ownership_contract);
+    RUN_TEST(pkgmap_text_byte_and_truncation_contract);
     RUN_TEST(enrichment_tokenize_decorator);
     /* Decorator tags integration */
     RUN_TEST(decorator_tags_python_auto_discovery);

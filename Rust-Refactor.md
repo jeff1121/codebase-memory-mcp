@@ -1,5 +1,351 @@
 # Rust 重構計畫
 
+## 目前停點（2026-07-19）
+
+- true-source：**48 / 48**；產品 default 仍 C11。
+- 不得重跑 #29–#53；complexity JSON 延後（strtol）。
+- #54 architecture_aspect_wanted 為**進行中且非 true-source**：局部驗證已通過，但 optin/ONLY full gate 尚無完整成功證據。
+- dirty worktree 為預期（#29–#53 未 commit、#54 WIP）；禁止 reset／clean。
+- 完整細節、工作樹地圖與起手命令：`docs/rust-refactor-current-handoff.md` 頂端。
+- Skill：`CodebaseMemMcp-Refactory-rust`。
+- #37 enrichment tokens 已 true-source：ASCII byte lowercase、OOM 非 parity、C malloc／caller free；
+  `rust-pipeline-enrichment-tokens-{optin,only}-test` 的 default/wrapper/direct pipeline 均 **233**。
+- #38 pkgmap text 已 true-source：6 個 bounded/path helper、borrowed source、C malloc path result；
+  `rust-pipeline-pkgmap-text-{optin,only}-test` 的 default/wrapper/direct pipeline 均 **235**。
+- #39 search_code_score 已 true-source：nullable C strings、first-NUL 與累加加權；
+  `rust-mcp-search-code-score-{optin,only}-test` 的 default/wrapper/direct mcp 均 **137**。
+- #40 search_top_dir 已 true-source：NULL file、length-only、短 buffer 與 first-NUL；
+  `rust-mcp-search-top-dir-{optin,only}-test` 的 default/wrapper/direct mcp 均 **138**。
+- #41 detect_changes_wants_symbols 已 true-source：NULL、accepted/rejected scope 與 first-NUL；
+  `rust-mcp-detect-changes-scope-{optin,only}-test` 的 default/wrapper/direct mcp 均 **139**。
+- #42 detect_changes_impacted_label 已 true-source：NULL、excluded label 與 first-NUL；
+  `rust-mcp-detect-changes-label-{optin,only}-test` 的 default/wrapper/direct mcp 均 **140**。
+- #43 detect_changes_status_path_offset 已 true-source：NULL、porcelain、rename 與 first-NUL；
+  `rust-mcp-detect-changes-status-{optin,only}-test` 的 default/wrapper/direct mcp 均 **141**。
+- #44 node_resolution_score 已 true-source：nullable label、tier、negative span 與 first-NUL；
+  `rust-mcp-node-resolution-score-{optin,only}-test` 的 default/wrapper/direct mcp 均 **142**。
+- #45 utf8_is_cont_byte 已 true-source：low 8-bit continuation 判斷、負數／高位 mask；
+  `rust-mcp-utf8-is-cont-{optin,only}-test` 的 default/wrapper/direct mcp 均 **143**。
+- #46 adr_mode 已 true-source：get/update-store/sections mapping 與 first-NUL；
+  `rust-mcp-adr-mode-{optin,only}-test` 的 default/wrapper/direct mcp 均 **144**。
+- #47 trace_mode_edge_mask 已 true-source：default mode bitmask 與 first-NUL；
+  `rust-mcp-trace-mode-edge-mask-{optin,only}-test` 的 default/wrapper/direct mcp 均 **145**。
+- #48 trace_is_test_file 已 true-source：test-file substring 與 first-NUL；
+  `rust-mcp-trace-is-test-file-{optin,only}-test` 的 default/wrapper/direct mcp 均 **146**。
+- #49 project_db_file_name 已 true-source：精準 `.db` suffix、hidden／memory 排除與 first-NUL；
+  `rust-mcp-project-db-file-name-{optin,only}-test` 的 default/wrapper/direct mcp 均 **147**。
+- #50 sanitize_ascii_in_place 已 true-source：in-place high-byte replacement、NULL no-op 與 first-NUL；
+  `rust-mcp-sanitize-ascii-in-place-{optin,only}-test` 的 default/wrapper/direct mcp 均 **148**。
+- #51 bm25_file_pattern_like 已 true-source：length-only／短 buffer、glob-to-LIKE、first-NUL 與 caller-owned
+  output buffer；`rust-mcp-bm25-file-pattern-like-{optin,only}-test` 的 default/wrapper/direct mcp 均 **149**。
+- #52 bm25_build_match 已 true-source：ASCII token、短 buffer、first-NUL 與 caller-owned output buffer；
+  `rust-mcp-bm25-build-match-{optin,only}-test` 的 default/wrapper/direct mcp 均 **150**。
+- #53 sanitize_utf8_lossy 已 true-source：invalid byte 替換、first-NUL 與 C malloc／caller free；
+  `rust-mcp-sanitize-utf8-lossy-{optin,only}-test` 的 default/wrapper/direct mcp 均 **151**。
+- 下一步：先以 `make -j1` 依序重跑 #54 的 optin 與 ONLY gate，取得完整證據；完成前不得另選切片。
+
+## 第 54 項：MCP architecture_aspect_wanted（進行中，2026-07-19）
+
+public ABI `bool cbm_mcp_architecture_aspect_wanted(const char *input, const char *name)` 已由 C fallback
+`src/mcp/architecture_aspect_wanted.c/.h` 提供：invalid／missing／nonarray aspects 為 wanted，empty／no-match 為
+not wanted，`"all"`／exact name 為 wanted，first-NUL 生效。wrapper
+`CBM_USE_RUST_MCP_ARCHITECTURE_ASPECT_WANTED`（相容 CODEC）與 direct
+`CBM_USE_RUST_MCP_ARCHITECTURE_ASPECT_WANTED_ONLY`／`mcp-architecture-aspect-wanted-only` 已接線。fmt、Rust unit
+**1 passed**、切片 clippy、direct selector 已通過；optin 首次因 `test-rust-ffi` 未連結 `yyjson_read_opts` 失敗，
+現已把 `$(YYJSON_SRC)` 補入 `RUST_FFI_SUPPORT_SRCS`。重啟 gate 的結果未保存，ONLY 未跑；故仍是 WIP，不能從
+48／48 遞增。
+
+## 第 53 項：MCP sanitize_utf8_lossy true-source（2026-07-19）
+
+總計由 **47 / 47 → 48 / 48**。C fallback 拆至 `src/mcp/sanitize_utf8_lossy.c/.h`，`mcp.c` 保留 source
+resolution、yyjson result shaping 與 transport。public ABI `cbm_mcp_sanitize_utf8_lossy(input)`：NULL 回 NULL；
+first-NUL 前保留有效 UTF-8，將每個無效 byte 替換為 U+FFFD；成功回傳 C `malloc` 字串，caller 必須 `free()`，
+無 I/O。
+
+wrapper `CBM_USE_RUST_MCP_SANITIZE_UTF8_LOSSY` 相容 CODEC；direct
+`CBM_USE_RUST_MCP_SANITIZE_UTF8_LOSSY_ONLY`／`mcp-sanitize-utf8-lossy-only` 由 Rust 呼叫 C `malloc` 後匯出同名
+ABI。已通過 Rust unit **1 passed**、fmt、切片 clippy，以及 optin/only gate 的 default/wrapper/direct FFI、MCP
+**151 passed**、production `--version`、empty selector 與 source-negative（保留 `mcp.c`）。完整
+`scripts/test.sh` 未跑。
+
+## 第 52 項：MCP bm25_build_match true-source（2026-07-19）
+
+總計由 **46 / 46 → 47 / 47**。C fallback 拆至 `src/mcp/bm25_build_match.c/.h`，`mcp.c` 保留 FTS5 SQLite
+query、ranking／boosting、result JSON 與 transport orchestration。public ABI
+`cbm_mcp_bm25_build_match(input, buf, bufsize)` 維持 input-first C 順序：NULL input／buffer 或 `bufsize < 2`
+回 0 且不寫入；僅保留 ASCII alnum／underscore token，以 ` OR ` 串接；短 buffer 停在上一個完整 token 並
+NUL-terminate，first-NUL 生效。輸出 buffer 由 caller 擁有，無 heap、無 I/O。
+
+wrapper `CBM_USE_RUST_MCP_BM25_BUILD_MATCH` 相容 CODEC；direct
+`CBM_USE_RUST_MCP_BM25_BUILD_MATCH_ONLY`／`mcp-bm25-build-match-only` 匯出同名 ABI。已通過 Rust unit
+**1 passed**、fmt、切片 clippy，以及 optin/only gate 的 default/wrapper/direct FFI、MCP **150 passed**、
+production `--version`、empty selector 與 source-negative（保留 `mcp.c`）。完整 `scripts/test.sh` 未跑。
+
+## 第 51 項：MCP bm25_file_pattern_like true-source（2026-07-19）
+
+總計由 **45 / 45 → 46 / 46**。C fallback 拆至 `src/mcp/bm25_file_pattern_like.c/.h`，`mcp.c` 僅保留
+caller-owned final buffer 的配置／釋放與 BM25 SQLite query orchestration。public ABI
+`cbm_mcp_bm25_file_pattern_like(buf, bufsize, input)`：NULL input 回 `SIZE_MAX`；成功回完整輸出長度；
+NULL／zero buffer 為 length-only，短 buffer NUL 截斷。輸入採 first-NUL，先用 Store glob-to-LIKE，再對無
+wildcard input 加前後 `%`。C fallback 暫時配置並釋放 glob 結果，public output buffer 仍由 caller 擁有。
+
+wrapper `CBM_USE_RUST_MCP_BM25_FILE_PATTERN_LIKE` 相容 CODEC；direct
+`CBM_USE_RUST_MCP_BM25_FILE_PATTERN_LIKE_ONLY`／`mcp-bm25-file-pattern-like-only` 匯出同名 ABI。已通過
+Rust unit **1 passed**、fmt、切片 clippy，以及 optin/only gate 的 default/wrapper/direct FFI、MCP
+**149 passed**、production `--version`、empty selector 與 source-negative（保留 `mcp.c`）。完整
+`scripts/test.sh` 未跑。
+
+## 第 50 項：MCP sanitize_ascii_in_place true-source（2026-07-19）
+
+總計由 **44 / 44 → 45 / 45**。C fallback 拆至 `src/mcp/sanitize_ascii_in_place.c/.h`，`mcp.c` 保留
+`search_code` 的 grep/source/context read、JSON result shaping、snippet UTF-8 lossy sanitizer 與 transport
+orchestration。public ABI `cbm_mcp_sanitize_ascii_in_place(input)`：NULL no-op；只掃描至 first-NUL，將每個
+大於 127 的 byte 原地改為 `?`，ASCII（含 `0x7f`）保留，NUL 後 byte 不改；無 heap、無 I/O。
+
+wrapper 為 `CBM_USE_RUST_MCP_SANITIZE_ASCII_IN_PLACE`（相容 CODEC），direct 為
+`CBM_USE_RUST_MCP_SANITIZE_ASCII_IN_PLACE_ONLY`／Cargo `mcp-sanitize-ascii-in-place-only`；direct
+`MCP_SANITIZE_ASCII_IN_PLACE_SRCS =`，排除 fallback 並保留 `mcp.c`。Rust unit **1 passed**、fmt、切片 clippy、
+optin/only default/wrapper/direct FFI、mcp **148 passed**、production `--version`、empty selector 與
+source-negative 均通過。完整 `scripts/test.sh` 未跑。
+
+## 第 49 項：MCP project_db_file_name true-source（2026-07-19）
+
+總計由 **43 / 43 → 44 / 44**。C fallback 拆至 `src/mcp/project_db_file_name.c/.h`，`mcp.c` 保留 cache
+directory scan、SQLite query-open、internal project-name resolution、ghost/corrupt DB filtering、list JSON、
+resolve fallback 與 transport orchestration。public ABI `cbm_mcp_project_db_file_name(name)`：NULL、empty、`.db`、
+non-`.db`、`_` 開頭與 `:memory:` 開頭為 false；至少 `x.db`、精準 `.db` suffix 才可能為 true，`tmp-*.db`
+保持合法；字串採 first-NUL，無 heap、無輸入改寫、無 I/O。
+
+wrapper 為 `CBM_USE_RUST_MCP_PROJECT_DB_FILE_NAME`（相容 CODEC），direct 為
+`CBM_USE_RUST_MCP_PROJECT_DB_FILE_NAME_ONLY`／Cargo `mcp-project-db-file-name-only`；direct
+`MCP_PROJECT_DB_FILE_NAME_SRCS =`，排除 fallback 並保留 `mcp.c`。Rust unit **1 passed**、fmt、切片 clippy、
+optin/only default/wrapper/direct FFI、mcp **147 passed**、production `--version`、empty selector 與
+source-negative 均通過。完整 `scripts/test.sh` 未跑。
+
+## 第 48 項：MCP trace_is_test_file true-source（2026-07-19）
+
+總計由 **42 / 42 → 43 / 43**。C fallback 拆至 `src/mcp/trace_is_test_file.c/.h`，`mcp.c` 保留
+`trace_call_path` 的 BFS、include_tests filtering、is_test JSON 標記、risk labels、data-flow args、JSON 與
+transport orchestration。public ABI `cbm_mcp_trace_is_test_file(path)`：NULL、empty 回 false；path 含
+`/test`、`test_`、`_test.`、`/tests/`、`/spec/` 或 `.test.` 回 true；字串採 first-NUL，無 heap、無輸入改寫、
+無 I/O。
+
+wrapper 為 `CBM_USE_RUST_MCP_TRACE_IS_TEST_FILE`（相容 CODEC），direct 為
+`CBM_USE_RUST_MCP_TRACE_IS_TEST_FILE_ONLY`／Cargo `mcp-trace-is-test-file-only`；direct
+`MCP_TRACE_IS_TEST_FILE_SRCS =`，排除 fallback 並保留 `mcp.c`。Rust unit **1 passed**、fmt、切片 clippy、
+optin/only default/wrapper/direct FFI、mcp **146 passed**、production `--version`、empty selector 與
+source-negative 均通過。完整 `scripts/test.sh` 未跑。
+
+## 第 47 項：MCP trace_mode_edge_mask true-source（2026-07-19）
+
+總計由 **41 / 41 → 42 / 42**。C fallback 拆至 `src/mcp/trace_mode_edge_mask.c/.h`，`mcp.c` 保留
+`resolve_trace_edge_types()` 的 explicit edge array parsing、edge-name 順序、BFS、JSON 與 transport
+orchestration。public ABI `cbm_mcp_trace_mode_edge_mask(input)`：NULL、empty、`calls`、unknown、大小寫不符與
+尾端空白回 CALLS bit；`data_flow` 回 `CALLS|DATA_FLOWS`；`cross_service` 回完整 bit 0..9 edge set（`0x3ff`）；
+字串採 first-NUL，無 heap、無輸入改寫、無 I/O。
+
+wrapper 為 `CBM_USE_RUST_MCP_TRACE_MODE_EDGE_MASK`（相容 CODEC），direct 為
+`CBM_USE_RUST_MCP_TRACE_MODE_EDGE_MASK_ONLY`／Cargo `mcp-trace-mode-edge-mask-only`；direct
+`MCP_TRACE_MODE_EDGE_MASK_SRCS =`，排除 fallback 並保留 `mcp.c`。Rust unit **1 passed**、fmt、切片 clippy、
+optin/only default/wrapper/direct FFI、mcp **145 passed**、production `--version`、empty selector 與
+source-negative 均通過。完整 `scripts/test.sh` 未跑。
+
+## 第 46 項：MCP adr_mode true-source（2026-07-19）
+
+總計由 **40 / 40 → 41 / 41**。C fallback 拆至 `src/mcp/adr_mode.c/.h`，`mcp.c` 保留
+`manage_adr` 的 project／Store resolution、legacy migration、ADR read/write、sections JSON、ownership 與
+transport orchestration。public ABI `cbm_mcp_adr_mode(input)`：NULL、empty、`get`、unknown、大小寫不符與
+尾端空白回 0；`update`／`store` 回 1；`sections` 回 2；字串採 first-NUL，無 heap、無輸入改寫、無 I/O。
+
+wrapper 為 `CBM_USE_RUST_MCP_ADR_MODE`（相容 CODEC），direct 為
+`CBM_USE_RUST_MCP_ADR_MODE_ONLY`／Cargo `mcp-adr-mode-only`；direct `MCP_ADR_MODE_SRCS =`，排除 fallback
+並保留 `mcp.c`。Rust unit **1 passed**、fmt、切片 clippy、optin/only default/wrapper/direct FFI、mcp
+**144 passed**、production `--version`、empty selector 與 source-negative 均通過。完整
+`scripts/test.sh` 未跑。
+
+## 第 45 項：MCP utf8_is_cont_byte true-source（2026-07-19）
+
+總計由 **39 / 39 → 40 / 40**。C fallback 拆至 `src/mcp/utf8_is_cont.c/.h`，
+`sanitize_utf8_lossy.c` 保留 scan、replacement-byte 寫入與 buffer ownership，`mcp.c` 保留 JSON 與 transport。
+public ABI `cbm_mcp_utf8_is_cont_byte(byte)`：只檢查 low 8-bit，`0x80..0xBF` 回 true，其他回 false；負數與
+超過 byte 範圍的輸入先 byte mask；無 heap、無輸入改寫、無 I/O。
+
+wrapper 為 `CBM_USE_RUST_MCP_UTF8_IS_CONT`（相容 CODEC），direct 為
+`CBM_USE_RUST_MCP_UTF8_IS_CONT_ONLY`／Cargo `mcp-utf8-is-cont-only`；direct
+`MCP_UTF8_IS_CONT_SRCS =`，排除 fallback 並保留 `mcp.c`。Rust unit **1 passed**、fmt、切片 clippy、
+optin/only default/wrapper/direct FFI、mcp **143 passed**、production `--version`、empty selector 與
+source-negative 均通過。完整 `scripts/test.sh` 未跑。
+
+## 第 44 項：MCP node_resolution_score true-source（2026-07-19）
+
+總計由 **38 / 38 → 39 / 39**。C fallback 拆至 `src/mcp/node_resolution_score.c/.h`，`mcp.c` 保留
+candidate query、ambiguity、BFS、JSON 與 transport orchestration。public ABI
+`cbm_mcp_node_resolution_score(label, start_line, end_line)`：Function／Method tier 2，Module／File／NULL
+tier 0，其他 label tier 1；回傳 tier * 1000000 加非負 line span；字串採 first-NUL，無 heap、無輸入改寫、
+無 I/O。
+
+wrapper 為 `CBM_USE_RUST_MCP_NODE_RESOLUTION_SCORE`（相容 CODEC），direct 為
+`CBM_USE_RUST_MCP_NODE_RESOLUTION_SCORE_ONLY`／Cargo `mcp-node-resolution-score-only`；direct
+`MCP_NODE_RESOLUTION_SCORE_SRCS =`，排除 fallback 並保留 `mcp.c`。Rust unit **1 passed**、fmt、切片
+clippy、optin/only default/wrapper/direct FFI、mcp **142 passed**、production `--version`、empty selector
+與 source-negative 均通過。完整 `scripts/test.sh` 未跑。
+
+## 第 43 項：MCP detect_changes_status_path_offset true-source（2026-07-19）
+
+總計由 **37 / 37 → 38 / 38**。C fallback 拆至 `src/mcp/detect_changes_status.c/.h`，`mcp.c` 保留
+changed-files loop、Store lookup、JSON 與 transport orchestration。public ABI
+`cbm_mcp_detect_changes_status_path_offset(line)`：NULL、empty 或最終 path empty 回 `SIZE_MAX`；porcelain
+`XY ` 跳 3 bytes，rename `old -> new` 取 destination offset，bare／unknown prefix 回 0；字串採 first-NUL，
+無 heap、無輸入改寫、無 I/O。
+
+wrapper 為 `CBM_USE_RUST_MCP_DETECT_CHANGES_STATUS`（相容 CODEC），direct 為
+`CBM_USE_RUST_MCP_DETECT_CHANGES_STATUS_ONLY`／Cargo `mcp-detect-changes-status-only`；direct
+`MCP_DETECT_CHANGES_STATUS_SRCS =`，排除 fallback 並保留 `mcp.c`。Rust unit **1 passed**、fmt、切片
+clippy、optin/only default/wrapper/direct FFI、mcp **141 passed**、production `--version`、empty selector
+與 source-negative 均通過。完整 `scripts/test.sh` 未跑。
+
+## 第 42 項：MCP detect_changes_impacted_label true-source（2026-07-19）
+
+總計由 **36 / 36 → 37 / 37**。C fallback 拆至 `src/mcp/detect_changes_label.c/.h`，`mcp.c` 保留
+detect_changes 的 Store lookup、node ownership、JSON 與 transport orchestration。public ABI
+`cbm_mcp_detect_changes_impacted_label(label)`：NULL、`File`、`Folder`、`Project` 回 false；空字串與
+其他值回 true；字串採 first-NUL，無 heap、無輸入改寫、無 I/O。
+
+wrapper 為 `CBM_USE_RUST_MCP_DETECT_CHANGES_LABEL`（相容 CODEC），direct 為
+`CBM_USE_RUST_MCP_DETECT_CHANGES_LABEL_ONLY`／Cargo `mcp-detect-changes-label-only`；direct
+`MCP_DETECT_CHANGES_LABEL_SRCS =`，排除 fallback 並保留 `mcp.c`。Rust unit **1 passed**、fmt、
+切片 clippy、optin/only default/wrapper/direct FFI、mcp **140 passed**、production `--version`、
+empty selector 與 source-negative 均通過。完整 `scripts/test.sh` 未跑。
+
+## 第 41 項：MCP detect_changes_wants_symbols true-source（2026-07-19）
+
+總計由 **35 / 35 → 36 / 36**。C fallback 拆至 `src/mcp/detect_changes_scope.c/.h`，`mcp.c` 保留
+detect_changes 的 project/root resolution、git、Store、JSON 與 transport orchestration。public ABI
+`cbm_mcp_detect_changes_wants_symbols(scope)`：NULL、`symbols`、`impact` 回 true；空字串、`files`、
+大小寫不符、尾端空白與其他值回 false；字串採 first-NUL，無 heap、無輸入改寫、無 I/O。
+
+wrapper 為 `CBM_USE_RUST_MCP_DETECT_CHANGES_SCOPE`（相容 CODEC），direct 為
+`CBM_USE_RUST_MCP_DETECT_CHANGES_SCOPE_ONLY`／Cargo `mcp-detect-changes-scope-only`；direct
+`MCP_DETECT_CHANGES_SCOPE_SRCS =`，排除 fallback 並保留 `mcp.c`。Rust unit **1 passed**、fmt、
+切片 clippy、optin/only default/wrapper/direct FFI、mcp **139 passed**、production `--version`、
+empty selector 與 source-negative 均通過。完整 `scripts/test.sh` 未跑。
+
+## 第 40 項：MCP search_top_dir true-source（2026-07-19）
+
+總計由 **34 / 34 → 35 / 35**。C fallback 拆至 `src/mcp/search_top_dir.c/.h`，`mcp.c` 保留
+directory distribution orchestration。public ABI `cbm_mcp_search_top_dir(buf, bufsize, file)`：NULL file
+回 `SIZE_MAX` 且不寫入，成功回完整 top key 長度；NULL／zero buffer length-only，短 buffer
+NUL-terminate，字串採 first-NUL；無 heap、無輸入改寫、無 I/O。
+
+wrapper 為 `CBM_USE_RUST_MCP_SEARCH_TOP_DIR`（相容 CODEC），direct 為
+`CBM_USE_RUST_MCP_SEARCH_TOP_DIR_ONLY`／Cargo `mcp-search-top-dir-only`；direct
+`MCP_SEARCH_TOP_DIR_SRCS =`，排除 fallback 並保留 `mcp.c`。Rust unit **1 passed**、fmt、切片
+clippy、optin/only default/wrapper/direct FFI、mcp **138 passed**、production `--version`、empty selector
+與 source-negative 均通過。完整 `scripts/test.sh` 未跑。
+
+## 第 39 項：MCP search_code_score true-source（2026-07-19）
+
+總計由 **33 / 33 → 34 / 34**。C fallback 拆至 `src/mcp/search_code_score.c/.h`，`mcp.c` 保留
+search result orchestration。public ABI `cbm_mcp_search_code_score(label, file, in_degree)`：nullable
+字串只讀至 first-NUL，Function／Method +10、Route +15、vendored/vendor/node_modules -50、
+test/spec/_test. -5，條件可累加；無 heap、無輸入改寫、無排序或 I/O。
+
+wrapper 為 `CBM_USE_RUST_MCP_SEARCH_CODE_SCORE`（相容 CODEC），direct 為
+`CBM_USE_RUST_MCP_SEARCH_CODE_SCORE_ONLY`／Cargo `mcp-search-code-score-only`；direct
+`MCP_SEARCH_CODE_SCORE_SRCS =`，排除 fallback 並保留 `mcp.c`。Rust unit **1 passed**、fmt、
+切片 clippy、optin/only default/wrapper/direct FFI、mcp **137 passed**、production `--version`、
+empty selector 與 source-negative 均通過。完整 `scripts/test.sh` 未跑。
+
+## 第 38 項：Pipeline pkgmap text true-source（2026-07-19）
+
+總計由 **32 / 32 → 33 / 33**。C fallback 拆至 `src/pipeline/pkgmap_text.c/.h`，
+`pass_pkgmap.c` 保留 manifest parsing、I/O、package entry ownership 與 graph orchestration。public ABI
+為 6 個 `cbm_pipeline_pkgmap_*` helper；bounded line value 成功時借用 source，四個 path helper 成功時
+由 C malloc 配置並由 caller free。NULL、first-NUL、bounded byte、1023-byte join/build truncate 均已固定。
+
+wrapper 為 `CBM_USE_RUST_PIPELINE_PKGMAP_TEXT`，direct 為
+`CBM_USE_RUST_PIPELINE_PKGMAP_TEXT_ONLY`／Cargo `pipeline-pkgmap-text-only`；direct
+`PIPELINE_PKGMAP_TEXT_SRCS =`，排除 fallback 且保留 `pass_pkgmap.c`。Rust unit **4 passed**、fmt、
+切片 clippy、optin/only default/wrapper/direct FFI、pipeline **235 passed**、production `--version`、
+empty selector 與 source-negative 均通過。完整 `scripts/test.sh` 未跑。
+
+## 第 37 項：Pipeline enrichment tokens true-source（2026-07-19）
+
+總計由 **31 / 31 → 32 / 32**。C fallback 拆至 `src/pipeline/enrichment_tokens.c/.h`，
+`pass_enrichment.c` 保留 graph/store orchestration。公開 ABI 是 `cbm_split_camel_case` 與
+`cbm_tokenize_decorator`；NULL／NULL out／非正 `max_out` 回 0 且不寫入，input first-NUL raw bytes。
+decorator 僅 ASCII lowercase，非 ASCII byte 原樣；正常資源 token 為 C malloc／caller free，OOM 非
+parity 承諾。wrapper 為 `CBM_USE_RUST_PIPELINE_ENRICHMENT_TOKENS`，direct 為
+`CBM_USE_RUST_PIPELINE_ENRICHMENT_TOKENS_ONLY`／Cargo `pipeline-enrichment-tokens-only`；direct
+`PIPELINE_ENRICHMENT_TOKENS_SRCS =` 並排除 fallback、保留 `pass_enrichment.c`。
+
+`cargo test -p cbm-core pipeline_enrichment --locked` **5 passed**；fmt、切片 clippy、optin/only
+default/wrapper/direct FFI、pipeline **233 passed**、production `--version`、empty selector 與
+source-negative 均通過。完整 `scripts/test.sh` 未跑。
+
+## 第 35–36 項：MCP args + score_cmp true-source（2026-07-18）
+
+新 true-source 兩項，累計 **31 / 31**。#29–#34 未重開；complexity 仍延後。
+
+**#35** `cbm_mcp_search_args_valid`：root + optional pattern combiner；fallback
+`src/mcp/search_args.c`；feature `mcp-search-args-only`；Make
+`rust-mcp-search-args-{optin,only}-test`；mcp **136**。
+
+**#36** `cbm_mcp_search_score_cmp`：descending score delta（`right - left`）；fallback
+`src/mcp/search_score_cmp.c`；feature `mcp-search-score-cmp-only`；Make
+`rust-mcp-search-score-cmp-{optin,only}-test`；mcp **136**。
+
+## 第 33–34 項：MCP path_arg + line_span true-source（2026-07-18）
+
+新 true-source 兩項，累計 **29 / 29**。#29–#32 未重開；complexity 仍延後。
+
+**#33** `cbm_mcp_search_path_arg_valid`：shell denylist pure classifier；fallback
+`search_path_arg.c`；feature `mcp-search-path-arg-only`；mcp **136**。
+
+**#34** `cbm_mcp_search_line_match_span`：三 int span 純計算；fallback
+`search_line_span.c`；feature `mcp-search-line-span-only`；mcp **136**。
+
+## 第 32 項：MCP index_mode true-source（2026-07-18）
+
+新 true-source：**27 / 27**。產品 default 仍 C11。#29–#31 未重開；complexity JSON 仍延後。
+
+C fallback `src/mcp/index_mode.c/.h`；公開 `int cbm_mcp_index_mode(const char *)`：
+moderate→1、fast→2、cross-repo-intelligence→3、其餘（含 NULL/full/未知）→0。
+wrapper `CBM_USE_RUST_MCP_INDEX_MODE`（相容 CODEC）；direct `…_ONLY`／`mcp-index-mode-only`。
+Make `rust-mcp-index-mode-{optin,only}-test`：mcp 各 **136 passed**、production `--version`；
+direct 空 `MCP_INDEX_MODE_SRCS`、`make -Bn` 不含 `index_mode.c`、仍含 `mcp.c`。
+handler／pipeline 仍在 C。fmt／unit／clippy 通過。
+
+## 第 30–31 項：usages-json + MCP search_mode true-source（2026-07-17）
+
+新 true-source 兩項，累計 **26 / 26**。產品 default 仍 C11。#29 未重開；complexity JSON
+仍延後（strtol locale／overflow／NULL key）。
+
+### 第 30 項 pipeline-usages-json
+
+C fallback `src/pipeline/usages_json.c/.h`；公開
+`char *cbm_pipeline_usages_extract_local_name(const char *)`（malloc／caller free）。
+NULL／缺鍵／空 value → NULL；raw-byte first-NUL，無 JSON unescape。wrapper
+`CBM_USE_RUST_PIPELINE_USAGES_JSON` 經既有 len/copy v1；direct `…_ONLY`／
+`pipeline-usages-json-only`。Make `rust-pipeline-usages-json-{optin,only}-test`：pipeline 各
+**231 passed**、production `--version`；direct 空 `PIPELINE_USAGES_JSON_SRCS`、`make -Bn`
+不含 `usages_json.c`、仍含 `pass_usages.c`。fmt／unit 1／clippy 通過。
+
+### 第 31 項 MCP search_mode
+
+C fallback `src/mcp/search_mode.c/.h`；公開 `int cbm_mcp_search_mode(const char *)`：
+full→1、files→2、其餘→0。wrapper `CBM_USE_RUST_MCP_SEARCH_MODE`（相容 CODEC）；direct
+`…_ONLY`／`mcp-search-mode-only`。Make `rust-mcp-search-mode-{optin,only}-test`：mcp 各
+**136 passed**、production `--version`；direct 空 `MCP_SEARCH_MODE_SRCS`、`make -Bn` 不含
+`search_mode.c`、仍含 `mcp.c`。handler／grep／response 仍在 C。fmt／unit／clippy 通過。
+
+## 第 29 項：Pipeline calls-json true-source（2026-07-17）
+
+新 true-source：**24 / 24**。C fallback `src/pipeline/calls_json.c/.h`；公開
+`char *cbm_pipeline_calls_extract_local_name(const char *)`（malloc／caller free）。
+wrapper `CBM_USE_RUST_PIPELINE_CALLS_JSON`；direct `…_ONLY`／`pipeline-calls-json-only`。
+pipeline 各 **231 passed**；direct empty selector + source-negative；`pass_calls` 仍連結。
+fmt／unit 1／clippy 通過。產品 default 仍 C11。
 ## 第 28 項：Pipeline split-command true-source（2026-07-17）
 
 pipeline-split-command 是新的 true-source replacement，總計由 **22 / 22** 推進至

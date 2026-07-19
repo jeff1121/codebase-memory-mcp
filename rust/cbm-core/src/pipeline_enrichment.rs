@@ -122,4 +122,19 @@ mod tests {
             vec![b"derive".to_vec()]
         );
     }
+
+    #[test]
+    fn tokenizes_ascii_only_and_truncates_decorator_input() {
+        assert_eq!(
+            tokenize_decorator(Some(b"@M\xC9thod"), 2),
+            vec![b"m\xC9thod".to_vec()]
+        );
+
+        let mut long_decorator = vec![b'@'];
+        long_decorator.extend(std::iter::repeat(b'a').take(DECORATOR_BUF_SIZE - 1));
+        assert_eq!(
+            tokenize_decorator(Some(&long_decorator), 1),
+            vec![vec![b'a'; DECORATOR_BUF_SIZE - 2]]
+        );
+    }
 }
