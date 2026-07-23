@@ -6,6 +6,7 @@
  */
 #include "test_framework.h"
 #include <store/store.h>
+#include <store/safe_props.h>
 #include <sqlite3.h>
 #include <string.h>
 #include <stdlib.h>
@@ -500,6 +501,40 @@ TEST(store_file_hash_upsert_rejects_null_required_fields) {
     cbm_store_free_file_hashes(hashes, count);
 
     cbm_store_close(s);
+    PASS();
+}
+
+/* ── safe_props 契約 ────────────────────────────────────────────── */
+
+TEST(store_safe_props_contract) {
+    const char *null_result = cbm_store_safe_props(NULL);
+    ASSERT_NOT_NULL(null_result);
+    ASSERT_STR_EQ(null_result, "{}");
+
+    const char empty[] = "";
+    const char *empty_result = cbm_store_safe_props(empty);
+    ASSERT_NOT_NULL(empty_result);
+    ASSERT_STR_EQ(empty_result, "{}");
+
+    const char nul_junk[] = {'\0', 'j', 'u', 'n', 'k', '\0'};
+    const char *nul_junk_result = cbm_store_safe_props(nul_junk);
+    ASSERT_NOT_NULL(nul_junk_result);
+    ASSERT_STR_EQ(nul_junk_result, "{}");
+
+    const char props[] = "{\"kind\":\"node\"}";
+    const char *props_result = cbm_store_safe_props(props);
+    ASSERT_NOT_NULL(props_result);
+    ASSERT(props_result == props);
+
+    const char non_utf8[] = {(char)0xff, '\0'};
+    const char *non_utf8_result = cbm_store_safe_props(non_utf8);
+    ASSERT_NOT_NULL(non_utf8_result);
+    ASSERT(non_utf8_result == non_utf8);
+
+    const char embedded_nul[] = {'x', '\0', 't', 'a', 'i', 'l', '\0'};
+    const char *embedded_nul_result = cbm_store_safe_props(embedded_nul);
+    ASSERT_NOT_NULL(embedded_nul_result);
+    ASSERT(embedded_nul_result == embedded_nul);
     PASS();
 }
 
@@ -1563,6 +1598,7 @@ SUITE(store_nodes) {
     RUN_TEST(store_cascade_delete);
     RUN_TEST(store_file_hash_crud);
     RUN_TEST(store_file_hash_upsert_rejects_null_required_fields);
+    RUN_TEST(store_safe_props_contract);
     RUN_TEST(store_node_properties_json);
     RUN_TEST(store_node_null_properties);
     RUN_TEST(store_find_by_file_overlap);

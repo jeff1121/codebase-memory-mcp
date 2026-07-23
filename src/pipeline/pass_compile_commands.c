@@ -17,89 +17,7 @@ enum { CC_FLAG_IDX = 1, CC_FLAG_SKIP = 2 };
 #include <string.h>
 #include <stdio.h>
 #include "yyjson/yyjson.h"
-
-#ifdef CBM_USE_RUST_PIPELINE_SPLIT_COMMAND
-extern size_t cbm_rs_pipeline_resolve_compile_path_v1(char *buf, size_t bufsize, const char *path,
-                                                      const char *directory);
-#endif
-
-/* Resolve a path: if relative, join with directory. */
-static char *resolve_path(const char *path, const char *directory) {
-#ifdef CBM_USE_RUST_PIPELINE_SPLIT_COMMAND
-    size_t length = cbm_rs_pipeline_resolve_compile_path_v1(NULL, 0, path, directory);
-    if (length == (size_t)-1) {
-        return NULL;
-    }
-    char *result = malloc(length + SKIP_ONE);
-    if (!result) {
-        return NULL;
-    }
-    if (cbm_rs_pipeline_resolve_compile_path_v1(result, length + SKIP_ONE, path, directory) !=
-        length) {
-        free(result);
-        return NULL;
-    }
-    return result;
-#else
-    if (!path) {
-        return NULL;
-    }
-
-    /* Absolute path */
-    if (path[0] == '/') {
-        return strdup(path);
-    }
-
-    /* Relative — join with directory */
-    if (directory && directory[0]) {
-        char buf[CBM_SZ_4K];
-        snprintf(buf, sizeof(buf), "%s/%s", directory, path);
-        return strdup(buf);
-    }
-
-    return strdup(path);
-#endif
-}
-
-/* Try to consume a -I or -isystem include path flag. Returns true if consumed. */
-static bool try_include_flag(cbm_compile_flags_t *f, const char **args, int argc, int *i,
-                             const char *directory) {
-    const char *arg = args[*i];
-    if (arg[0] == '-' && arg[CC_FLAG_IDX] == 'I') {
-        const char *path = arg + CC_FLAG_SKIP;
-        if (*path == '\0' && *i + SKIP_ONE < argc) {
-            (*i)++;
-            path = args[*i];
-        }
-        if (path && *path) {
-            f->include_paths[f->include_count++] = resolve_path(path, directory);
-        }
-        return true;
-    }
-    if (strcmp(arg, "-isystem") == 0 && *i + SKIP_ONE < argc) {
-        (*i)++;
-        f->include_paths[f->include_count++] = resolve_path(args[*i], directory);
-        return true;
-    }
-    return false;
-}
-
-/* Try to consume a -D define flag. Returns true if consumed. */
-static bool try_define_flag(cbm_compile_flags_t *f, const char **args, int argc, int *i) {
-    const char *arg = args[*i];
-    if (arg[0] != '-' || arg[CC_FLAG_IDX] != 'D') {
-        return false;
-    }
-    const char *define = arg + CC_FLAG_SKIP;
-    if (*define == '\0' && *i + SKIP_ONE < argc) {
-        (*i)++;
-        define = args[*i];
-    }
-    if (define && *define) {
-        f->defines[f->define_count++] = strdup(define);
-    }
-    return true;
-}
+#include "pipeline/compile_flags.h"
 
 cbm_compile_flags_t *cbm_extract_flags(const char **args, int argc, const char *directory) {
     cbm_compile_flags_t *f = calloc(CBM_ALLOC_ONE, sizeof(*f));
@@ -110,10 +28,10 @@ cbm_compile_flags_t *cbm_extract_flags(const char **args, int argc, const char *
     f->defines = calloc(argc, sizeof(char *));
 
     for (int i = 0; i < argc; i++) {
-        if (try_include_flag(f, args, argc, &i, directory)) {
+        if (cbm_pipeline_try_include_flag(f, args, argc, &i, directory)) {
             continue;
         }
-        if (try_define_flag(f, args, argc, &i)) {
+        if (cbm_pipeline_try_define_flag(f, args, argc, &i)) {
             continue;
         }
         if (strncmp(args[i], "-std=", SLEN("-std=")) == 0) {

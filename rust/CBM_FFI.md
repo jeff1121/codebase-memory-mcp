@@ -1,10 +1,186 @@
 # C/Rust FFI 邊界
 
-## 目前停點（2026-07-19）— 先讀
+## 目前停點（2026-07-23）— 先讀
 
 > 完整交接以 `docs/rust-refactor-current-handoff.md` 為準。本檔是 **ABI／ownership 權威**。
-> true-source 累計 **48 / 48**；不得重跑 #29–#53；#54 為進行中且尚未 true-source；
-> `pipeline-complexity-json` 延後。
+> true-source 累計 **76 / 76**（#29–#81；最新 `store-safe-props`）；不得重跑 #29–#81；
+> `pipeline-complexity-json` 與 `content_length` 的數字解析仍因 `strtol` 語義差異延後。
+
+---
+
+## 2026-07-23 第 81 項：Store safe props true-source ABI
+
+Public C ABI 與 Rust direct ABI 相同：
+
+    const char *cbm_store_safe_props(const char *s);
+
+wrapper v1 ABI 為：
+
+    const char *cbm_rs_store_safe_props_v1(const char *s);
+
+`s == NULL` 時，函式回傳非 NULL、immutable、NUL 結尾、process-lifetime 的靜態 `"{}"`，且不可解參考
+`s`。`s != NULL` 時僅要求第一個 byte 可讀：第一個 byte 是 NUL 即回傳靜態 `"{}"`；第一個 byte 非 NUL
+則回傳完全相同的 borrowed input pointer，helper 不得掃描後續 bytes。因此 non-UTF-8 byte 受支援，
+`"x\\0tail"` 回傳原 pointer。nonempty 結果後續傳給 `bind_text()` 時必須是有效、NUL-terminated 的 C
+string，這是 legacy caller precondition，不是 helper 的驗證或掃描行為。
+
+此 ABI 不配置記憶體、不修改輸入、不做 I/O、不依賴 locale、不保存 input pointer，也不移轉 ownership。
+呼叫者不可 `free()` 結果；nonempty 結果必須保留 pointer identity，靜態 fallback 結果的 cross-mode
+pointer identity 不保證。C fallback 是 `src/store/safe_props.c/.h`；`src/store/store.c` 保留 host 與兩個
+node／edge property write caller，兩者最終仍呼叫 `bind_text()`。
+
+wrapper `CBM_USE_RUST_STORE_SAFE_PROPS` 委派
+`cbm_rs_store_safe_props_v1`，若 Rust 防禦性地回傳 NULL 才回退 C fallback。direct
+`CBM_USE_RUST_STORE_SAFE_PROPS_ONLY` 與 Cargo `store-safe-props-only` 則由 Rust staticlib 直接匯出同名
+public C ABI。ONLY 模式的 source selector 為空，排除 `src/store/safe_props.c`，但保留
+`src/store/store.c` host。
+
+**2026-07-23 已驗證：** fmt、Rust unit **1 passed（340 filtered out）**、direct `clippy -D warnings`；
+default／wrapper／direct FFI（含 v1 與 public direct ABI）；三模式 `store_nodes` 各 **56 passed**；production
+`--version` 均為 `codebase-memory-mcp dev`；ONLY selector 為空；`make -Bn` source-negative 不含
+`src/store/safe_props.c`、source-positive 仍含 `src/store/store.c`。direct true-source proof 為 **18**；
+`scripts/test.sh` 未執行。#29–#81 不重跑，兩個 `strtol` defer 維持；#82 必須重新盤點 Pipeline／MCP／
+Store 三個領域可凍結契約的 pure helper。
+
+---
+
+## 2026-07-23 第 77 項：Store language map true-source
+
+### 公開 ABI、模式與 ownership
+
+C fallback 為 `src/store/language_map.c/.h`，公開 ABI 為
+`const char *cbm_store_ext_to_lang(const char *ext);`。`ext == NULL`、空字串、未知 extension
+與大小寫不符一律回 NULL；非 NULL 僅讀 first-NUL 前的 bytes，採大小寫敏感、locale-independent 的
+byte-exact mapping。成功回傳 immutable、NUL 結尾、borrowed static pointer，呼叫者不得
+`free()`、修改、保存為可轉移所有權或以 pointer identity 判斷別名相等；別名只保證文字內容與
+static lifetime。ABI 不配置記憶體、不修改輸入、不做 I/O，亦不保存輸入 pointer。
+
+wrapper macro `CBM_USE_RUST_STORE_LANGUAGE_MAP` 經由
+`const char *cbm_rs_store_ext_to_lang_v1(const char *ext);` 呼叫 Rust；僅當該 Rust pointer 回傳
+NULL 時才回退 C fallback。direct macro `CBM_USE_RUST_STORE_LANGUAGE_MAP_ONLY` 與 Cargo feature
+`store-language-map-only` 由 Rust staticlib 直接匯出同一 public C ABI，不能改變 ownership、
+first-NUL 或 NULL 契約。Make gate 為 `rust-store-language-map-optin-test` 與
+`rust-store-language-map-only-test`；direct selector 為空，排除
+`src/store/language_map.c`，但保留 `src/store/store.c` consumer。
+
+### 44 項固定 mapping
+
+| extension | language |
+| --- | --- |
+| `.py` | Python |
+| `.go` | Go |
+| `.js`、`.jsx` | JavaScript |
+| `.ts`、`.tsx` | TypeScript |
+| `.rs` | Rust |
+| `.java` | Java |
+| `.cpp`、`.cc`、`.cxx` | C++ |
+| `.c`、`.h` | C |
+| `.cs` | C# |
+| `.php` | PHP |
+| `.lua` | Lua |
+| `.scala` | Scala |
+| `.kt` | Kotlin |
+| `.rb` | Ruby |
+| `.sh`、`.bash` | Bash |
+| `.zig` | Zig |
+| `.ex`、`.exs` | Elixir |
+| `.hs` | Haskell |
+| `.ml`、`.mli` | OCaml |
+| `.html` | HTML |
+| `.css` | CSS |
+| `.yaml`、`.yml` | YAML |
+| `.toml` | TOML |
+| `.hcl`、`.tf` | HCL |
+| `.sql` | SQL |
+| `.erl` | Erlang |
+| `.swift` | Swift |
+| `.dart` | Dart |
+| `.groovy` | Groovy |
+| `.pl` | Perl |
+| `.r` | R |
+| `.scss` | SCSS |
+| `.vue` | Vue |
+| `.svelte` | Svelte |
+
+### 舊 index ABI 相容保留
+
+既有 `int cbm_rs_store_ext_lang_kind_v1(const char *ext);` 保持 ABI 相容，供既有 FFI 與外部
+probe 使用：依上表 44 個 extension 的原有順序回傳 0..43，NULL 或 unknown 回 -1。它不是 #77
+public string ABI 的 ownership adapter；wrapper 與 direct implementation 不再藉由 index 轉回語言名，
+避免把 static string lifetime、NULL fallback 與 alias pointer 語義耦合至舊 index 介面。
+
+### Gate 證據
+
+已通過 Rust fmt、338 tests、`store-language-map-only` direct feature
+`clippy -D warnings`、default／wrapper／direct FFI smoke、store_arch 三模式各 **55 passed** 與
+production `--version`。source proof 確認 direct selector 為空、fallback source 不在 production link，
+且 `src/store/store.c` 仍在；舊 target warning 已消除。#29–#77 不重跑，
+`strtol` 相關兩項 defer 維持。
+
+## 2026-07-23 第 76 項 Cypher label_alt_match true-source ABI
+
+Public C ABI 與 Rust direct ABI 相同：
+
+    bool cbm_cypher_label_alt_matches(const char *actual, const char *pat);
+
+wrapper v1 ABI 為：
+
+    bool cbm_rs_cypher_label_alt_matches_v1(const char *actual, const char *pat);
+
+`pat == NULL` 回 true，且不得讀取 `actual`；`pat != NULL && actual == NULL` 回 false。其餘只比較兩者
+first-NUL 前的 bytes，大小寫敏感。無 pipe 時必須 exact match；僅 ASCII `|` 是分隔符：leading 或 interior
+empty alternative 可匹配 empty `actual`，trailing empty alternative 不檢查。函式不配置、不改寫、不保存 pointer、
+不做 I/O、不依賴 locale，亦不移轉 ownership。
+
+C fallback 為 `src/cypher/label_alt_match.c/.h`；`src/cypher/cypher.c` 的三個 relationship traversal
+consumer 全部經 public bridge 使用。wrapper `CBM_USE_RUST_CYPHER_LABEL_ALT_MATCH` 委派
+`cbm_rs_cypher_label_alt_matches_v1`；direct
+`CBM_USE_RUST_CYPHER_LABEL_ALT_MATCH_ONLY`／Cargo `cypher-label-alt-match-only` 匯出同名 public ABI。ONLY
+模式排除 fallback source，仍保留 `src/cypher/cypher.c` consumer。
+
+**2026-07-23 已驗證：** fmt、Rust unit **1 passed（336 filtered out）**、clippy；default／wrapper／direct
+FFI；三模式 `cypher` 各 **145 passed** 與 `cypher_contract` 各 **28 passed**；production `--version` 為
+`dev`；ONLY selector 為空；`make -Bn` source-negative 不含 `src/cypher/label_alt_match.c`、source-positive
+仍含 `src/cypher/cypher.c`。
+
+---
+
+## 2026-07-23 第 75 項 Cypher regex_shape true-source ABI
+
+Public C ABI 與 Rust direct ABI 相同：
+
+    bool cbm_cypher_looks_like_regex(const char *s);
+
+wrapper v1 ABI 為：
+
+    bool cbm_rs_cypher_looks_like_regex_v1(const char *s);
+
+`s == NULL` 回 false，且不得讀取該 pointer。非 NULL 時，呼叫端須提供有效、NUL-terminated 的 C
+string；僅檢查 first-NUL 前 bytes。字面相鄰的 `.*` 或 `.+`，或任一 byte 為 `[`、`(`、`|`、`^`、`$`
+時回 true；其餘回 false。這是刻意保留的寬鬆 heuristic，並非 regex parser。函式不配置、不改寫、不保存
+pointer、不做 I/O，且不依賴 locale 或移轉 ownership。
+
+C fallback 為 `src/cypher/regex_shape.c/.h`；`src/cypher/cypher.c` 的 `check_inline_props` 經 public
+bridge 使用。wrapper `CBM_USE_RUST_CYPHER_REGEX_SHAPE` 委派
+`cbm_rs_cypher_looks_like_regex_v1`；direct
+`CBM_USE_RUST_CYPHER_REGEX_SHAPE_ONLY`／Cargo `cypher-regex-shape-only` 匯出同名 public ABI。ONLY 模式
+排除 fallback source，仍保留 `src/cypher/cypher.c` consumer。
+
+**2026-07-23 已驗證：** fmt、Rust unit **1 passed**、clippy；default／wrapper／direct FFI；三模式
+`cypher` 各 **144 passed** 與 `cypher_contract` 各 **27 passed**；production `--version` 為 `dev`；ONLY
+selector 為空；`make -Bn` source-negative 不含 `src/cypher/regex_shape.c`、source-positive 仍含
+`src/cypher/cypher.c`。
+
+### #54–#59 近期
+
+| # | Public ABI | Fallback CU | Direct feature | Ownership |
+|---|------------|-------------|----------------|-----------|
+| 54 | `bool cbm_mcp_architecture_aspect_wanted` | `architecture_aspect_wanted.c` | `mcp-architecture-aspect-wanted-only` | pure bool；yyjson 暫配 |
+| 55 | `size_t cbm_mcp_strip_root_prefix_offset` | `strip_root_prefix.c` | `mcp-strip-root-prefix-only` | pure offset；borrow path |
+| 56 | `int cbm_mcp_search_pick_tightest_index` | `search_pick_tightest.c` | `mcp-search-pick-tightest-only` | pure int；span argmin |
+| 57 | `int cbm_mcp_search_pick_resolved_index` | `search_pick_resolved.c` | `mcp-search-pick-resolved-only` | pure int + bool ambiguous |
+| 58 | `int cbm_mcp_method_kind` | `method_kind.c` | `mcp-method-kind-only` | pure int enum |
+| 59 | `bool cbm_parse_file_uri` | `parse_file_uri.c` | `mcp-parse-file-uri-only` | caller-owned buffer；無 heap 移轉 |
 
 ### #29–#53 true-source 速查
 
@@ -36,20 +212,65 @@
 | 52 | `int cbm_mcp_bm25_build_match(const char *, char *, size_t)` | `src/mcp/bm25_build_match.c` | `mcp-bm25-build-match-only` | pure caller-owned buffer |
 | 53 | `char *cbm_mcp_sanitize_utf8_lossy(const char *)` | `src/mcp/sanitize_utf8_lossy.c` | `mcp-sanitize-utf8-lossy-only` | C malloc／caller free |
 
-詳見本檔後段「Calls import JSON」「Usages import JSON」「MCP search_mode」…「MCP search_code_score」
-各切片段落。wrapper 多相容 `CBM_USE_RUST_MCP_CODEC`（MCP）或專屬 pipeline flag。
+詳見本檔後段「Calls import JSON」「Usages import JSON」「MCP search_mode」… 各切片段落。
+wrapper 多相容 `CBM_USE_RUST_MCP_CODEC`（MCP）或專屬 pipeline flag。
 
 ### 下一候選 ABI 狀態
 
-- **#54 architecture_aspect_wanted**：已拆 fallback／wrapper／direct ABI，但 Make full gate 尚未有完整成功證據；
-  先收尾，不得列入上表或選擇下一候選。
-- **complexity JSON**：延後（strtol locale／overflow／NULL key）。
+> 目前基線為 **76 / 76**，#29–#81 不重跑。#82 必須重新盤點 Pipeline／MCP／Store 三個領域中可凍結
+> 契約的 pure helper，不預設候選；`pipeline-complexity-json` 與 `content_length`
+> 的 `strtol` 語義差異仍維持 defer。
+
+- **下一步**：#82 重新盤點 Pipeline／MCP／Store 三個領域的 pure helper，依 ABI 與 caller 邊界凍結下一個切片。
+- **延後**：complexity JSON；content_length value／raw（strtol locale／overflow／NULL key）。
 
 ---
 
-## 2026-07-19 第 54 項 MCP architecture_aspect_wanted（進行中）ABI
+## 2026-07-19 第 59 項 MCP parse_file_uri true-source ABI
 
-Public C ABI 與 Rust direct ABI 預定相同：
+Public C ABI 與 Rust direct ABI 相同：
+
+    bool cbm_parse_file_uri(const char *uri, char *out_path, int out_size);
+
+僅接受 byte-exact `file://` prefix；保留 raw path 與 percent encoding；對 `file:///C:/...`／
+`file:///d:/...` 類 Windows drive path 移除一個 leading slash。成功含 empty path `file://` 與
+buffer 截斷（仍回 true）。NULL uri／非法 scheme／空字串 → false，且在 `out_path && out_size > 0`
+時清空；`out_path == NULL` 或 `out_size <= 0` → false（不寫）。無 heap 移轉、無 I/O。
+
+C fallback：`src/mcp/parse_file_uri.c/.h`。wrapper `CBM_USE_RUST_MCP_PARSE_FILE_URI`（相容 CODEC）
+委派 `cbm_rs_mcp_parse_file_uri_v1`（length／`SIZE_MAX`）後映射 bool；direct
+`CBM_USE_RUST_MCP_PARSE_FILE_URI_ONLY`／Cargo `mcp-parse-file-uri-only` 匯出同名 public。
+`MCP_PARSE_FILE_URI_SRCS` ONLY 為空。
+
+**2026-07-19 已驗證：** unit 1 passed、clippy（feature `mcp-parse-file-uri-only`）；
+`rust-mcp-parse-file-uri-{optin,only}-test` mcp 各 **156 passed**、production `--version`；
+empty selector + `make -Bn` 不含 `parse_file_uri.c`、仍含 `mcp.c`。
+
+---
+
+## 2026-07-19 第 58 項 MCP method_kind true-source ABI
+
+JSON-RPC method exact-match classifier 已 true-source。fallback：`src/mcp/method_kind.c/.h`。
+
+公開 ABI：
+
+    int cbm_mcp_method_kind(const char *method);
+
+enum（header）：UNKNOWN=0、INITIALIZE=1、PING=2、TOOLS_LIST=3、TOOLS_CALL=4、
+NOTIFICATIONS_CANCELLED=5。NULL／空／case 不符／尾空白／未知 → 0；byte-exact first-NUL。
+無 heap、無 I/O。handler／cancel 副作用／transport 仍在 `mcp.c`。
+
+v1：`cbm_rs_mcp_method_kind_v1`。wrapper `CBM_USE_RUST_MCP_METHOD_KIND` 或 CODEC；
+direct `…_ONLY`／`mcp-method-kind-only` 匯出同名 public。`MCP_METHOD_KIND_SRCS` ONLY 為空。
+
+**2026-07-19 已驗證：** unit 1 passed、clippy；optin/only mcp 各 **156 passed**、
+production `--version`；empty selector + `make -Bn` source-negative（仍含 `mcp.c`）。
+
+---
+
+## 2026-07-19 第 54 項 MCP architecture_aspect_wanted true-source ABI
+
+Public C ABI 與 Rust direct ABI 相同：
 
     bool cbm_mcp_architecture_aspect_wanted(const char *input, const char *name);
 
@@ -66,14 +287,8 @@ traversal；僅三個 emission filters 以 raw `params_json` 呼叫新 ABI。wra
 `mcp-architecture-aspect-wanted-only` 匯出同名 ABI。Makefile 的 direct test-rust-ffi support 另補入
 `$(YYJSON_SRC)`，使 C fallback 可解析 JSON。
 
-fmt、Rust unit **1 passed**、切片 clippy 與 `make -pn` direct selector 已通過。首次 optin gate 的 default
-`test-rust-ffi` 因缺少 `yyjson_read_opts` link 失敗；修正後的重啟 run 未保存可採信最終結果，ONLY gate 尚未跑。
-因此本段是 **WIP ABI 記錄，不是 true-source 宣告**；接手時須序列執行並保存：
-
-~~~sh
-make -j1 -f Makefile.cbm rust-mcp-architecture-aspect-wanted-optin-test
-make -j1 -f Makefile.cbm rust-mcp-architecture-aspect-wanted-only-test
-~~~
+**2026-07-19 已驗證：** optin/only mcp 各 **152 passed**、production `--version`；empty selector +
+`make -Bn` 不含 `architecture_aspect_wanted.c`、仍含 `mcp.c`。（歷史 WIP 敘述作廢。）
 
 ---
 
@@ -686,7 +901,7 @@ default/wrapper/direct gate。trailing-separator 與相關公開 bridge 的 NULL
 - `cbm_rs_mcp_content_length_raw_v1`：給 `CBM_USE_RUST_MCP_CODEC=1` 使用的 raw Content-Length parser ABI。Rust 接受 nullable NUL-terminated header line，成功時回傳對齊 `strtol(..., NULL, 10)` 的原始數值；null、前綴不符或無數字時回傳 -1。C 用它區分無效 header 與語法有效但超過上限的 frame；後者不交給 handler，但 default C 與 Rust opt-in 都會消耗其 header/body，避免下一個 frame 失同步。Rust 不配置或讀取 body；body I/O、排空、`cbm_mcp_server_handle()`、response framing、poll loop、server lifecycle、dispatch 與 handlers 仍由 C 負責。
 - `cbm_rs_mcp_content_length_header_is_blank_v1`：給 `CBM_USE_RUST_MCP_CODEC=1` 使用的 MCP Content-Length header/body separator ABI。Rust 接受 nullable NUL-terminated header line，移除尾端 CR/LF 後若為空字串回傳 1，其他情況回傳 0；null 回傳 0。此 opt-in 只委派 `handle_content_length_frame()` 跳過 header 與 body 之間空行的 byte-level 判斷；`getline`、body allocation/read、`cbm_mcp_server_handle()`、poll loop、idle eviction、server lifecycle、dispatch 與 handlers 仍由 C 負責。
 - `cbm_rs_mcp_content_length_response_v1`：給 `CBM_USE_RUST_MCP_CODEC=1` 使用的 MCP Content-Length response framing ABI。Rust 接受 nullable NUL-terminated response JSON，產生 `Content-Length: <byte_len>\r\n\r\n<response>` framed bytes，寫入 caller-provided buffer 並回傳完整 byte 長度；`resp == NULL` 回傳 `SIZE_MAX`，短 buffer 會 NUL-terminate 截斷。C 端 `handle_content_length_frame()` 只在 ABI 成功時用 `fwrite` 輸出 Rust frame，否則 fallback 到原 `fprintf`；body read、header blank line handling、`cbm_mcp_server_handle()`、poll loop、idle eviction、server lifecycle、dispatch 與 handlers 仍由 C 負責。
-- `cbm_rs_mcp_parse_file_uri_v1`：給 `CBM_USE_RUST_MCP_CODEC=1` 使用的 MCP file URI parser ABI。Rust 接受 nullable NUL-terminated URI，僅接受 `file://` prefix，保留 raw path 與 percent encoding，並對 `file:///C:/...` / `file:///d:/...` 類 Windows drive path 移除一個 leading slash；成功時寫入 caller-provided buffer 並回傳完整 path byte 長度，短 buffer 會 NUL-terminate 截斷，invalid URI 或 null 回傳 `SIZE_MAX`。C 端 `cbm_parse_file_uri()` 只在 opt-in 下委派此純字串轉換；caller buffer ownership、錯誤時清空輸出、MCP root/session lifecycle 與 URI 使用端仍由 C 負責。
+- `cbm_rs_mcp_parse_file_uri_v1`：MCP file URI parser length ABI（#59 true-source）。Rust 接受 nullable NUL-terminated URI，僅接受 `file://` prefix，保留 raw path 與 percent encoding，並對 `file:///C:/...` / `file:///d:/...` 類 Windows drive path 移除一個 leading slash；成功時寫入 caller-provided buffer 並回傳完整 path byte 長度，短 buffer 會 NUL-terminate 截斷，invalid URI 或 null 回傳 `SIZE_MAX`。公開 bridge `bool cbm_parse_file_uri(const char *uri, char *out_path, int out_size)` 位於獨立 CU `src/mcp/parse_file_uri.c`；wrapper `CBM_USE_RUST_MCP_PARSE_FILE_URI`（亦相容 `CBM_USE_RUST_MCP_CODEC`）委派 v1 後映射 bool（成功含 empty path 與截斷；錯誤清空 out_path）；direct `CBM_USE_RUST_MCP_PARSE_FILE_URI_ONLY`／Cargo `mcp-parse-file-uri-only` 匯出同名 public ABI。caller buffer ownership、MCP root/session lifecycle 與 URI 使用端仍由 C 負責。
 - `cbm_rs_mcp_method_kind_v1`：給 `CBM_USE_RUST_MCP_CODEC=1` 使用的 MCP method dispatch classifier ABI。Rust 接受 nullable NUL-terminated method string，回傳 stable enum：`0` unknown、`1` initialize、`2` ping、`3` tools/list、`4` tools/call、`5` notifications/cancelled；大小寫、尾端空白與未知 method 都回 unknown。C 端只在 opt-in 下用此 classifier 選擇既有 dispatch branch；initialize side effects、ping/tools/list/tools/call handlers、cancellation side effect、logging、response wrapping、Content-Length transport、server lifecycle 與 14 個 tool handlers 仍由 C 負責。
 - `cbm_rs_mcp_method_not_found_error_v1`：給 `CBM_USE_RUST_MCP_CODEC=1` 使用的 MCP Method not found error object builder ABI。Rust 產生固定 compact error object `{"code":-32601,"message":"Method not found"}`，支援 caller-provided buffer、length-only 與短 buffer NUL 截斷。C 端 `cbm_mcp_server_handle()` 只在 unknown method branch 的 error object 建構使用 Rust；request id echo、JSON-RPC response wrapper、logging、Content-Length transport、server lifecycle 與 handlers 仍由 C 負責。
 - `cbm_rs_mcp_parse_error_message_v1`：給 `CBM_USE_RUST_MCP_CODEC=1` 使用的 MCP JSON-RPC parse error message builder ABI。Rust 產生固定文字 `Parse error`，支援 caller-provided buffer、length-only 與短 buffer NUL 截斷。C 端 `cbm_mcp_server_handle()` 只在 request parse 失敗時使用 Rust 建構 error message；numeric-id JSON-RPC error response formatting、Content-Length transport、logging、server lifecycle、dispatch 與 handlers 仍由 C/既有 Rust formatter 分工路徑負責。
@@ -1958,11 +2173,47 @@ direct feature `pipeline-semantic-fp-suffix-only`；pipeline **227**、productio
 | `cbm_minhash_jaccard` / `to_hex` / `from_hex` | `cbm_rs_simhash_*_v1` | `simhash-jaccard-only` | `src/simhash/minhash_jaccard.c` |
 | `cbm_pipeline_envscan_*` | `cbm_rs_pipeline_envscan_*_v1` | `pipeline-envscan-classifiers-only` | `src/pipeline/envscan_classifiers.c` |
 | `cbm_pipeline_configlink_*` | `cbm_rs_pipeline_configlink_*_v1` | `pipeline-configlink-helpers-only` | `src/pipeline/configlink_helpers.c` |
+| `cbm_pipeline_configlink_path_basename` | `cbm_rs_pipeline_configlink_path_basename_v1` | `pipeline-configlink-path-basename-only` | `src/pipeline/configlink_path_basename.c` |
 
 全部為 pure helper；Rust 不保存 C 指標。ONLY 時排除 fallback `.c`。`MCP_CODEC` wrapper 仍可
 委派 edge-type Rust ABI；edge-type ONLY 只排除小 CU，不排除整個 `mcp.c`。`pass_githistory.c`、
 `cli.c`、`pass_k8s.c`、`pass_envscan.c`、`pass_configlink.c`、`minhash.c`（compute/LSH）本體仍
 連結（orchestration 未遷移）。
+
+### store architecture aspect filter true-source（#74，2026-07-23）
+
+新增 C fallback `src/store/arch_aspect_filter.c/.h`，公開 ABI 為
+`bool cbm_store_arch_wants_aspect(const char *const *aspects, int aspect_count, const char *name)`；
+`src/store/store.c` 保留 architecture query、結果組裝與其餘 orchestration，九個 aspect 判斷皆經 public
+bridge。`aspects == NULL` 時無論 count/name 一律回 true；aspects 非 NULL 時，count 為 0 回 true、負值
+回 false。只有 count 為正時才解參考 pointers，並依輸入陣列順序，對第一個 NUL 前的 bytes 做大小寫敏感的
+精準比對：`"all"` 或與 name 相同即回 true，遍歷完則回 false。此 ABI 不配置、不修改、不做 I/O，也沒有
+locale 依賴；正 count 呼叫者必須提供可讀的 NUL 結尾 aspect 與 name。
+
+`CBM_USE_RUST_STORE_ARCH_ASPECT_FILTER=1` 啟用 wrapper，委派同簽章 v1
+`cbm_rs_store_arch_wants_aspect_v1`；`CBM_USE_RUST_STORE_ARCH_ASPECT_FILTER_ONLY=1` 與 Cargo feature
+`store-arch-aspect-filter-only` 改由 Rust staticlib 匯出相同 public ABI。ONLY 時
+`ARCH_ASPECT_FILTER_SRCS =`，production source list 不含 `src/store/arch_aspect_filter.c`，但仍保留
+`src/store/store.c`。已通過 fmt、Rust unit **1 passed**、feature clippy、default/wrapper/direct FFI、
+store_arch 各 **54 passed** 與三路 production `codebase-memory-mcp dev`；direct selector 空、fallback
+source-negative 及 `store.c` source-positive 均已驗證。`strtol` 相關 `pipeline-complexity-json` 與
+content_length value/raw 維持 defer，下一步重新盤點可凍結契約的 pure helper。
+
+### pipeline configlink path basename true-source（#73，2026-07-23）
+
+公開 ABI 為 `const char *cbm_pipeline_configlink_path_basename(const char *path)`。C fallback 位於
+`src/pipeline/configlink_path_basename.c/.h`；`src/pipeline/pass_configlink.c` 保留 orchestration，改由
+public bridge 呼叫。`path == NULL` 時必須回傳非 NULL 的 static NUL 空字串。其餘輸入僅讀取第一個 NUL 前
+的 bytes，並只將 ASCII `/` 視為分隔符，以最後一個分隔符後的位置作為 basename；尾端 `/` 與 root 會回傳
+指向終止 NUL 的 borrowed pointer，`\\` 不視為分隔符。結果永遠借用 input，無跨 ABI 配置、修改或 I/O。
+
+`CBM_USE_RUST_PIPELINE_CONFIGLINK_PATH_BASENAME=1` 啟用 wrapper；
+`CBM_USE_RUST_PIPELINE_CONFIGLINK_PATH_BASENAME_ONLY=1` 與 Cargo feature
+`pipeline-configlink-path-basename-only` 啟用 direct。Rust direct v1
+`cbm_rs_pipeline_configlink_path_basename_v1` 與 public ABI 同簽章。ONLY 時 fallback source 不編入，
+但 `pass_configlink.c` 仍保留。已通過 fmt、Rust unit **1 passed**、`clippy -D warnings`、opt-in／ONLY
+的 default/wrapper/direct FFI 與 pipeline 各 **236 passed**；產品 `--version` 輸出
+`codebase-memory-mcp dev`，direct selector 為空。
 > **2026-07-17 第 22 項 ABI 註記（原 `21/21` 預算外後續 slice）**：新增 discover language-name
 > public bridge `const char *cbm_language_name(CBMLanguage)`。其回傳值是 static、borrowed、NUL
 > 結尾、immutable 字串，C 呼叫端不得保存為可釋放所有權或呼叫 `free`；invalid、
@@ -1975,3 +2226,110 @@ direct feature `pipeline-semantic-fp-suffix-only`；pipeline **227**、productio
 > 排除 fallback；此 direct 與舊 full-language direct 因同名 ABI 互斥。已通過 fmt、3 個 unit、
 > clippy、default/wrapper/direct FFI、discover 87、production `--version`、selector/source-negative
 > 與 userconfig combo gate；完整 `scripts/test.sh` 未重跑。
+> **歷史定案（2026-07-23，#78）：** true-source 基線曾為 **73 / 73**。以下 #78 記錄覆寫較早的
+> pipeline incremental-edge gate 敘述；目前後續切片不得重跑 #29–#79。`strtol` 語義相關的
+> `pipeline-complexity-json` 與 `content_length` numeric parse 仍延後。
+
+## #78 Pipeline incremental edge 的 C/Rust FFI 契約
+
+公開 C ABI 與 Rust direct ABI 均為：
+
+```c
+bool cbm_pipeline_incremental_edge_type_is_recomputed(const char *edge_type);
+```
+
+`edge_type == NULL` 必須回 false 且不可解參考。其餘輸入為合法 NUL 結尾 C 字串時，僅以 first-NUL 前的
+raw bytes 比對，大小寫敏感、locale-independent；只有 `SIMILAR_TO`、`SEMANTICALLY_RELATED`、
+`FILE_CHANGES_WITH`、`DATA_FLOWS` 回 true。空字串、`CALLS`、未知字串、大小寫不同及 prefix／suffix
+變體均回 false。ABI 不配置或釋放記憶體、不修改輸入、不保存 C pointer、不做 I/O，亦沒有 ownership
+transfer。
+
+C fallback 位於 `src/pipeline/incremental_edge_type.c/.h`。`CBM_USE_RUST_PIPELINE_INCREMENTAL_EDGE=1`
+的 wrapper 使用 v1 ABI `cbm_rs_pipeline_incremental_edge_type_is_recomputed_v1` 委派 Rust，並保留 C
+fallback。`CBM_USE_RUST_PIPELINE_INCREMENTAL_EDGE_ONLY=1` 加上 Cargo feature
+`pipeline-incremental-edge-only` 時，Rust staticlib 直接匯出同名 public C ABI；direct selector
+`PIPELINE_INCREMENTAL_EDGE_SRCS` 為空，production link 排除 fallback source，仍保留
+`src/pipeline/pipeline_incremental.c` host。default／wrapper FFI linkage support 必須納入選擇後的
+selector，確保 public bridge 可連結。
+
+## #79 Store package-list contains 的 C/Rust FFI 契約
+
+公開 C ABI 與 Rust v1 ABI 為：
+
+```c
+bool cbm_store_package_list_contains(const char *pkg, char **list, int count);
+bool cbm_rs_store_package_list_contains_v1(const char *pkg, char **list, int count);
+```
+
+`count <= 0` 必須回 false，且不可解參考 `pkg` 或 `list`。`count > 0` 時，`pkg`、`list` 與所有實際
+讀取的 entries 均為 legacy C precondition：必須 non-NULL、有效且 NUL 結尾。實作按 array order 掃描
+`[0, count)`，只採 first-NUL 前 raw bytes，以與 `strcmp` 等價的 byte-exact、大小寫敏感、
+locale-independent 規則判定；找到第一個 match 回 true，掃描完回 false。ABI 不配置、不修改、不做 I/O、
+不依賴 locale、不保存 C pointer，亦不進行 ownership transfer。
+
+C fallback 在 `src/store/package_list.c/.h`。`src/store/store.c` 仍是 host，保留兩個 `arch_layers`
+consumer，僅改由 public bridge 委派；route／entry 分類及其餘 Store orchestration 不屬本切片。
+`CBM_USE_RUST_STORE_PACKAGE_LIST=1` 的 wrapper 呼叫
+`cbm_rs_store_package_list_contains_v1`，並保留 C fallback。`
+CBM_USE_RUST_STORE_PACKAGE_LIST_ONLY=1` 與 Cargo feature `store-package-list-only` 時，Rust staticlib
+直接匯出同名 public ABI；`STORE_PACKAGE_LIST_SRCS =`，production link 排除
+`src/store/package_list.c`，但保留 `src/store/store.c`。
+
+`package_list_contains_contract` 直接驗證 match、first-NUL 與 0／負 count 的 no-dereference；既有
+`arch_layers` 測試覆蓋真實 consumer integration。最終 gate 通過 fmt、Rust targeted test
+**1 passed（338 filtered）**、direct-feature `clippy -D warnings`、default／wrapper／direct FFI、
+store_arch 三模式各 **56 passed**、三種 production `codebase-memory-mcp dev`，以及 direct selector 空、
+fallback `src/store/package_list.c` source-negative、host `src/store/store.c` source-positive proof。Make 對
+wrapper／direct production 的 Rust staticlib link dependency 已納入三態 gate 覆蓋；完整
+`scripts/test.sh` 未執行。
+
+> **最新定案（2026-07-23，#79）：** true-source 基線為 **74 / 74**，完成清單為 #29–#79。不得重跑
+> #29–#79；`pipeline-complexity-json` 與 `content_length` numeric parse 的 `strtol` 語義 defer 維持。
+> 下一步 #80 從 Pipeline／MCP／Store pure helper inventory 選擇最小可凍結契約切片。
+
+此 slice 的真實 consumer regression 以 Serve／Help `CALLS` edge 作控制組，透過 public Store API seed
+`DATA_FLOWS` protected edge；實際 incremental 執行後，`CALLS` 仍由 snapshot 保留，而 `DATA_FLOWS`
+不會由 snapshot 恢復、改交後續 pass 重新計算。最終 gate 已通過 fmt、targeted Rust test
+**1 passed（337 filtered）**、direct-feature clippy、opt-in／ONLY 的 default／wrapper／direct FFI、
+Pipeline 三模式各 **237 passed**、三路 production `--version`（`codebase-memory-mcp dev`），及 direct
+empty selector、fallback source-negative、host source-positive proof。
+
+## #80 Pipeline similarity file extension 的 C/Rust FFI 契約（2026-07-23，已完成）
+
+#80 的公開 bridge 與 Rust v1 ABI 固定為：
+
+```c
+const char *cbm_pipeline_similarity_file_ext(const char *path);
+const char *cbm_rs_pipeline_similarity_file_ext_v1(const char *path);
+```
+
+C fallback 位於 `src/pipeline/similarity_file_ext.c/.h`。`src/pipeline/pass_similarity.c` 保留 host，
+`collect_fp_entries` 是唯一 consumer，僅改經 public bridge 取得副檔名並送入既有 similarity comparison；
+其餘 Pipeline orchestration 不屬本切片。
+
+ABI 契約：`path == NULL` 時必須回傳 non-NULL、process-lifetime、NUL 結尾的靜態空字串，且不得讀取
+`path`。非 NULL 時呼叫端必須提供有效 NUL 結尾 C 字串；實作只採 first-NUL 前 raw byte semantics，
+不要求 UTF-8。結果為最後一個 ASCII `.` 起的 borrowed input pointer：`a.b.c` 回傳 `.c` 的
+`path + offset`、`.gitignore` 回傳原 `path`、`file.` 回傳最後 dot；`README` 與空字串回傳靜態空字串。
+helper 不解析路徑分隔符，因此 `dir.name/file` 回傳 `.name/file`，`/` 與 `\\` 都不是特別字元。fullwidth dot
+不是 ASCII dot，embedded NUL 後 bytes 必須忽略，non-UTF8 bytes 依原始值處理。找到 dot 的結果 pointer
+identity 必須等於輸入 `path + offset`；空結果只保證 non-NULL 靜態生命週期，不保證跨 default／wrapper／direct
+modes 的 pointer identity。
+
+此 ABI 不配置或釋放記憶體、不修改輸入、不做 I/O、不保存 pointer，也不移轉 ownership；結果不可由 C
+呼叫端釋放或當成可轉移所有權。`CBM_USE_RUST_PIPELINE_SIMILARITY_FILE_EXT=1` 的 wrapper 呼叫
+`cbm_rs_pipeline_similarity_file_ext_v1`，只有 v1 回 NULL 時才回退 C fallback。
+`CBM_USE_RUST_PIPELINE_SIMILARITY_FILE_EXT_ONLY=1` 加上 Cargo feature
+`pipeline-similarity-file-ext-only` 時，Rust staticlib 直接匯出同名 public C ABI；
+`PIPELINE_SIMILARITY_FILE_EXT_SRCS =`，production source list 排除
+`src/pipeline/similarity_file_ext.c`，但保留 `src/pipeline/pass_similarity.c`。
+
+Rust unit、`pipeline_similarity_file_ext_contract`、三態 FFI contract 與 Pipeline integration 都覆蓋此
+契約。最終 gate 已通過 fmt、Rust **1 passed（339 filtered）**、direct `clippy -D warnings`、
+default／wrapper／direct FFI、Pipeline 各 **238 passed**、三路 production `codebase-memory-mcp dev`，以及
+empty selector、fallback source-negative、host source-positive。direct source-negative proof 為 **17**；
+完整 `scripts/test.sh` 未執行。
+
+> **最新 FFI 基線：** true-source 為 **75 / 75**，#29–#80 已完成且不得重跑。
+> `pipeline-complexity-json` 與 `content_length` numeric parse 的 `strtol` 語義仍 defer；#81 需重新盤點
+> Pipeline／MCP／Store 的最小 pure helper。

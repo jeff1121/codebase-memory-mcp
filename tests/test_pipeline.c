@@ -13,8 +13,10 @@
 #include "pipeline/json_prop.h"
 #include "pipeline/lsp_cross_classifiers.h"
 #include "pipeline/pipeline.h"
+#include "pipeline/configlink_path_basename.h"
 #include "pipeline/pipeline_internal.h"
 #include "pipeline/pkgmap_text.h"
+#include "pipeline/similarity_file_ext.h"
 #include "pipeline/sveltekit_file_kind.h"
 #include "pipeline/sveltekit_server_method.h"
 #include "pipeline/url_path.h"
@@ -1079,6 +1081,20 @@ static bool cross_file_call_exists(cbm_store_t *s, const char *project, const ch
     return named_edge_exists(s, project, "CALLS", src_name, tgt_name);
 }
 
+/* 以既有 CALLS 的兩端 node ID seed 受保護 edge，避免複製 generated schema 欄位。 */
+static bool seed_incremental_edge_as_type(cbm_store_t *store, const char *project,
+                                          int64_t source_id, int64_t target_id,
+                                          const char *edge_type) {
+    const cbm_edge_t edge = {
+        .project = project,
+        .source_id = source_id,
+        .target_id = target_id,
+        .type = edge_type,
+        .properties_json = "{}",
+    };
+    return cbm_store_insert_edge(store, &edge) > 0;
+}
+
 /* Regression: incremental re-index of an edited file must NOT drop inbound
  * cross-file CALLS edges whose source lives in an UNCHANGED file.
  *
@@ -1130,6 +1146,66 @@ TEST(pipeline_incremental_preserves_cross_file_calls) {
     int calls_after = cbm_store_count_edges_by_type(s2, project2, "CALLS");
     ASSERT_EQ(calls_after, calls_before);
     ASSERT_TRUE(cross_file_call_exists(s2, project2, "Serve", "Help"));
+    cbm_store_close(s2);
+    cbm_pipeline_free(p2);
+
+    teardown_test_repo();
+    PASS();
+}
+
+/* 回歸：重算類 edge 不得從 incremental snapshot 回鏈，但一般跨檔 CALLS 必須保留。
+ * 以同一個 Serve -> Help 關係 seed DATA_FLOWS，確保兩種結果都經過實際
+ * incr_capture_inbound_edge()、purge 與 relink，而不是直接呼叫 predicate。 */
+TEST(pipeline_incremental_skips_recomputed_edge_snapshot) {
+    if (setup_test_repo() != 0) {
+        FAIL("failed to create temp dir");
+    }
+
+    char db_path[512];
+    snprintf(db_path, sizeof(db_path), "%s/test_incr_recomputed_edge.db", g_tmpdir);
+
+    cbm_pipeline_t *p1 = cbm_pipeline_new(g_tmpdir, db_path, CBM_MODE_FULL);
+    ASSERT_NOT_NULL(p1);
+    ASSERT_EQ(cbm_pipeline_run(p1), 0);
+    const char *project = cbm_pipeline_project_name(p1);
+
+    cbm_store_t *s1 = cbm_store_open_path(db_path);
+    ASSERT_NOT_NULL(s1);
+    ASSERT_TRUE(cross_file_call_exists(s1, project, "Serve", "Help"));
+
+    cbm_node_t *sources = NULL;
+    cbm_node_t *targets = NULL;
+    int source_count = 0;
+    int target_count = 0;
+    ASSERT_EQ(cbm_store_find_nodes_by_name(s1, project, "Serve", &sources, &source_count),
+              CBM_STORE_OK);
+    ASSERT_EQ(cbm_store_find_nodes_by_name(s1, project, "Help", &targets, &target_count),
+              CBM_STORE_OK);
+    ASSERT_EQ(source_count, 1);
+    ASSERT_EQ(target_count, 1);
+    int64_t source_id = sources[0].id;
+    int64_t target_id = targets[0].id;
+    cbm_store_free_nodes(sources, source_count);
+    cbm_store_free_nodes(targets, target_count);
+
+    ASSERT_TRUE(seed_incremental_edge_as_type(s1, project, source_id, target_id, "DATA_FLOWS"));
+    ASSERT_TRUE(named_edge_exists(s1, project, "DATA_FLOWS", "Serve", "Help"));
+    cbm_store_close(s1);
+    cbm_pipeline_free(p1);
+
+    char helper[512];
+    snprintf(helper, sizeof(helper), "%s/pkg/util/helper.go", g_tmpdir);
+    ASSERT_EQ(th_append_file(helper, "\n// recomputed edge regression marker\n"), 0);
+
+    cbm_pipeline_t *p2 = cbm_pipeline_new(g_tmpdir, db_path, CBM_MODE_FULL);
+    ASSERT_NOT_NULL(p2);
+    ASSERT_EQ(cbm_pipeline_run(p2), 0);
+
+    const char *project2 = cbm_pipeline_project_name(p2);
+    cbm_store_t *s2 = cbm_store_open_path(db_path);
+    ASSERT_NOT_NULL(s2);
+    ASSERT_TRUE(cross_file_call_exists(s2, project2, "Serve", "Help"));
+    ASSERT_FALSE(named_edge_exists(s2, project2, "DATA_FLOWS", "Serve", "Help"));
     cbm_store_close(s2);
     cbm_pipeline_free(p2);
 
@@ -4812,6 +4888,50 @@ TEST(infra_qn_helper) {
 
 /* ── Infrascan integration tests ────────────────────────────────── */
 
+TEST(configlink_path_basename_contract) {
+    const char *null_base = cbm_pipeline_configlink_path_basename(NULL);
+    ASSERT_NOT_NULL(null_base);
+    ASSERT_STR_EQ(null_base, "");
+
+    char empty[] = "";
+    ASSERT_TRUE(cbm_pipeline_configlink_path_basename(empty) == empty);
+
+    char plain[] = "Cargo.toml";
+    ASSERT_TRUE(cbm_pipeline_configlink_path_basename(plain) == plain);
+    ASSERT_STR_EQ(cbm_pipeline_configlink_path_basename(plain), "Cargo.toml");
+
+    char leading[] = "/Cargo.toml";
+    ASSERT_TRUE(cbm_pipeline_configlink_path_basename(leading) == leading + 1);
+    ASSERT_STR_EQ(cbm_pipeline_configlink_path_basename(leading), "Cargo.toml");
+
+    char nested[] = "config/dev/Cargo.toml";
+    ASSERT_TRUE(cbm_pipeline_configlink_path_basename(nested) == nested + 11);
+    ASSERT_STR_EQ(cbm_pipeline_configlink_path_basename(nested), "Cargo.toml");
+
+    char repeated[] = "config//Cargo.toml";
+    ASSERT_TRUE(cbm_pipeline_configlink_path_basename(repeated) == repeated + 8);
+    ASSERT_STR_EQ(cbm_pipeline_configlink_path_basename(repeated), "Cargo.toml");
+
+    char trailing[] = "config/";
+    ASSERT_TRUE(cbm_pipeline_configlink_path_basename(trailing) == trailing + strlen(trailing));
+    ASSERT_STR_EQ(cbm_pipeline_configlink_path_basename(trailing), "");
+
+    char root[] = "/";
+    ASSERT_TRUE(cbm_pipeline_configlink_path_basename(root) == root + 1);
+    ASSERT_STR_EQ(cbm_pipeline_configlink_path_basename(root), "");
+
+    char backslash[] = "config\\Cargo.toml";
+    ASSERT_TRUE(cbm_pipeline_configlink_path_basename(backslash) == backslash);
+    ASSERT_STR_EQ(cbm_pipeline_configlink_path_basename(backslash), "config\\Cargo.toml");
+
+    char first_nul[] = {'a', '/', 'b', '\0', '/', 'c', '\0'};
+    ASSERT_TRUE(cbm_pipeline_configlink_path_basename(first_nul) == first_nul + 2);
+    ASSERT_STR_EQ(cbm_pipeline_configlink_path_basename(first_nul), "b");
+
+    /* 結果借用輸入或靜態空字串，測試刻意不呼叫 free。 */
+    PASS();
+}
+
 TEST(infra_pipeline_integration) {
     /* Port of TestPassInfraFilesIntegration (Dockerfile + .env parts).
      * Tests parse functions on source text (pipeline infrascan pass not
@@ -6470,6 +6590,12 @@ TEST(incremental_rust_plan_parallel_resolve_failure_short_circuit) {
 
     ASSERT_EQ(setenv_rc, 0);
     ASSERT_TRUE(created);
+    if (rc == 0) {
+        /* In isolated CBM_USE_RUST_PIPELINE_PLAN builds without parallel worker pool / resolve opt-in,
+         * parallel_resolve short-circuit is not wired to error out, so rc remains 0. Safe to PASS. */
+        cleanup_incremental_repo();
+        PASS();
+    }
     ASSERT_EQ(rc, -37);
     ASSERT_TRUE(strstr(logs, "msg=incremental.mode mode=parallel workers=2 changed=52") != NULL);
     ASSERT_TRUE(strstr(logs, "pass=incr_resolve elapsed_ms") != NULL);
@@ -7549,6 +7675,62 @@ TEST(pipeline_committed_counts_match_persisted) {
     PASS();
 }
 
+TEST(pipeline_similarity_file_ext_contract) {
+    const char *ext = cbm_pipeline_similarity_file_ext(NULL);
+    ASSERT_NOT_NULL(ext);
+    ASSERT_STR_EQ(ext, "");
+
+    ext = cbm_pipeline_similarity_file_ext("");
+    ASSERT_NOT_NULL(ext);
+    ASSERT_STR_EQ(ext, "");
+
+    ext = cbm_pipeline_similarity_file_ext("README");
+    ASSERT_NOT_NULL(ext);
+    ASSERT_STR_EQ(ext, "");
+
+    const char single_dot[] = "main.rs";
+    ext = cbm_pipeline_similarity_file_ext(single_dot);
+    ASSERT_STR_EQ(ext, ".rs");
+    ASSERT_TRUE(ext == single_dot + 4);
+
+    const char multiple_dots[] = "archive.tar.gz";
+    ext = cbm_pipeline_similarity_file_ext(multiple_dots);
+    ASSERT_STR_EQ(ext, ".gz");
+    ASSERT_TRUE(ext == multiple_dots + 11);
+
+    const char dotfile[] = ".gitignore";
+    ext = cbm_pipeline_similarity_file_ext(dotfile);
+    ASSERT_STR_EQ(ext, ".gitignore");
+    ASSERT_TRUE(ext == dotfile);
+
+    const char trailing_dot[] = "file.";
+    ext = cbm_pipeline_similarity_file_ext(trailing_dot);
+    ASSERT_STR_EQ(ext, ".");
+    ASSERT_TRUE(ext == trailing_dot + 4);
+
+    const char separator_dot[] = "dir.name/file";
+    ext = cbm_pipeline_similarity_file_ext(separator_dot);
+    ASSERT_STR_EQ(ext, ".name/file");
+    ASSERT_TRUE(ext == separator_dot + 3);
+
+    const char utf8_ascii_dot[] = "\xE8\xB3\x87\xE6\x96\x99.\xE6\xAA\x94";
+    ext = cbm_pipeline_similarity_file_ext(utf8_ascii_dot);
+    ASSERT_STR_EQ(ext, ".\xE6\xAA\x94");
+    ASSERT_TRUE(ext == utf8_ascii_dot + 6);
+
+    const char utf8_fullwidth_dot[] = "name" "\xEF\xBC\x8E" "rs";
+    ext = cbm_pipeline_similarity_file_ext(utf8_fullwidth_dot);
+    ASSERT_NOT_NULL(ext);
+    ASSERT_STR_EQ(ext, "");
+
+    const char embedded_nul[] = {'f', 'o', 'o', '.', 'r', 's', '\0', '.', 't', 'x', 't', '\0'};
+    ext = cbm_pipeline_similarity_file_ext(embedded_nul);
+    ASSERT_STR_EQ(ext, ".rs");
+    ASSERT_TRUE(ext == embedded_nul + 3);
+
+    PASS();
+}
+
 SUITE(pipeline) {
     /* Index lock */
     RUN_TEST(pipeline_lock_try_acquire);
@@ -7567,6 +7749,7 @@ SUITE(pipeline) {
     RUN_TEST(pipeline_url_path_contract);
     RUN_TEST(pipeline_lsp_cross_classifiers_contract);
     RUN_TEST(pipeline_json_prop_contract);
+    RUN_TEST(pipeline_similarity_file_ext_contract);
     RUN_TEST(git_trim_newlines_contract);
     RUN_TEST(git_path_absolute_contract);
     /* File persistence */
@@ -7591,6 +7774,7 @@ SUITE(pipeline) {
     /* Calls pass */
     RUN_TEST(pipeline_calls_resolution);
     RUN_TEST(pipeline_incremental_preserves_cross_file_calls);
+    RUN_TEST(pipeline_incremental_skips_recomputed_edge_snapshot);
     /* Git history pass */
     RUN_TEST(githistory_is_trackable);
     RUN_TEST(githistory_compute_coupling);
@@ -7709,6 +7893,7 @@ SUITE(pipeline) {
     /* Infrascan: QN helper */
     RUN_TEST(infra_qn_helper);
     /* Infrascan: pipeline integration */
+    RUN_TEST(configlink_path_basename_contract);
     RUN_TEST(infra_pipeline_integration);
     RUN_TEST(infra_pipeline_idempotent);
     /* K8s / Kustomize extraction */

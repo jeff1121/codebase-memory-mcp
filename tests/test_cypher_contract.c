@@ -3,6 +3,12 @@
  */
 #include "test_framework.h"
 #include <cypher/cypher.h>
+#include <cypher/cypher_lex_single_char.h>
+#include <cypher/cypher_lex_two_char.h>
+#include <cypher/cypher_agg_func.h>
+#include <cypher/cypher_string_func.h>
+#include <cypher/label_alt_match.h>
+#include <cypher/regex_shape.h>
 #include <store/store.h>
 #include <stdlib.h>
 #include <string.h>
@@ -578,7 +584,106 @@ TEST(cypher_contract_exact_list_indexing_error) {
     PASS();
 }
 
+TEST(cypher_lex_single_char_contract) {
+    ASSERT_EQ(cbm_cypher_lex_single_char('('), TOK_LPAREN);
+    ASSERT_EQ(cbm_cypher_lex_single_char(')'), TOK_RPAREN);
+    ASSERT_EQ(cbm_cypher_lex_single_char('['), TOK_LBRACKET);
+    ASSERT_EQ(cbm_cypher_lex_single_char(']'), TOK_RBRACKET);
+    ASSERT_EQ(cbm_cypher_lex_single_char('-'), TOK_DASH);
+    ASSERT_EQ(cbm_cypher_lex_single_char('>'), TOK_GT);
+    ASSERT_EQ(cbm_cypher_lex_single_char('<'), TOK_LT);
+    ASSERT_EQ(cbm_cypher_lex_single_char(':'), TOK_COLON);
+    ASSERT_EQ(cbm_cypher_lex_single_char('.'), TOK_DOT);
+    ASSERT_EQ(cbm_cypher_lex_single_char('{'), TOK_LBRACE);
+    ASSERT_EQ(cbm_cypher_lex_single_char('}'), TOK_RBRACE);
+    ASSERT_EQ(cbm_cypher_lex_single_char('*'), TOK_STAR);
+    ASSERT_EQ(cbm_cypher_lex_single_char(','), TOK_COMMA);
+    ASSERT_EQ(cbm_cypher_lex_single_char('='), TOK_EQ);
+    ASSERT_EQ(cbm_cypher_lex_single_char('|'), TOK_PIPE);
+    ASSERT_EQ(cbm_cypher_lex_single_char('@'), TOK_EOF);
+    ASSERT_EQ(cbm_cypher_lex_single_char('a'), TOK_EOF);
+    PASS();
+}
+
+TEST(cypher_lex_two_char_contract) {
+    ASSERT_EQ(cbm_cypher_lex_two_char('!', '='), TOK_NEQ);
+    ASSERT_EQ(cbm_cypher_lex_two_char('<', '>'), TOK_NEQ);
+    ASSERT_EQ(cbm_cypher_lex_two_char('=', '~'), TOK_EQTILDE);
+    ASSERT_EQ(cbm_cypher_lex_two_char('>', '='), TOK_GTE);
+    ASSERT_EQ(cbm_cypher_lex_two_char('<', '='), TOK_LTE);
+    ASSERT_EQ(cbm_cypher_lex_two_char('.', '.'), TOK_DOTDOT);
+    ASSERT_EQ(cbm_cypher_lex_two_char('a', 'b'), TOK_EOF);
+    ASSERT_EQ(cbm_cypher_lex_two_char('=', '='), TOK_EOF);
+    PASS();
+}
+
+TEST(cypher_agg_func_contract) {
+    ASSERT_STR_EQ(cbm_cypher_agg_func_name(TOK_COUNT), "COUNT");
+    ASSERT_STR_EQ(cbm_cypher_agg_func_name(TOK_SUM), "SUM");
+    ASSERT_STR_EQ(cbm_cypher_agg_func_name(TOK_AVG), "AVG");
+    ASSERT_STR_EQ(cbm_cypher_agg_func_name(TOK_MIN_KW), "MIN");
+    ASSERT_STR_EQ(cbm_cypher_agg_func_name(TOK_MAX_KW), "MAX");
+    ASSERT_STR_EQ(cbm_cypher_agg_func_name(TOK_COLLECT), "COLLECT");
+    ASSERT_STR_EQ(cbm_cypher_agg_func_name(TOK_EOF), "COUNT");
+    PASS();
+}
+
+TEST(cypher_str_func_contract) {
+    ASSERT_STR_EQ(cbm_cypher_str_func_name(TOK_TOLOWER), "toLower");
+    ASSERT_STR_EQ(cbm_cypher_str_func_name(TOK_TOUPPER), "toUpper");
+    ASSERT_STR_EQ(cbm_cypher_str_func_name(TOK_TOSTRING), "toString");
+    ASSERT_STR_EQ(cbm_cypher_str_func_name(TOK_EOF), "");
+    PASS();
+}
+
+TEST(cypher_regex_shape_contract) {
+    const char first_nul[] = {'p', 'l', 'a', 'i', 'n', '\0', '.', '*', '\0'};
+    const char high_byte[] = {(char)0x80, '\0'};
+
+    ASSERT_FALSE(cbm_cypher_looks_like_regex(NULL));
+    ASSERT_FALSE(cbm_cypher_looks_like_regex(""));
+    ASSERT_TRUE(cbm_cypher_looks_like_regex(".*"));
+    ASSERT_TRUE(cbm_cypher_looks_like_regex(".+"));
+    ASSERT_TRUE(cbm_cypher_looks_like_regex("["));
+    ASSERT_TRUE(cbm_cypher_looks_like_regex("("));
+    ASSERT_TRUE(cbm_cypher_looks_like_regex("|"));
+    ASSERT_TRUE(cbm_cypher_looks_like_regex("^"));
+    ASSERT_TRUE(cbm_cypher_looks_like_regex("$"));
+    ASSERT_FALSE(cbm_cypher_looks_like_regex("."));
+    ASSERT_FALSE(cbm_cypher_looks_like_regex("+"));
+    ASSERT_FALSE(cbm_cypher_looks_like_regex("]"));
+    ASSERT_FALSE(cbm_cypher_looks_like_regex(")"));
+    ASSERT_FALSE(cbm_cypher_looks_like_regex("literal"));
+    ASSERT_FALSE(cbm_cypher_looks_like_regex(first_nul));
+    ASSERT_FALSE(cbm_cypher_looks_like_regex(high_byte));
+    PASS();
+}
+
+TEST(cypher_label_alt_match_contract) {
+    const char actual_first_nul[] = {'A', '\0', 'B', '\0'};
+    const char pat_first_nul[] = {'A', '\0', '|', 'B', '\0'};
+
+    ASSERT_TRUE(cbm_cypher_label_alt_matches(NULL, NULL));
+    ASSERT_FALSE(cbm_cypher_label_alt_matches(NULL, "Function"));
+    ASSERT_TRUE(cbm_cypher_label_alt_matches("Function", "Function"));
+    ASSERT_FALSE(cbm_cypher_label_alt_matches("function", "Function"));
+    ASSERT_TRUE(cbm_cypher_label_alt_matches("Function", "Module|Function|Class"));
+    ASSERT_FALSE(cbm_cypher_label_alt_matches("Function", "Module|Class"));
+    ASSERT_TRUE(cbm_cypher_label_alt_matches("", "|Function"));
+    ASSERT_TRUE(cbm_cypher_label_alt_matches("", "Function||Class"));
+    ASSERT_TRUE(cbm_cypher_label_alt_matches("", "|"));
+    ASSERT_FALSE(cbm_cypher_label_alt_matches("", "Function|"));
+    ASSERT_TRUE(cbm_cypher_label_alt_matches(actual_first_nul, pat_first_nul));
+    PASS();
+}
+
 SUITE(cypher_contract) {
+    RUN_TEST(cypher_lex_single_char_contract);
+    RUN_TEST(cypher_lex_two_char_contract);
+    RUN_TEST(cypher_agg_func_contract);
+    RUN_TEST(cypher_str_func_contract);
+    RUN_TEST(cypher_regex_shape_contract);
+    RUN_TEST(cypher_label_alt_match_contract);
     RUN_TEST(cypher_contract_parser_ast_shape);
     RUN_TEST(cypher_contract_parser_hop_range_shorthand);
     RUN_TEST(cypher_contract_optional_match_ast_shape);

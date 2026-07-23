@@ -10,6 +10,7 @@
 #include "foundation/constants.h"
 #include "pipeline/pipeline.h"
 #include "pipeline/similarity_fp.h"
+#include "pipeline/similarity_file_ext.h"
 #include <stdint.h>
 #include "pipeline/pipeline_internal.h"
 #include "graph_buffer/graph_buffer.h"
@@ -34,15 +35,6 @@ enum {
 enum { MIN_FP_ENTRIES = 2 };
 
 /* ── Helpers ─────────────────────────────────────────────────────── */
-
-/* Extract file extension from a path (including the dot). */
-static const char *file_ext(const char *path) {
-    if (!path) {
-        return "";
-    }
-    const char *dot = strrchr(path, '.');
-    return dot ? dot : "";
-}
 
 /* Log helper for integer-to-string in log calls. */
 static const char *itoa_log(int val) {
@@ -98,7 +90,7 @@ static int collect_fp_entries(cbm_gbuf_t *gbuf, fp_entry_t **out_entries) {
                 .node_id = n->id,
                 .fp = fp,
                 .file_path = n->file_path,
-                .ext = file_ext(n->file_path),
+                .ext = cbm_pipeline_similarity_file_ext(n->file_path),
             };
         }
     }

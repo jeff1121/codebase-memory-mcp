@@ -40,6 +40,12 @@ enum {
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "cypher/cypher_lex_single_char.h"
+#include "cypher/cypher_lex_two_char.h"
+#include "cypher/cypher_agg_func.h"
+#include "cypher/cypher_string_func.h"
+#include "cypher/label_alt_match.h"
+#include "cypher/regex_shape.h"
 
 #if defined(CBM_USE_RUST_CYPHER_LEX_SINGLE_CHAR) || \
     defined(CBM_USE_RUST_CYPHER_LEX_SINGLE_CHAR_ONLY)
@@ -229,83 +235,24 @@ static cbm_token_type_t keyword_lookup(const char *word) {
 
 /* Try to match a two-character token at position i. Returns true and advances i if matched. */
 static bool lex_try_two_char(const char *input, int len, int *i, cbm_lex_result_t *out) {
-    static const struct {
-        char c1, c2;
-        cbm_token_type_t type;
-        const char *text;
-    } pairs[] = {
-        {'!', '=', TOK_NEQ, "!="}, {'<', '>', TOK_NEQ, "<>"}, {'=', '~', TOK_EQTILDE, "=~"},
-        {'>', '=', TOK_GTE, ">="}, {'<', '=', TOK_LTE, "<="}, {'.', '.', TOK_DOTDOT, ".."},
-    };
     char c = input[*i];
     if (*i + SKIP_ONE >= len) {
         return false;
     }
     char c2 = input[*i + SKIP_ONE];
-#if defined(CBM_USE_RUST_CYPHER_LEX_TWO_CHAR) || defined(CBM_USE_RUST_CYPHER_LEX_TWO_CHAR_ONLY)
-    int rust_type = cbm_rs_cypher_two_char_kind_v1((unsigned char)c, (unsigned char)c2);
-    if (rust_type == TOK_NEQ || rust_type == TOK_EQTILDE || rust_type == TOK_GTE ||
-        rust_type == TOK_LTE || rust_type == TOK_DOTDOT) {
+    cbm_token_type_t type = cbm_cypher_lex_two_char(c, c2);
+    if (type != TOK_EOF) {
         char text[CYP_TRIPLE] = {c, c2, '\0'};
-        lex_push(out, (cbm_token_type_t)rust_type, text, *i);
+        lex_push(out, type, text, *i);
         *i += PAIR_LEN;
         return true;
-    }
-#endif
-    for (int p = 0; p < (int)(sizeof(pairs) / sizeof(pairs[0])); p++) {
-        if (c == pairs[p].c1 && c2 == pairs[p].c2) {
-            lex_push(out, pairs[p].type, pairs[p].text, *i);
-            *i += PAIR_LEN;
-            return true;
-        }
     }
     return false;
 }
 
 /* Try to match a single-character token. Returns TOK_EOF if not matched. */
 static cbm_token_type_t lex_single_char(char c) {
-#if defined(CBM_USE_RUST_CYPHER_LEX_SINGLE_CHAR) || \
-    defined(CBM_USE_RUST_CYPHER_LEX_SINGLE_CHAR_ONLY)
-    int rust_type = cbm_rs_cypher_single_char_kind_v1((unsigned char)c);
-    if (rust_type == TOK_EOF || (rust_type >= TOK_LPAREN && rust_type <= TOK_EQ) ||
-        rust_type == TOK_PIPE) {
-        return (cbm_token_type_t)rust_type;
-    }
-#endif
-    switch (c) {
-    case '(':
-        return TOK_LPAREN;
-    case ')':
-        return TOK_RPAREN;
-    case '[':
-        return TOK_LBRACKET;
-    case ']':
-        return TOK_RBRACKET;
-    case '-':
-        return TOK_DASH;
-    case '>':
-        return TOK_GT;
-    case '<':
-        return TOK_LT;
-    case ':':
-        return TOK_COLON;
-    case '.':
-        return TOK_DOT;
-    case '{':
-        return TOK_LBRACE;
-    case '}':
-        return TOK_RBRACE;
-    case '*':
-        return TOK_STAR;
-    case ',':
-        return TOK_COMMA;
-    case '=':
-        return TOK_EQ;
-    case '|':
-        return TOK_PIPE;
-    default:
-        return TOK_EOF;
-    }
+    return cbm_cypher_lex_single_char(c);
 }
 
 /* Try to lex an identifier or keyword starting at position i. Returns true if matched. */
@@ -1234,47 +1181,11 @@ extern int cbm_rs_cypher_string_func_index_v1(int token_kind);
 
 /* Token type to function name */
 static const char *agg_func_name(cbm_token_type_t t) {
-    static const char *const names[] = {"COUNT", "SUM", "AVG", "MIN", "MAX", "COLLECT", NULL};
-#if defined(CBM_USE_RUST_CYPHER_AGG_FUNC) || defined(CBM_USE_RUST_CYPHER_AGG_FUNC_ONLY)
-    int idx = cbm_rs_cypher_aggregate_func_index_v1((int)t);
-    return idx < 0 ? "COUNT" : names[idx];
-#else
-    switch (t) {
-    case TOK_COUNT:
-        return names[0];
-    case TOK_SUM:
-        return names[1];
-    case TOK_AVG:
-        return names[2];
-    case TOK_MIN_KW:
-        return names[3];
-    case TOK_MAX_KW:
-        return names[4];
-    case TOK_COLLECT:
-        return names[5];
-    default:
-        return "COUNT";
-    }
-#endif
+    return cbm_cypher_agg_func_name(t);
 }
 
 static const char *str_func_name(cbm_token_type_t t) {
-    static const char *const names[] = {"toLower", "toUpper", "toString", NULL};
-#if defined(CBM_USE_RUST_CYPHER_STRING_FUNC) || defined(CBM_USE_RUST_CYPHER_STRING_FUNC_ONLY)
-    int idx = cbm_rs_cypher_string_func_index_v1((int)t);
-    return idx < 0 ? "" : names[idx];
-#else
-    switch (t) {
-    case TOK_TOLOWER:
-        return names[0];
-    case TOK_TOUPPER:
-        return names[1];
-    case TOK_TOSTRING:
-        return names[2];
-    default:
-        return "";
-    }
-#endif
+    return cbm_cypher_str_func_name(t);
 }
 
 /* Parse a value literal: string, number, ident[.prop], true, false. Returns heap-allocated. */
@@ -2573,15 +2484,6 @@ static bool eval_where(const cbm_where_clause_t *w, binding_t *b) {
     return is_and;
 }
 
-/* Check if a string value looks like a regex pattern. */
-static bool looks_like_regex(const char *s) {
-    if (!s) {
-        return false;
-    }
-    return strstr(s, ".*") || strstr(s, ".+") || strchr(s, '[') || strchr(s, '(') ||
-           strchr(s, '|') || strchr(s, '^') || strchr(s, '$');
-}
-
 /* Check inline property filters.
  * Values that look like regex patterns are matched with POSIX ERE;
  * plain values use exact strcmp. */
@@ -2589,7 +2491,7 @@ static bool check_inline_props(const cbm_node_t *n, const cbm_prop_filter_t *pro
                                cbm_store_t *store) {
     for (int i = 0; i < count; i++) {
         const char *actual = node_prop(n, props[i].key, store);
-        if (looks_like_regex(props[i].value)) {
+        if (cbm_cypher_looks_like_regex(props[i].value)) {
             cbm_regex_t re;
             if (cbm_regcomp(&re, props[i].value, CBM_REG_EXTENDED | CBM_REG_NOSUB) == 0) {
                 bool matched = cbm_regexec(&re, actual, 0, NULL, 0) == 0;
@@ -2798,34 +2700,6 @@ static const char *eval_case_expr(const cbm_case_expr_t *k, binding_t *b) {
 
 /* ── Scan nodes for a pattern ─────────────────────────────────── */
 
-/* True if `actual` matches `pat`, where `pat` may be a '|'-alternation of
- * labels ("A|B|C") — openCypher label alternation (#242). */
-static bool label_alt_matches(const char *actual, const char *pat) {
-    if (!pat) {
-        return true;
-    }
-    if (!actual) {
-        return false;
-    }
-    if (!strchr(pat, '|')) {
-        return strcmp(actual, pat) == 0;
-    }
-    size_t al = strlen(actual);
-    const char *seg = pat;
-    while (*seg) {
-        const char *bar = strchr(seg, '|');
-        size_t seglen = bar ? (size_t)(bar - seg) : strlen(seg);
-        if (seglen == al && strncmp(seg, actual, seglen) == 0) {
-            return true;
-        }
-        if (!bar) {
-            break;
-        }
-        seg = bar + SKIP_ONE;
-    }
-    return false;
-}
-
 /* Seed nodes for a label alternation "A|B|C": union the per-label results.
  * Node-struct fields are moved (shallow) into out_nodes; each per-label array
  * container is freed. */
@@ -2923,7 +2797,8 @@ static void process_edges(cbm_store_t *store, cbm_edge_t *edges, int edge_count,
         if (cbm_store_find_node_by_id(store, tid, &found) != CBM_STORE_OK) {
             continue;
         }
-        if (target_node->label && !label_alt_matches(found.label, target_node->label)) {
+        if (target_node->label &&
+            !cbm_cypher_label_alt_matches(found.label, target_node->label)) {
             node_fields_free(&found);
             continue;
         }
@@ -2957,7 +2832,8 @@ static void expand_var_length(cbm_store_t *store, cbm_rel_pattern_t *rel,
         if (hop->hop < rel->min_hops) {
             continue;
         }
-        if (target_node->label && !label_alt_matches(hop->node.label, target_node->label)) {
+        if (target_node->label &&
+            !cbm_cypher_label_alt_matches(hop->node.label, target_node->label)) {
             continue;
         }
         if (!check_inline_props(&hop->node, target_node->props, target_node->prop_count, store)) {
@@ -4337,7 +4213,8 @@ static void expand_from_bound_terminal(cbm_store_t *store, cbm_pattern_t *patn,
                     if (cbm_store_find_node_by_id(store, sid, &found) != CBM_STORE_OK) {
                         continue;
                     }
-                    if (start_node->label && !label_alt_matches(found.label, start_node->label)) {
+                    if (start_node->label &&
+                        !cbm_cypher_label_alt_matches(found.label, start_node->label)) {
                         node_fields_free(&found);
                         continue;
                     }

@@ -177,6 +177,53 @@ static EXT_LANGUAGE_EXTENSIONS: &[&str] = &[
     ".swift", ".dart", ".groovy", ".pl", ".r", ".scss", ".vue", ".svelte",
 ];
 
+static EXT_LANGUAGE_LABELS: &[&[u8]] = &[
+    b"Python\0",
+    b"Go\0",
+    b"JavaScript\0",
+    b"JavaScript\0",
+    b"TypeScript\0",
+    b"TypeScript\0",
+    b"Rust\0",
+    b"Java\0",
+    b"C++\0",
+    b"C++\0",
+    b"C++\0",
+    b"C\0",
+    b"C\0",
+    b"C#\0",
+    b"PHP\0",
+    b"Lua\0",
+    b"Scala\0",
+    b"Kotlin\0",
+    b"Ruby\0",
+    b"Bash\0",
+    b"Bash\0",
+    b"Zig\0",
+    b"Elixir\0",
+    b"Elixir\0",
+    b"Haskell\0",
+    b"OCaml\0",
+    b"OCaml\0",
+    b"HTML\0",
+    b"CSS\0",
+    b"YAML\0",
+    b"YAML\0",
+    b"TOML\0",
+    b"HCL\0",
+    b"HCL\0",
+    b"SQL\0",
+    b"Erlang\0",
+    b"Swift\0",
+    b"Dart\0",
+    b"Groovy\0",
+    b"Perl\0",
+    b"R\0",
+    b"SCSS\0",
+    b"Vue\0",
+    b"Svelte\0",
+];
+
 #[must_use]
 pub fn ext_language_kind(ext: Option<&[u8]>) -> Option<i32> {
     let ext = ext?;
@@ -184,6 +231,15 @@ pub fn ext_language_kind(ext: Option<&[u8]>) -> Option<i32> {
         .iter()
         .position(|candidate| candidate.as_bytes() == ext)
         .map(|index| index as i32)
+}
+
+#[must_use]
+pub fn ext_to_language(ext: Option<&[u8]>) -> Option<&'static [u8]> {
+    let ext = ext?;
+    EXT_LANGUAGE_EXTENSIONS
+        .iter()
+        .position(|candidate| candidate.as_bytes() == ext)
+        .and_then(|index| EXT_LANGUAGE_LABELS.get(index).copied())
 }
 
 #[must_use]
@@ -214,6 +270,78 @@ mod tests {
 
     fn text(bytes: &[u8]) -> &str {
         std::str::from_utf8(bytes).unwrap()
+    }
+
+    #[test]
+    fn ext_to_language_matches_c_contract() {
+        use std::ffi::CStr;
+
+        let expected: &[(&[u8], &[u8])] = &[
+            (b".py", b"Python\0"),
+            (b".go", b"Go\0"),
+            (b".js", b"JavaScript\0"),
+            (b".jsx", b"JavaScript\0"),
+            (b".ts", b"TypeScript\0"),
+            (b".tsx", b"TypeScript\0"),
+            (b".rs", b"Rust\0"),
+            (b".java", b"Java\0"),
+            (b".cpp", b"C++\0"),
+            (b".cc", b"C++\0"),
+            (b".cxx", b"C++\0"),
+            (b".c", b"C\0"),
+            (b".h", b"C\0"),
+            (b".cs", b"C#\0"),
+            (b".php", b"PHP\0"),
+            (b".lua", b"Lua\0"),
+            (b".scala", b"Scala\0"),
+            (b".kt", b"Kotlin\0"),
+            (b".rb", b"Ruby\0"),
+            (b".sh", b"Bash\0"),
+            (b".bash", b"Bash\0"),
+            (b".zig", b"Zig\0"),
+            (b".ex", b"Elixir\0"),
+            (b".exs", b"Elixir\0"),
+            (b".hs", b"Haskell\0"),
+            (b".ml", b"OCaml\0"),
+            (b".mli", b"OCaml\0"),
+            (b".html", b"HTML\0"),
+            (b".css", b"CSS\0"),
+            (b".yaml", b"YAML\0"),
+            (b".yml", b"YAML\0"),
+            (b".toml", b"TOML\0"),
+            (b".hcl", b"HCL\0"),
+            (b".tf", b"HCL\0"),
+            (b".sql", b"SQL\0"),
+            (b".erl", b"Erlang\0"),
+            (b".swift", b"Swift\0"),
+            (b".dart", b"Dart\0"),
+            (b".groovy", b"Groovy\0"),
+            (b".pl", b"Perl\0"),
+            (b".r", b"R\0"),
+            (b".scss", b"SCSS\0"),
+            (b".vue", b"Vue\0"),
+            (b".svelte", b"Svelte\0"),
+        ];
+
+        assert_eq!(expected.len(), 44);
+        assert_eq!(EXT_LANGUAGE_EXTENSIONS.len(), expected.len());
+        assert_eq!(EXT_LANGUAGE_LABELS.len(), expected.len());
+        for (index, (ext, label)) in expected.iter().enumerate() {
+            assert_eq!(EXT_LANGUAGE_EXTENSIONS[index].as_bytes(), *ext);
+            assert_eq!(ext_language_kind(Some(*ext)), Some(index as i32));
+            assert_eq!(ext_to_language(Some(*ext)), Some(*label));
+        }
+
+        assert_eq!(ext_to_language(None), None);
+        assert_eq!(ext_to_language(Some(b"")), None);
+        assert_eq!(ext_to_language(Some(b".unknown")), None);
+        assert_eq!(ext_to_language(Some(b".PY")), None);
+
+        let first_nul = CStr::from_bytes_until_nul(b".py\0ignored").unwrap();
+        assert_eq!(
+            ext_to_language(Some(first_nul.to_bytes())),
+            Some(b"Python\0".as_slice())
+        );
     }
 
     #[test]

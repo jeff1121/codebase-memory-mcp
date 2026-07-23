@@ -21,6 +21,8 @@
  *   TestIsTestFilePath
  */
 #include "test_framework.h"
+#include <store/arch_aspect_filter.h>
+#include <store/language_map.h>
 #include <store/store.h>
 #include <string.h>
 #include <stdlib.h>
@@ -383,6 +385,41 @@ TEST(arch_language_aliases) {
 
     cbm_store_architecture_free(&info);
     cbm_store_close(s);
+    PASS();
+}
+
+TEST(arch_language_map_contract) {
+    typedef struct {
+        const char *ext;
+        const char *lang;
+    } language_map_case_t;
+    static const language_map_case_t cases[] = {
+        {".py", "Python"},     {".go", "Go"},          {".js", "JavaScript"}, {".jsx", "JavaScript"},
+        {".ts", "TypeScript"}, {".tsx", "TypeScript"}, {".rs", "Rust"},       {".java", "Java"},
+        {".cpp", "C++"},       {".cc", "C++"},         {".cxx", "C++"},       {".c", "C"},
+        {".h", "C"},           {".cs", "C#"},          {".php", "PHP"},       {".lua", "Lua"},
+        {".scala", "Scala"},   {".kt", "Kotlin"},      {".rb", "Ruby"},       {".sh", "Bash"},
+        {".bash", "Bash"},     {".zig", "Zig"},        {".ex", "Elixir"},     {".exs", "Elixir"},
+        {".hs", "Haskell"},    {".ml", "OCaml"},       {".mli", "OCaml"},     {".html", "HTML"},
+        {".css", "CSS"},       {".yaml", "YAML"},      {".yml", "YAML"},      {".toml", "TOML"},
+        {".hcl", "HCL"},       {".tf", "HCL"},         {".sql", "SQL"},       {".erl", "Erlang"},
+        {".swift", "Swift"},   {".dart", "Dart"},      {".groovy", "Groovy"}, {".pl", "Perl"},
+        {".r", "R"},           {".scss", "SCSS"},      {".vue", "Vue"},       {".svelte", "Svelte"},
+    };
+
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        ASSERT_STR_EQ(cbm_store_ext_to_lang(cases[i].ext), cases[i].lang);
+    }
+
+    ASSERT_NULL(cbm_store_ext_to_lang(NULL));
+    ASSERT_NULL(cbm_store_ext_to_lang(""));
+    ASSERT_NULL(cbm_store_ext_to_lang(".txt"));
+    ASSERT_NULL(cbm_store_ext_to_lang(".PY"));
+    const char py_with_tail[] = ".py\0ignored";
+    ASSERT_STR_EQ(cbm_store_ext_to_lang(py_with_tail), "Python");
+    const char *python = cbm_store_ext_to_lang(".py");
+    ASSERT_NOT_NULL(python);
+    ASSERT_TRUE(python == cbm_store_ext_to_lang(".py"));
     PASS();
 }
 
@@ -926,6 +963,31 @@ TEST(adr_validate_keys_empty) {
     PASS();
 }
 
+extern bool cbm_store_package_list_contains(const char *pkg, char **list, int count);
+
+TEST(package_list_contains_contract) {
+    char first[] = "first";
+    char middle[] = "middle";
+    char repeated[] = "first";
+    char last[] = "last";
+    char *list[] = {first, middle, repeated, last};
+    char embedded_input[] = {'f', 'i', 'r', 's', 't', '\0', 'x', '\0'};
+    char embedded_entry[] = {'e', 'm', 'b', 'e', 'd', '\0', 'x', '\0'};
+    char *embedded_list[] = {embedded_entry};
+
+    ASSERT_TRUE(cbm_store_package_list_contains("first", list, 4));
+    ASSERT_TRUE(cbm_store_package_list_contains("last", list, 4));
+    ASSERT_TRUE(cbm_store_package_list_contains(embedded_input, list, 4));
+    ASSERT_TRUE(cbm_store_package_list_contains("embed", embedded_list, 1));
+    ASSERT_FALSE(cbm_store_package_list_contains("unknown", list, 4));
+    ASSERT_FALSE(cbm_store_package_list_contains("FIRST", list, 4));
+    ASSERT_FALSE(cbm_store_package_list_contains("fir", list, 4));
+    ASSERT_FALSE(cbm_store_package_list_contains("first-extra", list, 4));
+    ASSERT_FALSE(cbm_store_package_list_contains(NULL, NULL, 0));
+    ASSERT_FALSE(cbm_store_package_list_contains(NULL, NULL, -1));
+    PASS();
+}
+
 /* ── Louvain tests ──────────────────────────────────────────────── */
 
 TEST(louvain_basic) {
@@ -1259,6 +1321,28 @@ TEST(arch_clusters_basic) {
 
 /* ── Helper function tests ──────────────────────────────────────── */
 
+TEST(arch_aspect_filter_contract) {
+    const char *languages[] = {"languages"};
+    const char *all[] = {"all"};
+    const char *different_case[] = {"Languages"};
+    const char *no_match[] = {"routes"};
+    const char aspect_with_tail[] = {'l', 'a', 'n', 'g', 'u', 'a', 'g', 'e', 's', '\0', 'x', '\0'};
+    const char name_with_tail[] = {'l', 'a', 'n', 'g', 'u', 'a', 'g', 'e', 's', '\0', 'x', '\0'};
+    const char *first_nul[] = {aspect_with_tail};
+
+    ASSERT_TRUE(cbm_store_arch_wants_aspect(NULL, -1, NULL));
+    ASSERT_TRUE(cbm_store_arch_wants_aspect(languages, 0, NULL));
+    ASSERT_TRUE(!cbm_store_arch_wants_aspect(languages, -1, "languages"));
+    ASSERT_TRUE(cbm_store_arch_wants_aspect(all, 1, "languages"));
+    ASSERT_TRUE(cbm_store_arch_wants_aspect(languages, 1, "languages"));
+    ASSERT_TRUE(!cbm_store_arch_wants_aspect(different_case, 1, "languages"));
+    ASSERT_TRUE(!cbm_store_arch_wants_aspect(languages, 1, "Languages"));
+    ASSERT_TRUE(!cbm_store_arch_wants_aspect(no_match, 1, "languages"));
+    ASSERT_TRUE(cbm_store_arch_wants_aspect(first_nul, 1, "languages"));
+    ASSERT_TRUE(cbm_store_arch_wants_aspect(languages, 1, name_with_tail));
+    PASS();
+}
+
 TEST(qn_to_package) {
     /* 4+ segments: returns segment[2] */
     ASSERT_STR_EQ(cbm_qn_to_package("project.internal.store.search.Search"), "store");
@@ -1420,6 +1504,7 @@ SUITE(store_arch) {
     RUN_TEST(arch_empty_project);
     RUN_TEST(arch_languages);
     RUN_TEST(arch_language_aliases);
+    RUN_TEST(arch_language_map_contract);
     RUN_TEST(arch_routes);
     RUN_TEST(arch_hotspots);
     RUN_TEST(arch_boundaries);
@@ -1427,6 +1512,7 @@ SUITE(store_arch) {
     RUN_TEST(arch_layers);
     RUN_TEST(arch_file_tree);
     RUN_TEST(arch_clusters);
+    RUN_TEST(arch_aspect_filter_contract);
 
     /* ADR */
     RUN_TEST(adr_store_and_retrieve);
@@ -1464,6 +1550,7 @@ SUITE(store_arch) {
     RUN_TEST(arch_clusters_basic);
 
     /* Helpers */
+    RUN_TEST(package_list_contains_contract);
     RUN_TEST(qn_to_package);
     RUN_TEST(qn_to_top_package);
     RUN_TEST(is_test_file_path);

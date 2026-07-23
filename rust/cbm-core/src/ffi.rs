@@ -51,6 +51,29 @@ use crate::store::{
 use crate::watcher as watcher_runtime;
 use std::sync::{Mutex, OnceLock};
 
+#[path = "store_arch_aspect_filter.rs"]
+mod store_arch_aspect_filter;
+
+#[path = "store_package_list.rs"]
+mod store_package_list;
+
+#[path = "store_safe_props.rs"]
+mod store_safe_props;
+
+#[path = "pipeline_similarity_file_ext.rs"]
+mod pipeline_similarity_file_ext;
+
+#[path = "cypher_regex_shape.rs"]
+mod cypher_regex_shape;
+
+#[path = "cypher_label_alt_match.rs"]
+mod cypher_label_alt_match;
+
+unsafe extern "C" {
+    #[allow(dead_code)]
+    fn malloc(size: usize) -> *mut c_void;
+}
+
 #[no_mangle]
 /// # Safety
 ///
@@ -62,6 +85,26 @@ pub unsafe extern "C" fn cbm_rs_discover_local_rel_path_offset_v1(
     discover_filter::local_rel_path_offset(unsafe { c_bytes(rel_path) }, unsafe {
         c_bytes(local_prefix)
     })
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `ext` 必須是 null，或是有效的 NUL-terminated C string。回傳值為 process-lifetime
+/// 的唯讀靜態 C string，或 null；呼叫端不得釋放或修改它。
+pub unsafe extern "C" fn cbm_rs_store_ext_to_lang_v1(ext: *const c_char) -> *const c_char {
+    store_arch_helpers::ext_to_language(unsafe { c_bytes(ext) })
+        .map_or(ptr::null(), |label| label.as_ptr().cast())
+}
+
+#[cfg(feature = "store-language-map-only")]
+#[no_mangle]
+/// # Safety
+///
+/// `ext` 必須是 null，或是有效的 NUL-terminated C string。回傳值為 process-lifetime
+/// 的唯讀靜態 C string，或 null；呼叫端不得釋放或修改它。
+pub unsafe extern "C" fn cbm_store_ext_to_lang(ext: *const c_char) -> *const c_char {
+    unsafe { cbm_rs_store_ext_to_lang_v1(ext) }
 }
 
 #[cfg(feature = "discover-local-rel-path-only")]
@@ -1805,22 +1848,27 @@ pub unsafe extern "C" fn cbm_rs_pipeline_has_config_extension_v1(path: *const c_
     }))
 }
 
-#[cfg(feature = "pipeline-configures-only")]
+#[cfg(any(
+    feature = "pipeline-configures-only",
+    feature = "pipeline-is-env-var-name-only"
+))]
 #[no_mangle]
 /// # Safety
 ///
-/// `value` 必須是 null，或指向有效的 NUL 結尾 C string。這是
-/// `CBM_USE_RUST_PIPELINE_CONFIGURES_ONLY=1` 時直接取代 C helper 的 `pipeline.h` ABI。
+/// `value` 必須是 null，或指向有效的 NUL 結尾 C string。
 pub unsafe extern "C" fn cbm_is_env_var_name(value: *const c_char) -> bool {
     unsafe { cbm_rs_pipeline_is_env_var_name_v1(value) != 0 }
 }
 
-#[cfg(feature = "pipeline-configures-only")]
+#[cfg(any(
+    feature = "pipeline-configures-only",
+    feature = "pipeline-normalize-config-key-only"
+))]
 #[no_mangle]
 /// # Safety
 ///
 /// `key` 必須是 null，或指向有效的 NUL 結尾 C string；`norm_out` 必須是 null，或
-/// 指向至少 `norm_sz` bytes 的可寫記憶體。這是 Rust-only configures 的既有 C ABI。
+/// 指向至少 `norm_sz` bytes 的可寫記憶體。
 pub unsafe extern "C" fn cbm_normalize_config_key(
     key: *const c_char,
     norm_out: *mut c_char,
@@ -1829,12 +1877,14 @@ pub unsafe extern "C" fn cbm_normalize_config_key(
     unsafe { cbm_rs_pipeline_normalize_config_key_v1(key, norm_out, norm_sz) }
 }
 
-#[cfg(feature = "pipeline-configures-only")]
+#[cfg(any(
+    feature = "pipeline-configures-only",
+    feature = "pipeline-has-config-extension-only"
+))]
 #[no_mangle]
 /// # Safety
 ///
-/// `path` 必須是 null，或指向有效的 NUL 結尾 C string。這是
-/// `CBM_USE_RUST_PIPELINE_CONFIGURES_ONLY=1` 時直接取代 C helper 的 `pipeline.h` ABI。
+/// `path` 必須是 null，或指向有效的 NUL 結尾 C string。
 pub unsafe extern "C" fn cbm_has_config_extension(path: *const c_char) -> bool {
     unsafe { cbm_rs_pipeline_has_config_extension_v1(path) != 0 }
 }
@@ -2523,6 +2573,15 @@ pub extern "C" fn cbm_rs_cypher_single_char_kind_v1(input: c_int) -> c_int {
     cypher::single_char_kind_or_eof(input as u8) as c_int
 }
 
+#[cfg(feature = "cypher-lex-single-char-only")]
+#[no_mangle]
+/// # Safety
+///
+/// 呼叫端必須遵守此 C ABI 所定義的純值轉接契約。
+pub unsafe extern "C" fn cbm_cypher_lex_single_char(c: c_char) -> c_int {
+    cbm_rs_cypher_single_char_kind_v1(c as c_int)
+}
+
 #[no_mangle]
 /// `src/cypher/cypher.c` 雙字元 token classifier ABI。輸入必須各自在 `0..=255`，
 /// 其餘值回傳 `-1`；已辨識 pair 回傳既有 token enum，未知 pair 回傳 `TOK_EOF`。
@@ -2532,6 +2591,15 @@ pub extern "C" fn cbm_rs_cypher_two_char_kind_v1(first: c_int, second: c_int) ->
         return -1;
     }
     cypher::two_char_kind_or_eof(first as u8, second as u8) as c_int
+}
+
+#[cfg(feature = "cypher-lex-two-char-only")]
+#[no_mangle]
+/// # Safety
+///
+/// 呼叫端必須遵守此 C ABI 所定義的純值轉接契約。
+pub unsafe extern "C" fn cbm_cypher_lex_two_char(c1: c_char, c2: c_char) -> c_int {
+    cbm_rs_cypher_two_char_kind_v1(c1 as c_int, c2 as c_int)
 }
 
 #[no_mangle]
@@ -2570,6 +2638,30 @@ pub extern "C" fn cbm_rs_cypher_aggregate_func_index_v1(token_kind: c_int) -> c_
     }
 }
 
+#[cfg(feature = "cypher-agg-func-only")]
+static CYPHER_AGG_FUNC_NAMES: [&[u8]; 6] = [
+    b"COUNT\0",
+    b"SUM\0",
+    b"AVG\0",
+    b"MIN\0",
+    b"MAX\0",
+    b"COLLECT\0",
+];
+
+#[cfg(feature = "cypher-agg-func-only")]
+#[no_mangle]
+/// # Safety
+///
+/// 呼叫端必須遵守此 C ABI 所定義的純值轉接契約。
+pub unsafe extern "C" fn cbm_cypher_agg_func_name(t: c_int) -> *const c_char {
+    let idx = cbm_rs_cypher_aggregate_func_index_v1(t);
+    if idx < 0 || idx as usize >= CYPHER_AGG_FUNC_NAMES.len() {
+        CYPHER_AGG_FUNC_NAMES[0].as_ptr() as *const c_char
+    } else {
+        CYPHER_AGG_FUNC_NAMES[idx as usize].as_ptr() as *const c_char
+    }
+}
+
 #[no_mangle]
 /// `src/cypher/cypher.c` `str_func_name` 對應的 string function token 名稱索引；
 /// 未知 token 回傳 -1。此 ABI 不解析 query，不執行 scalar/string function evaluator。
@@ -2577,6 +2669,23 @@ pub extern "C" fn cbm_rs_cypher_string_func_index_v1(token_kind: c_int) -> c_int
     match cypher::string_func_index(token_kind) {
         Some(idx) => idx as c_int,
         None => -1,
+    }
+}
+
+#[cfg(feature = "cypher-string-func-only")]
+static CYPHER_STR_FUNC_NAMES: [&[u8]; 3] = [b"toLower\0", b"toUpper\0", b"toString\0"];
+
+#[cfg(feature = "cypher-string-func-only")]
+#[no_mangle]
+/// # Safety
+///
+/// 呼叫端必須遵守此 C ABI 所定義的純值轉接契約。
+pub unsafe extern "C" fn cbm_cypher_str_func_name(t: c_int) -> *const c_char {
+    let idx = cbm_rs_cypher_string_func_index_v1(t);
+    if idx < 0 || idx as usize >= CYPHER_STR_FUNC_NAMES.len() {
+        b"\0".as_ptr() as *const c_char
+    } else {
+        CYPHER_STR_FUNC_NAMES[idx as usize].as_ptr() as *const c_char
     }
 }
 
@@ -2737,6 +2846,15 @@ pub unsafe extern "C" fn cbm_rs_mcp_content_length_header_matches_v1(line: *cons
     }
 }
 
+#[cfg(feature = "mcp-content-length-header-matches-only")]
+#[no_mangle]
+/// # Safety
+///
+/// `line` 必須是 null，或指向 NUL-terminated header line。
+pub unsafe extern "C" fn cbm_mcp_content_length_header_matches(line: *const c_char) -> bool {
+    cbm_rs_mcp_content_length_header_matches_v1(line) != 0
+}
+
 #[no_mangle]
 /// # Safety
 ///
@@ -2779,6 +2897,15 @@ pub unsafe extern "C" fn cbm_rs_mcp_content_length_header_is_blank_v1(
     }
 }
 
+#[cfg(feature = "mcp-content-length-header-is-blank-only")]
+#[no_mangle]
+/// # Safety
+///
+/// `line` 必須是 null，或指向 NUL-terminated header line。
+pub unsafe extern "C" fn cbm_mcp_content_length_header_is_blank(line: *const c_char) -> bool {
+    cbm_rs_mcp_content_length_header_is_blank_v1(line) != 0
+}
+
 #[no_mangle]
 /// # Safety
 ///
@@ -2810,6 +2937,38 @@ pub unsafe extern "C" fn cbm_rs_mcp_parse_file_uri_v1(
     unsafe { write_c_output(buf, bufsize, mcp::parse_file_uri(c_bytes(uri))) }
 }
 
+#[cfg(feature = "mcp-parse-file-uri-only")]
+#[no_mangle]
+/// # Safety
+///
+/// `uri` 必須是 null，或指向 NUL-terminated file URI；`out_path` 必須是 null，
+/// 或指向至少 `out_size` bytes 的可寫記憶體。direct-only 匯出同名公開 bridge
+/// `cbm_parse_file_uri`：成功寫入 path 並回 true；invalid／null／buffer 不合法
+/// 回 false，且在可寫時清空 out_path。
+pub unsafe extern "C" fn cbm_parse_file_uri(
+    uri: *const c_char,
+    out_path: *mut c_char,
+    out_size: c_int,
+) -> bool {
+    if out_path.is_null() || out_size <= 0 {
+        return false;
+    }
+    if uri.is_null() {
+        unsafe {
+            *out_path = 0;
+        }
+        return false;
+    }
+    let parsed_len = unsafe { cbm_rs_mcp_parse_file_uri_v1(out_path, out_size as usize, uri) };
+    if parsed_len != usize::MAX {
+        return true;
+    }
+    unsafe {
+        *out_path = 0;
+    }
+    false
+}
+
 #[no_mangle]
 /// # Safety
 ///
@@ -2817,6 +2976,15 @@ pub unsafe extern "C" fn cbm_rs_mcp_parse_file_uri_v1(
 /// C dispatch 使用的 stable method kind enum；未知或 null 回傳 0。
 pub unsafe extern "C" fn cbm_rs_mcp_method_kind_v1(method: *const c_char) -> c_int {
     mcp::method_kind(unsafe { c_bytes(method) }) as c_int
+}
+
+#[cfg(feature = "mcp-method-kind-only")]
+#[no_mangle]
+/// # Safety
+///
+/// 與 v1 相同的 nullable NUL 字串契約；direct-only 匯出同名公開 bridge。
+pub unsafe extern "C" fn cbm_mcp_method_kind(method: *const c_char) -> c_int {
+    unsafe { cbm_rs_mcp_method_kind_v1(method) }
 }
 
 #[no_mangle]
@@ -2830,6 +2998,15 @@ pub unsafe extern "C" fn cbm_rs_mcp_method_not_found_error_v1(
     bufsize: usize,
 ) -> usize {
     unsafe { write_c_output(buf, bufsize, Some(mcp::method_not_found_error())) }
+}
+
+#[cfg(feature = "mcp-method-not-found-error-only")]
+#[no_mangle]
+/// # Safety
+///
+/// `buf` 必須是 null，或指向 `bufsize` bytes 的可寫記憶體。
+pub unsafe extern "C" fn cbm_mcp_method_not_found_error(buf: *mut c_char, bufsize: usize) -> usize {
+    cbm_rs_mcp_method_not_found_error_v1(buf, bufsize)
 }
 
 #[no_mangle]
@@ -2853,6 +3030,15 @@ pub unsafe extern "C" fn cbm_rs_mcp_parse_error_message_v1(
 /// NUL-terminate。
 pub unsafe extern "C" fn cbm_rs_mcp_ping_result_v1(buf: *mut c_char, bufsize: usize) -> usize {
     unsafe { write_c_output(buf, bufsize, Some(mcp::ping_result())) }
+}
+
+#[cfg(feature = "mcp-ping-result-only")]
+#[no_mangle]
+/// # Safety
+///
+/// `buf` 必須是 null，或指向 `bufsize` bytes 的可寫記憶體。
+pub unsafe extern "C" fn cbm_mcp_ping_result(buf: *mut c_char, bufsize: usize) -> usize {
+    cbm_rs_mcp_ping_result_v1(buf, bufsize)
 }
 
 #[no_mangle]
@@ -2977,6 +3163,39 @@ pub unsafe extern "C" fn cbm_rs_mcp_tools_page_bounds_v1(
         };
     }
     0
+}
+
+#[cfg(feature = "mcp-tools-page-bounds-only")]
+#[no_mangle]
+/// # Safety
+///
+/// `out` 必須非 null，且指向可寫的 `CbmRsMcpToolsPageBoundsV1`。
+pub unsafe extern "C" fn cbm_mcp_tools_page_bounds(
+    offset: c_int,
+    limit: c_int,
+    include_next_cursor: bool,
+    tool_count: c_int,
+    out: *mut CbmRsMcpToolsPageBoundsV1,
+) -> c_int {
+    cbm_rs_mcp_tools_page_bounds_v1(
+        offset,
+        limit,
+        c_int::from(include_next_cursor),
+        tool_count,
+        out,
+    )
+}
+
+#[cfg(feature = "mcp-tools-cursor-offset-only")]
+#[no_mangle]
+/// # Safety
+///
+/// `params_json` 必須是 null，或指向 NUL-terminated C string。
+pub unsafe extern "C" fn cbm_mcp_tools_cursor_offset(
+    params_json: *const c_char,
+    tool_count: c_int,
+) -> c_int {
+    unsafe { cbm_rs_mcp_tools_cursor_offset_v1(params_json, tool_count) }
 }
 
 #[no_mangle]
@@ -3184,6 +3403,19 @@ pub unsafe extern "C" fn cbm_rs_mcp_strip_root_prefix_offset_v1(
         unsafe { c_bytes(root) },
         root_len,
     )
+}
+
+#[cfg(feature = "mcp-strip-root-prefix-only")]
+#[no_mangle]
+/// # Safety
+///
+/// 與 v1 相同的 nullable NUL 字串契約；direct-only 匯出同名公開 bridge。
+pub unsafe extern "C" fn cbm_mcp_strip_root_prefix_offset(
+    path: *const c_char,
+    root: *const c_char,
+    root_len: usize,
+) -> usize {
+    unsafe { cbm_rs_mcp_strip_root_prefix_offset_v1(path, root, root_len) }
 }
 
 #[no_mangle]
@@ -3463,6 +3695,27 @@ pub unsafe extern "C" fn cbm_rs_mcp_search_pick_resolved_index_v1(
     index
 }
 
+#[cfg(feature = "mcp-search-pick-resolved-only")]
+#[no_mangle]
+/// # Safety
+///
+/// 與 v1 相同的 scores/count 契約；direct-only 匯出同名公開 bridge（ambiguous 為 bool*）。
+pub unsafe extern "C" fn cbm_mcp_search_pick_resolved_index(
+    scores: *const c_long,
+    count: c_int,
+    ambiguous_out: *mut bool,
+) -> c_int {
+    if ambiguous_out.is_null() {
+        return -1;
+    }
+    let mut ambiguous_i: c_int = 0;
+    let best = unsafe { cbm_rs_mcp_search_pick_resolved_index_v1(scores, count, &mut ambiguous_i) };
+    unsafe {
+        *ambiguous_out = ambiguous_i != 0;
+    }
+    best
+}
+
 #[no_mangle]
 /// # Safety
 ///
@@ -3477,6 +3730,18 @@ pub unsafe extern "C" fn cbm_rs_mcp_search_pick_tightest_index_v1(
     }
     let spans = unsafe { slice::from_raw_parts(spans, count as usize) };
     mcp::search_pick_tightest_index(spans)
+}
+
+#[cfg(feature = "mcp-search-pick-tightest-only")]
+#[no_mangle]
+/// # Safety
+///
+/// 與 v1 相同的 spans/count 契約；direct-only 匯出同名公開 bridge。
+pub unsafe extern "C" fn cbm_mcp_search_pick_tightest_index(
+    spans: *const c_int,
+    count: c_int,
+) -> c_int {
+    unsafe { cbm_rs_mcp_search_pick_tightest_index_v1(spans, count) }
 }
 
 #[no_mangle]
@@ -3644,11 +3909,6 @@ pub unsafe extern "C" fn cbm_rs_mcp_sanitize_utf8_lossy_v1(
 ) -> usize {
     let output = mcp::sanitize_utf8_lossy(unsafe { c_bytes(input) });
     unsafe { write_c_output(buf, bufsize, output.as_deref()) }
-}
-
-#[cfg(feature = "mcp-sanitize-utf8-lossy-only")]
-unsafe extern "C" {
-    fn malloc(size: usize) -> *mut c_void;
 }
 
 #[cfg(feature = "mcp-sanitize-utf8-lossy-only")]
@@ -3898,6 +4158,62 @@ pub unsafe extern "C" fn cbm_rs_mcp_tools_cursor_offset_v1(
 ) -> c_int {
     let bytes = unsafe { c_bytes(params_json) };
     mcp::tools_cursor_offset(bytes, i64::from(tool_count)) as c_int
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `f`, `args`, `i` 必須符合 FFI 契約。
+pub unsafe extern "C" fn cbm_rs_pipeline_try_include_flag_v1(
+    f: *mut crate::pipeline::compile_flags::CbmCompileFlags,
+    args: *const *const c_char,
+    argc: c_int,
+    i: *mut c_int,
+    directory: *const c_char,
+) -> bool {
+    unsafe { crate::pipeline::compile_flags::try_include_flag(f, args, argc, i, directory) }
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `f`, `args`, `i` 必須符合 FFI 契約。
+pub unsafe extern "C" fn cbm_rs_pipeline_try_define_flag_v1(
+    f: *mut crate::pipeline::compile_flags::CbmCompileFlags,
+    args: *const *const c_char,
+    argc: c_int,
+    i: *mut c_int,
+) -> bool {
+    unsafe { crate::pipeline::compile_flags::try_define_flag(f, args, argc, i) }
+}
+
+#[cfg(feature = "pipeline-compile-flags-only")]
+#[no_mangle]
+/// # Safety
+///
+/// Direct symbol for cbm_pipeline_try_include_flag.
+pub unsafe extern "C" fn cbm_pipeline_try_include_flag(
+    f: *mut crate::pipeline::compile_flags::CbmCompileFlags,
+    args: *const *const c_char,
+    argc: c_int,
+    i: *mut c_int,
+    directory: *const c_char,
+) -> bool {
+    unsafe { crate::pipeline::compile_flags::try_include_flag(f, args, argc, i, directory) }
+}
+
+#[cfg(feature = "pipeline-compile-flags-only")]
+#[no_mangle]
+/// # Safety
+///
+/// Direct symbol for cbm_pipeline_try_define_flag.
+pub unsafe extern "C" fn cbm_pipeline_try_define_flag(
+    f: *mut crate::pipeline::compile_flags::CbmCompileFlags,
+    args: *const *const c_char,
+    argc: c_int,
+    i: *mut c_int,
+) -> bool {
+    unsafe { crate::pipeline::compile_flags::try_define_flag(f, args, argc, i) }
 }
 
 #[no_mangle]
@@ -4621,11 +4937,6 @@ pub unsafe extern "C" fn cbm_rs_store_like_hint_v1(
     let hints = store_search_pattern::like_hints(unsafe { c_bytes(pattern) }, max_out);
     let output = hints.get(index as usize).map(Vec::as_slice);
     unsafe { write_c_output(buf, bufsize, output) }
-}
-
-#[cfg(feature = "store-search-pattern-only")]
-unsafe extern "C" {
-    fn malloc(size: usize) -> *mut c_void;
 }
 
 #[cfg(feature = "store-search-pattern-only")]
@@ -6888,11 +7199,6 @@ pub unsafe extern "C" fn cbm_rs_pipeline_calls_extract_local_name_v1(
 }
 
 #[cfg(feature = "pipeline-calls-json-only")]
-unsafe extern "C" {
-    fn malloc(size: usize) -> *mut c_void;
-}
-
-#[cfg(feature = "pipeline-calls-json-only")]
 #[no_mangle]
 /// # Safety
 ///
@@ -7521,6 +7827,51 @@ pub unsafe extern "C" fn cbm_rs_pipeline_cross_repo_build_props_v1(
     output.len()
 }
 
+#[cfg(feature = "pipeline-cross-repo-json-only")]
+#[no_mangle]
+/// # Safety
+///
+/// Direct symbol for cbm_pipeline_cross_repo_json_str_prop.
+pub unsafe extern "C" fn cbm_pipeline_cross_repo_json_str_prop(
+    json: *const std::os::raw::c_char,
+    key: *const std::os::raw::c_char,
+    buf: *mut std::os::raw::c_char,
+    bufsz: usize,
+) -> *const std::os::raw::c_char {
+    if cbm_rs_pipeline_cross_repo_json_str_prop_v1(json, key, buf, bufsz) != 0 {
+        buf
+    } else {
+        std::ptr::null()
+    }
+}
+
+#[cfg(feature = "pipeline-cross-repo-json-only")]
+#[no_mangle]
+/// # Safety
+///
+/// Direct symbol for cbm_pipeline_cross_repo_build_props.
+pub unsafe extern "C" fn cbm_pipeline_cross_repo_build_props(
+    buf: *mut std::os::raw::c_char,
+    bufsz: usize,
+    target_project: *const std::os::raw::c_char,
+    target_function: *const std::os::raw::c_char,
+    target_file: *const std::os::raw::c_char,
+    url_or_channel: *const std::os::raw::c_char,
+    extra_key: *const std::os::raw::c_char,
+    extra_val: *const std::os::raw::c_char,
+) {
+    cbm_rs_pipeline_cross_repo_build_props_v1(
+        buf,
+        bufsz,
+        target_project,
+        target_function,
+        target_file,
+        url_or_channel,
+        extra_key,
+        extra_val,
+    );
+}
+
 #[no_mangle]
 /// # Safety
 ///
@@ -7788,7 +8139,9 @@ pub unsafe extern "C" fn cbm_pipeline_k8s_split_kv(
 
 /// # Safety
 ///
-/// 呼叫端必須遵守此 C ABI 所定義的指標與緩衝區契約。
+/// `edge_type` 可為 null，並回傳 0。非 null 時必須指向有效的 NUL 結尾 C 字串；
+/// 會以 `CStr` 僅讀取第一個 NUL 前的位元組，採區分大小寫的 byte-exact 比對。
+/// 回傳值僅為 0 或 1，且不配置、不保留或轉移任何所有權。
 #[no_mangle]
 pub unsafe extern "C" fn cbm_rs_pipeline_incremental_edge_type_is_recomputed_v1(
     edge_type: *const c_char,
@@ -7800,7 +8153,9 @@ pub unsafe extern "C" fn cbm_rs_pipeline_incremental_edge_type_is_recomputed_v1(
 #[no_mangle]
 /// # Safety
 ///
-/// 與 v1 相同的 nullable NUL 字串契約；direct-only 匯出同名公開 bridge。
+/// `edge_type` 可為 null，並回傳 false。非 null 時必須指向有效的 NUL 結尾 C 字串；
+/// 會以 `CStr` 僅讀取第一個 NUL 前的位元組，採區分大小寫的 byte-exact 比對。
+/// direct-only 匯出同名公開 `bool` symbol，且不配置、不保留或轉移任何所有權。
 pub unsafe extern "C" fn cbm_pipeline_incremental_edge_type_is_recomputed(
     edge_type: *const c_char,
 ) -> bool {
@@ -8267,11 +8622,6 @@ pub unsafe extern "C" fn cbm_rs_pipeline_usages_local_name_copy_v1(
 }
 
 #[cfg(feature = "pipeline-usages-json-only")]
-unsafe extern "C" {
-    fn malloc(size: usize) -> *mut c_void;
-}
-
-#[cfg(feature = "pipeline-usages-json-only")]
 #[no_mangle]
 /// # Safety
 ///
@@ -8342,4 +8692,194 @@ pub unsafe extern "C" fn cbm_rs_semantic_is_camel_break_v1(
 /// 非 NULL 的 name 必須指向 NUL 結尾字串。
 pub unsafe extern "C" fn cbm_semantic_is_camel_break(name: *const c_char, index: c_int) -> bool {
     unsafe { cbm_rs_semantic_is_camel_break_v1(name, index) != 0 }
+}
+
+static CONFIGLINK_PATH_BASENAME_EMPTY: [c_char; 1] = [0];
+
+/// # Safety
+///
+/// `path` 必須是 null，或是有效的 NUL-terminated C string。回傳值不可釋放；非 null
+/// 輸入時，回傳值指向原始輸入內最後一個 ASCII `/` 後的 byte。
+#[no_mangle]
+pub unsafe extern "C" fn cbm_rs_pipeline_configlink_path_basename_v1(
+    path: *const c_char,
+) -> *const c_char {
+    if path.is_null() {
+        return CONFIGLINK_PATH_BASENAME_EMPTY.as_ptr();
+    }
+    let offset = crate::pipeline_configlink::path_basename_offset(unsafe { c_bytes(path) });
+    unsafe { path.add(offset) }
+}
+
+#[cfg(feature = "pipeline-configlink-path-basename-only")]
+#[no_mangle]
+/// # Safety
+///
+/// 與 v1 相同契約；direct-only 匯出同名公開 bridge。
+pub unsafe extern "C" fn cbm_pipeline_configlink_path_basename(
+    path: *const c_char,
+) -> *const c_char {
+    unsafe { cbm_rs_pipeline_configlink_path_basename_v1(path) }
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `aspects` 為 null 時不會解參考任何輸入。非 null 且 `aspect_count == 0` 或
+/// `aspect_count < 0` 時也不會解參考輸入。`aspect_count > 0` 時，`aspects` 必須
+/// 指向至少 `aspect_count` 個指標的陣列，且 `name` 與每個被讀取的項目都必須是
+/// 有效的 NUL-terminated C string。
+pub unsafe extern "C" fn cbm_rs_store_arch_wants_aspect_v1(
+    aspects: *const *const c_char,
+    aspect_count: c_int,
+    name: *const c_char,
+) -> bool {
+    if aspects.is_null() || aspect_count == 0 {
+        return true;
+    }
+    if aspect_count < 0 {
+        return false;
+    }
+
+    let aspects = unsafe { slice::from_raw_parts(aspects, aspect_count as usize) };
+    let name = unsafe { CStr::from_ptr(name) }.to_bytes();
+    store_arch_aspect_filter::wants_aspect(
+        Some(
+            aspects
+                .iter()
+                .map(|&aspect| unsafe { CStr::from_ptr(aspect) }.to_bytes()),
+        ),
+        aspect_count,
+        name,
+    )
+}
+
+#[cfg(feature = "store-arch-aspect-filter-only")]
+#[no_mangle]
+/// # Safety
+///
+/// 與 v1 相同契約；direct-only 匯出同名公開 bridge。
+pub unsafe extern "C" fn cbm_store_arch_wants_aspect(
+    aspects: *const *const c_char,
+    aspect_count: c_int,
+    name: *const c_char,
+) -> bool {
+    unsafe { cbm_rs_store_arch_wants_aspect_v1(aspects, aspect_count, name) }
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `count <= 0` 時回傳 `false`，且完全不解參考 `pkg`、`list` 或任何 entry。`count > 0`
+/// 時，`pkg` 必須是有效的 NUL 結尾 C 字串，`list` 必須指向至少 `count` 個 `char*`，且
+/// 每個 entry 都必須是有效的 NUL 結尾 C 字串。比對只讀取每個字串第一個 NUL 前的 bytes；
+/// 不取得、不保存、修改或釋放任何 C 指標，所有權仍屬呼叫端。
+pub unsafe extern "C" fn cbm_rs_store_package_list_contains_v1(
+    pkg: *const c_char,
+    list: *mut *mut c_char,
+    count: c_int,
+) -> bool {
+    if count <= 0 {
+        return false;
+    }
+
+    let pkg = unsafe { CStr::from_ptr(pkg) }.to_bytes();
+    let list = unsafe { slice::from_raw_parts(list.cast_const(), count as usize) };
+    store_package_list::contains(
+        pkg,
+        count,
+        list.iter()
+            .map(|&entry| unsafe { CStr::from_ptr(entry) }.to_bytes()),
+    )
+}
+
+#[cfg(feature = "store-package-list-only")]
+#[no_mangle]
+/// # Safety
+///
+/// `count <= 0` 時回傳 `false`，且完全不解參考 `pkg`、`list` 或任何 entry。`count > 0`
+/// 時，`pkg` 必須是有效的 NUL 結尾 C 字串，`list` 必須指向至少 `count` 個 `char*`，且
+/// 每個 entry 都必須是有效的 NUL 結尾 C 字串。比對只讀取每個字串第一個 NUL 前的 bytes；
+/// 不取得、不保存、修改或釋放任何 C 指標，所有權仍屬呼叫端。
+pub unsafe extern "C" fn cbm_store_package_list_contains(
+    pkg: *const c_char,
+    list: *mut *mut c_char,
+    count: c_int,
+) -> bool {
+    unsafe { cbm_rs_store_package_list_contains_v1(pkg, list, count) }
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `s` 為 null 時不會解參考。非 null 時，必須至少可讀取第一個 byte；第一個 byte
+/// 非零時，回傳原始指標，後續使用者仍必須遵守其有效 NUL-terminated C string 契約。
+/// 回傳值為輸入借用指標或 process-lifetime 的唯讀靜態 `"{}"`，不得釋放或修改。
+pub unsafe extern "C" fn cbm_rs_store_safe_props_v1(s: *const c_char) -> *const c_char {
+    unsafe { store_safe_props::safe_props(s) }
+}
+
+#[cfg(feature = "store-safe-props-only")]
+#[no_mangle]
+/// # Safety
+///
+/// 與 v1 相同契約；direct-only 匯出同名公開 bridge。
+pub unsafe extern "C" fn cbm_store_safe_props(s: *const c_char) -> *const c_char {
+    unsafe { cbm_rs_store_safe_props_v1(s) }
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `input` 為 null 時不會解參考。非 null 時，必須是有效的 NUL-terminated C string。
+pub unsafe extern "C" fn cbm_rs_cypher_looks_like_regex_v1(input: *const c_char) -> bool {
+    if input.is_null() {
+        return false;
+    }
+
+    let input = unsafe { CStr::from_ptr(input) }.to_bytes();
+    cypher_regex_shape::looks_like_regex(input)
+}
+
+#[cfg(feature = "cypher-regex-shape-only")]
+#[no_mangle]
+/// # Safety
+///
+/// 與 v1 相同契約；direct-only 匯出同名公開 bridge。
+pub unsafe extern "C" fn cbm_cypher_looks_like_regex(input: *const c_char) -> bool {
+    unsafe { cbm_rs_cypher_looks_like_regex_v1(input) }
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// 第二個參數 `pat` 為 null 時直接回傳 true，且不會解參考第一個參數 `actual`。
+/// 否則 `pat` 與 `actual` 必須是有效的 NUL-terminated C string；`actual` 為 null 時
+/// 回傳 false。
+pub unsafe extern "C" fn cbm_rs_cypher_label_alt_matches_v1(
+    actual: *const c_char,
+    pat: *const c_char,
+) -> bool {
+    if pat.is_null() {
+        return true;
+    }
+    if actual.is_null() {
+        return false;
+    }
+
+    let pat = unsafe { CStr::from_ptr(pat) }.to_bytes();
+    let actual = unsafe { CStr::from_ptr(actual) }.to_bytes();
+    cypher_label_alt_match::matches(actual, pat)
+}
+
+#[cfg(feature = "cypher-label-alt-match-only")]
+#[no_mangle]
+/// # Safety
+///
+/// 與 v1 相同契約；direct-only 匯出同名公開 bridge。
+pub unsafe extern "C" fn cbm_cypher_label_alt_matches(
+    actual: *const c_char,
+    pat: *const c_char,
+) -> bool {
+    unsafe { cbm_rs_cypher_label_alt_matches_v1(actual, pat) }
 }

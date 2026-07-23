@@ -15,11 +15,24 @@
 #include <string.h>
 #include "pipeline/artifact.h"
 #include "cypher/cypher.h"
+#include "cypher/regex_shape.h"
+#include "cypher/label_alt_match.h"
+
+extern bool cbm_rs_cypher_looks_like_regex_v1(const char *s);
+extern bool cbm_rs_cypher_label_alt_matches_v1(const char *actual, const char *pat);
+
 #include "foundation/arena.h"
 #include "foundation/dump_verify.h"
 #include "graph_buffer/graph_buffer.h"
 #include "pipeline/pipeline.h"
 #include "pipeline/pipeline_internal.h"
+#include "pipeline/pipeline_is_env_var_name.h"
+#include "pipeline/pipeline_normalize_config_key.h"
+#include "pipeline/pipeline_has_config_extension.h"
+#include "store/arch_aspect_filter.h"
+#include "store/language_map.h"
+#include "store/safe_props.h"
+#include "discover/trailing_sep.h"
 #include "pipeline/json_prop.h"
 #include "pipeline/lsp_cross_classifiers.h"
 #include "pipeline/split_command.h"
@@ -165,6 +178,7 @@ _Static_assert(sizeof(CbmRsMcpToolsPageBoundsV1) == 16, "McpToolsPageBoundsV1 AB
 extern int cbm_rs_dump_verify_is_degraded(int committed_nodes, int persisted_nodes, double ratio,
                                           int min_floor);
 extern double cbm_rs_dump_verify_parse_min_ratio_v1(const char *value, int *valid_out);
+extern const char *cbm_rs_store_safe_props_v1(const char *s);
 extern int cbm_rs_cli_compare_versions_v1(const char *left, const char *right);
 #ifdef CBM_USE_RUST_CLI_VERSION_ONLY
 extern int cbm_cli_compare_versions_v1(const char *left, const char *right);
@@ -3880,6 +3894,39 @@ static void test_store_ext_lang_kind_exports(void) {
     check_int("store_ext_lang_null", cbm_rs_store_ext_lang_kind_v1(NULL), -1);
 }
 
+static void test_store_language_map_public_abi(void) {
+    static const char first_nul[] = ".py\0ignored";
+    const char *py = cbm_store_ext_to_lang(".py");
+    const char *py_repeat = cbm_store_ext_to_lang(".py");
+    const char *jsx = cbm_store_ext_to_lang(".jsx");
+    const char *first_nul_lang = cbm_store_ext_to_lang(first_nul);
+
+    check_int("store_language_map_v1_null", cbm_rs_store_ext_lang_kind_v1(NULL), -1);
+    check_int("store_language_map_v1_py", cbm_rs_store_ext_lang_kind_v1(".py"), 0);
+    check_int("store_language_map_v1_jsx", cbm_rs_store_ext_lang_kind_v1(".jsx"), 3);
+    check_int("store_language_map_v1_upper", cbm_rs_store_ext_lang_kind_v1(".PY"), -1);
+    check_int("store_language_map_v1_first_nul", cbm_rs_store_ext_lang_kind_v1(first_nul), 0);
+    check_int("store_language_map_v1_unknown", cbm_rs_store_ext_lang_kind_v1(".unknown"), -1);
+
+    if (cbm_store_ext_to_lang(NULL) != NULL || py == NULL || strcmp(py, "Python") != 0 ||
+        jsx == NULL || strcmp(jsx, "JavaScript") != 0 || cbm_store_ext_to_lang(".PY") != NULL ||
+        first_nul_lang == NULL || strcmp(first_nul_lang, "Python") != 0 ||
+        cbm_store_ext_to_lang(".unknown") != NULL || py != py_repeat) {
+        fprintf(stderr, "Store language map ABI contract failed\n");
+        exit(EXIT_FAILURE);
+    }
+
+#ifdef CBM_USE_RUST_STORE_LANGUAGE_MAP_ONLY
+    {
+        const char *direct_lang = cbm_store_ext_to_lang(".jsx");
+        if (direct_lang == NULL || strcmp(direct_lang, "JavaScript") != 0) {
+            fprintf(stderr, "Store language map direct ABI failed\n");
+            exit(EXIT_FAILURE);
+        }
+    }
+#endif
+}
+
 static void test_store_arch_path_scope_exports(void) {
     char buf[512];
 
@@ -5591,6 +5638,37 @@ static void test_mcp_parse_file_uri_export(void) {
                SIZE_MAX);
     check_size("mcp_parse_file_uri_null", cbm_rs_mcp_parse_file_uri_v1(path, sizeof(path), NULL),
                SIZE_MAX);
+
+    /* public bridge：default/wrapper 走 C CU；direct-only 走同名 Rust export */
+    {
+        extern bool cbm_parse_file_uri(const char *uri, char *out_path, int out_size);
+        char bridge_path[256];
+        check_bool(
+            "mcp_parse_file_uri_bridge_unix",
+            cbm_parse_file_uri("file:///home/user/project", bridge_path, sizeof(bridge_path)),
+            true);
+        check_str("mcp_parse_file_uri_bridge_unix_path", bridge_path, "/home/user/project");
+        check_bool("mcp_parse_file_uri_bridge_windows",
+                   cbm_parse_file_uri("file:///C:/Users/project", bridge_path, sizeof(bridge_path)),
+                   true);
+        check_str("mcp_parse_file_uri_bridge_windows_path", bridge_path, "C:/Users/project");
+        check_bool("mcp_parse_file_uri_bridge_bad",
+                   cbm_parse_file_uri("https://example.com", bridge_path, sizeof(bridge_path)),
+                   false);
+        check_str("mcp_parse_file_uri_bridge_bad_cleared", bridge_path, "");
+        check_bool("mcp_parse_file_uri_bridge_null",
+                   cbm_parse_file_uri(NULL, bridge_path, sizeof(bridge_path)), false);
+#ifdef CBM_USE_RUST_MCP_PARSE_FILE_URI_ONLY
+        check_bool(
+            "mcp_parse_file_uri_direct_percent",
+            cbm_parse_file_uri("file:///home/user/my%20project", bridge_path, sizeof(bridge_path)),
+            true);
+        check_str("mcp_parse_file_uri_direct_percent_path", bridge_path, "/home/user/my%20project");
+        check_bool("mcp_parse_file_uri_direct_empty_path",
+                   cbm_parse_file_uri("file://", bridge_path, sizeof(bridge_path)), true);
+        check_str("mcp_parse_file_uri_direct_empty_path_str", bridge_path, "");
+#endif
+    }
 }
 
 static void test_mcp_method_kind_export(void) {
@@ -5604,6 +5682,18 @@ static void test_mcp_method_kind_export(void) {
     check_int("mcp_method_kind_case", cbm_rs_mcp_method_kind_v1("Initialize"), 0);
     check_int("mcp_method_kind_space", cbm_rs_mcp_method_kind_v1("tools/list "), 0);
     check_int("mcp_method_kind_unknown", cbm_rs_mcp_method_kind_v1("unknown/method"), 0);
+
+    /* public bridge (default C path / wrapper / direct 皆應連結) */
+    extern int cbm_mcp_method_kind(const char *method);
+    check_int("mcp_method_kind_bridge_null", cbm_mcp_method_kind(NULL), 0);
+    check_int("mcp_method_kind_bridge_init", cbm_mcp_method_kind("initialize"), 1);
+    check_int("mcp_method_kind_bridge_cancelled", cbm_mcp_method_kind("notifications/cancelled"),
+              5);
+#ifdef CBM_USE_RUST_MCP_METHOD_KIND_ONLY
+    const char ping_first_nul[] = {'p', 'i', 'n', 'g', '\0', 'x'};
+    check_int("mcp_method_kind_direct_ping", cbm_mcp_method_kind("ping"), 2);
+    check_int("mcp_method_kind_direct_first_nul", cbm_mcp_method_kind(ping_first_nul), 2);
+#endif
 }
 
 static void test_mcp_method_not_found_error_export(void) {
@@ -6441,6 +6531,20 @@ static void test_mcp_strip_root_prefix_offset_export(void) {
                0);
     check_size("mcp_strip_root_zero_len",
                cbm_rs_mcp_strip_root_prefix_offset_v1("/repo/a.c", "/repo", 0), 1);
+
+#ifdef CBM_USE_RUST_MCP_STRIP_ROOT_PREFIX_ONLY
+    extern size_t cbm_mcp_strip_root_prefix_offset(const char *path, const char *root,
+                                                   size_t root_len);
+    const char path_first_nul[] = {'/', 'r', 'e', 'p', 'o', '/', 'a', '.', 'c', '\0', 'x'};
+    check_size("mcp_strip_root_direct_child",
+               cbm_mcp_strip_root_prefix_offset("/repo/src/a.c", "/repo", strlen("/repo")),
+               strlen("/repo/"));
+    check_size("mcp_strip_root_direct_null_path",
+               cbm_mcp_strip_root_prefix_offset(NULL, "/repo", strlen("/repo")), 0);
+    check_size("mcp_strip_root_direct_first_nul",
+               cbm_mcp_strip_root_prefix_offset(path_first_nul, "/repo", strlen("/repo")),
+               strlen("/repo/"));
+#endif
 }
 
 static void test_mcp_search_mode_export(void) {
@@ -6767,6 +6871,20 @@ static void test_mcp_search_pick_resolved_index_export(void) {
     check_int("mcp_pick_resolved_tie",
               cbm_rs_mcp_search_pick_resolved_index_v1(scores_tie, 3, &ambiguous), 0);
     check_int("mcp_pick_resolved_tie_ambiguous", ambiguous, 1);
+
+#ifdef CBM_USE_RUST_MCP_SEARCH_PICK_RESOLVED_ONLY
+    extern int cbm_mcp_search_pick_resolved_index(const long *scores, int count,
+                                                  bool *ambiguous_out);
+    bool amb = true;
+    check_int("mcp_pick_resolved_direct_null_out",
+              cbm_mcp_search_pick_resolved_index(NULL, 0, NULL), -1);
+    check_int("mcp_pick_resolved_direct_unique",
+              cbm_mcp_search_pick_resolved_index(scores_unique, 3, &amb), 1);
+    check_int("mcp_pick_resolved_direct_unique_amb", amb, 0);
+    check_int("mcp_pick_resolved_direct_tie",
+              cbm_mcp_search_pick_resolved_index(scores_tie, 3, &amb), 0);
+    check_int("mcp_pick_resolved_direct_tie_amb", amb, 1);
+#endif
 }
 
 static void test_mcp_search_pick_tightest_index_export(void) {
@@ -6790,6 +6908,14 @@ static void test_mcp_search_pick_tightest_index_export(void) {
     const int spans_mixed[] = {-1, 7, -1};
     check_int("mcp_pick_tightest_mixed", cbm_rs_mcp_search_pick_tightest_index_v1(spans_mixed, 3),
               1);
+
+#ifdef CBM_USE_RUST_MCP_SEARCH_PICK_TIGHTEST_ONLY
+    extern int cbm_mcp_search_pick_tightest_index(const int *spans, int count);
+    check_int("mcp_pick_tightest_direct_null", cbm_mcp_search_pick_tightest_index(NULL, 3), -1);
+    check_int("mcp_pick_tightest_direct_unique",
+              cbm_mcp_search_pick_tightest_index(spans_unique, 3), 1);
+    check_int("mcp_pick_tightest_direct_tie", cbm_mcp_search_pick_tightest_index(spans_tie, 3), 0);
+#endif
 }
 
 static void test_mcp_utf8_is_cont_export(void) {
@@ -6827,8 +6953,8 @@ static void test_mcp_node_resolution_score_export(void) {
 #ifdef CBM_USE_RUST_MCP_NODE_RESOLUTION_SCORE_ONLY
     extern long cbm_mcp_node_resolution_score(const char *label, int start_line, int end_line);
     check_i64("mcp_node_score_direct_null", cbm_mcp_node_resolution_score(NULL, 10, 20), 10);
-    check_i64("mcp_node_score_direct_function",
-              cbm_mcp_node_resolution_score("Function", 10, 20), 2000010);
+    check_i64("mcp_node_score_direct_function", cbm_mcp_node_resolution_score("Function", 10, 20),
+              2000010);
     check_i64("mcp_node_score_direct_negative_span",
               cbm_mcp_node_resolution_score("Method", 20, 10), 2000000);
 #endif
@@ -6970,8 +7096,8 @@ static void test_mcp_bm25_file_pattern_like_export(void) {
 
 #ifdef CBM_USE_RUST_MCP_BM25_FILE_PATTERN_LIKE_ONLY
     extern size_t cbm_mcp_bm25_file_pattern_like(char *buf, size_t bufsize, const char *input);
-    check_size("mcp_bm25_like_direct_null",
-               cbm_mcp_bm25_file_pattern_like(buf, sizeof(buf), NULL), SIZE_MAX);
+    check_size("mcp_bm25_like_direct_null", cbm_mcp_bm25_file_pattern_like(buf, sizeof(buf), NULL),
+               SIZE_MAX);
     check_size("mcp_bm25_like_direct_contains",
                cbm_mcp_bm25_file_pattern_like(buf, sizeof(buf), "src/lib"), strlen("%src/lib%"));
     check_str("mcp_bm25_like_direct_contains_value", buf, "%src/lib%");
@@ -7045,14 +7171,12 @@ static void test_mcp_architecture_aspect_wanted_export(void) {
 
 #ifdef CBM_USE_RUST_MCP_ARCHITECTURE_ASPECT_WANTED_ONLY
     extern int cbm_mcp_architecture_aspect_wanted(const char *input, const char *name);
-    const char first_nul[] = {'{', '"', 'a', 's', 'p', 'e', 'c', 't', 's', '"', ':', '[', '"',
-                              's', 't', 'r', 'u', 'c', 't', 'u', 'r', 'e', '"', ']', '}', '\0',
-                              'x'};
+    const char first_nul[] = {'{', '"', 'a', 's', 'p', 'e', 'c', 't', 's', '"', ':', '[',  '"', 's',
+                              't', 'r', 'u', 'c', 't', 'u', 'r', 'e', '"', ']', '}', '\0', 'x'};
     check_int("mcp_arch_aspect_direct_null", cbm_mcp_architecture_aspect_wanted(NULL, "structure"),
               1);
     check_int("mcp_arch_aspect_direct_match",
-              cbm_mcp_architecture_aspect_wanted("{\"aspects\":[\"structure\"]}", "structure"),
-              1);
+              cbm_mcp_architecture_aspect_wanted("{\"aspects\":[\"structure\"]}", "structure"), 1);
     check_int("mcp_arch_aspect_direct_no_match",
               cbm_mcp_architecture_aspect_wanted("{\"aspects\":[\"structure\"]}", "routes"), 0);
     check_int("mcp_arch_aspect_direct_first_nul",
@@ -7061,8 +7185,8 @@ static void test_mcp_architecture_aspect_wanted_export(void) {
 }
 
 static void test_mcp_trace_is_test_file_export(void) {
-    const char test_file_first_nul[] = {'s', 'r', 'c', '/', 'f', 'o', 'o', '_', 't', 'e', 's', 't', '.',
-                                        'g', 'o', '\0', 'x'};
+    const char test_file_first_nul[] = {'s', 'r', 'c', '/', 'f', 'o', 'o',  '_', 't',
+                                        'e', 's', 't', '.', 'g', 'o', '\0', 'x'};
 
     check_int("mcp_trace_test_file_null", cbm_rs_mcp_trace_is_test_file_v1(NULL), 0);
     check_int("mcp_trace_test_file_empty", cbm_rs_mcp_trace_is_test_file_v1(""), 0);
@@ -7084,7 +7208,8 @@ static void test_mcp_trace_is_test_file_export(void) {
               cbm_rs_mcp_trace_is_test_file_v1("handler.spec.ts"), 0);
     check_int("mcp_trace_test_file_windows",
               cbm_rs_mcp_trace_is_test_file_v1("C:\\repo\\tests\\helper.py"), 0);
-    check_int("mcp_trace_test_file_first_nul", cbm_rs_mcp_trace_is_test_file_v1(test_file_first_nul), 1);
+    check_int("mcp_trace_test_file_first_nul",
+              cbm_rs_mcp_trace_is_test_file_v1(test_file_first_nul), 1);
 
 #ifdef CBM_USE_RUST_MCP_TRACE_IS_TEST_FILE_ONLY
     extern bool cbm_mcp_trace_is_test_file(const char *input);
@@ -7821,7 +7946,180 @@ static void test_cli_version_direct_exports(void) {
 }
 #endif
 
+static void test_cypher_regex_shape_public_abi(void) {
+    static const char first_nul[] = {'a', '\0', '[', '\0'};
+    if (cbm_cypher_looks_like_regex(NULL) || !cbm_cypher_looks_like_regex("prefix.*suffix") ||
+        !cbm_cypher_looks_like_regex("prefix.+suffix") || !cbm_cypher_looks_like_regex("a[b") ||
+        !cbm_cypher_looks_like_regex("a(b") || !cbm_cypher_looks_like_regex("a|b") ||
+        !cbm_cypher_looks_like_regex("^start") || !cbm_cypher_looks_like_regex("end$") ||
+        cbm_cypher_looks_like_regex("") || cbm_cypher_looks_like_regex(".") ||
+        cbm_cypher_looks_like_regex("+") || cbm_cypher_looks_like_regex("]") ||
+        cbm_cypher_looks_like_regex(")") || cbm_cypher_looks_like_regex("plain") ||
+        cbm_cypher_looks_like_regex("\x80") || cbm_cypher_looks_like_regex(first_nul) ||
+        cbm_rs_cypher_looks_like_regex_v1(NULL) || !cbm_rs_cypher_looks_like_regex_v1("v1[marker")) {
+        fprintf(stderr, "Cypher regex shape ABI contract failed\n");
+        exit(EXIT_FAILURE);
+    }
+
+#ifdef CBM_USE_RUST_CYPHER_REGEX_SHAPE_ONLY
+    if (!cbm_cypher_looks_like_regex("direct|marker")) {
+        fprintf(stderr, "Cypher regex shape direct ABI failed\n");
+        exit(EXIT_FAILURE);
+    }
+#endif
+}
+
+static void test_store_arch_aspect_filter_public_abi(void) {
+    static const char *const all_aspects[] = {"all"};
+    static const char *const named_aspects[] = {"routes", "layers"};
+    static const char *const mismatch_aspects[] = {"Routes", "layers"};
+    static const char first_nul[] = "routes\0ignored";
+    static const char *const first_nul_aspects[] = {first_nul};
+
+    if (!cbm_store_arch_wants_aspect(NULL, -1, NULL) ||
+        !cbm_store_arch_wants_aspect(named_aspects, 0, NULL) ||
+        cbm_store_arch_wants_aspect(named_aspects, -1, NULL) ||
+        !cbm_store_arch_wants_aspect(all_aspects, 1, "boundaries") ||
+        !cbm_store_arch_wants_aspect(named_aspects, 2, "routes") ||
+        cbm_store_arch_wants_aspect(mismatch_aspects, 2, "routes") ||
+        !cbm_store_arch_wants_aspect(first_nul_aspects, 1, "routes") ||
+        !cbm_rs_store_arch_wants_aspect_v1(all_aspects, 1, "anything")) {
+        fprintf(stderr, "Store architecture aspect filter ABI contract failed\n");
+        exit(EXIT_FAILURE);
+    }
+
+#ifdef CBM_USE_RUST_STORE_ARCH_ASPECT_FILTER_ONLY
+    static const char *const direct_aspects[] = {"direct"};
+    if (!cbm_store_arch_wants_aspect(direct_aspects, 1, "direct")) {
+        fprintf(stderr, "Store architecture aspect filter direct ABI failed\n");
+        exit(EXIT_FAILURE);
+    }
+#endif
+}
+
+static void test_cypher_label_alt_match_public_abi(void) {
+    const char actual_first_nul[] = {'A', 'p', 'p', '\0', 'x', '\0'};
+    const char pat_first_nul[] = {'A', 'p', 'p', '\0', '|', 'O', 't', 'h', 'e', 'r', '\0'};
+
+    /* pat 為 NULL 時優先接受，即使 actual 也是 NULL。 */
+    check_int("cypher_label_alt_pat_null", cbm_cypher_label_alt_matches(NULL, NULL), 1);
+    check_int("cypher_label_alt_actual_null", cbm_cypher_label_alt_matches(NULL, "App"), 0);
+    check_int("cypher_label_alt_exact", cbm_cypher_label_alt_matches("App", "App"), 1);
+    check_int("cypher_label_alt_case", cbm_cypher_label_alt_matches("app", "App"), 0);
+    check_int("cypher_label_alt_leading_empty", cbm_cypher_label_alt_matches("", "|App"), 1);
+    check_int("cypher_label_alt_interior_empty", cbm_cypher_label_alt_matches("", "App||Lib"),
+              1);
+    check_int("cypher_label_alt_trailing_empty", cbm_cypher_label_alt_matches("", "App|"), 0);
+    check_int("cypher_label_alt_first_nul",
+              cbm_cypher_label_alt_matches(actual_first_nul, pat_first_nul), 1);
+    check_int("cypher_label_alt_v1",
+              cbm_rs_cypher_label_alt_matches_v1("Bridge", "Bridge|Other"), 1);
+#ifdef CBM_USE_RUST_CYPHER_LABEL_ALT_MATCH_ONLY
+    check_int("cypher_label_alt_public_abi_only",
+              cbm_cypher_label_alt_matches("App", "App|Lib"), 1);
+#endif
+}
+
+static void test_store_package_list_public_abi(void) {
+    char alpha[] = "alpha";
+    char beta[] = "beta";
+    char last[] = "last";
+    char first_nul_pkg[] = {'a', 'l', 'p', 'h', 'a', '\0', 's', 'u', 'f', 'f', 'i', 'x', '\0'};
+    char *packages[] = {alpha, beta, last};
+
+    extern bool cbm_rs_store_package_list_contains_v1(const char *pkg, char **list, int count);
+    extern bool cbm_store_package_list_contains(const char *pkg, char **list, int count);
+
+    check_bool("store_package_list_v1_zero_no_deref",
+               cbm_rs_store_package_list_contains_v1(NULL, NULL, 0), false);
+    check_bool("store_package_list_v1_negative_no_deref",
+               cbm_rs_store_package_list_contains_v1(NULL, NULL, -1), false);
+    check_bool("store_package_list_v1_match",
+               cbm_rs_store_package_list_contains_v1("alpha", packages, 3), true);
+    check_bool("store_package_list_v1_last",
+               cbm_rs_store_package_list_contains_v1("last", packages, 3), true);
+    check_bool("store_package_list_v1_unknown",
+               cbm_rs_store_package_list_contains_v1("missing", packages, 3), false);
+    check_bool("store_package_list_v1_case",
+               cbm_rs_store_package_list_contains_v1("ALPHA", packages, 3), false);
+    check_bool("store_package_list_v1_prefix",
+               cbm_rs_store_package_list_contains_v1("alp", packages, 3), false);
+    check_bool("store_package_list_v1_suffix",
+               cbm_rs_store_package_list_contains_v1("alpha-suffix", packages, 3), false);
+    check_bool("store_package_list_v1_first_nul",
+               cbm_rs_store_package_list_contains_v1(first_nul_pkg, packages, 3), true);
+
+    check_bool("store_package_list_public_zero_no_deref",
+               cbm_store_package_list_contains(NULL, NULL, 0), false);
+    check_bool("store_package_list_public_negative_no_deref",
+               cbm_store_package_list_contains(NULL, NULL, -1), false);
+    check_bool("store_package_list_public_match", cbm_store_package_list_contains("alpha", packages, 3),
+               true);
+    check_bool("store_package_list_public_last", cbm_store_package_list_contains("last", packages, 3),
+               true);
+    check_bool("store_package_list_public_unknown",
+               cbm_store_package_list_contains("missing", packages, 3), false);
+    check_bool("store_package_list_public_case", cbm_store_package_list_contains("ALPHA", packages, 3),
+               false);
+    check_bool("store_package_list_public_prefix", cbm_store_package_list_contains("alp", packages, 3),
+               false);
+    check_bool("store_package_list_public_suffix",
+               cbm_store_package_list_contains("alpha-suffix", packages, 3), false);
+    check_bool("store_package_list_public_first_nul",
+               cbm_store_package_list_contains(first_nul_pkg, packages, 3), true);
+
+#ifdef CBM_USE_RUST_STORE_PACKAGE_LIST_ONLY
+    check_bool("store_package_list_direct_public_match",
+               cbm_store_package_list_contains("alpha", packages, 3), true);
+    check_bool("store_package_list_direct_public_first_nul",
+               cbm_store_package_list_contains(first_nul_pkg, packages, 3), true);
+#endif
+}
+
+static void test_store_safe_props_public_abi(void) {
+#define CHECK_STORE_SAFE_PROPS_CONTRACT(prefix, fn)                                           \
+    do {                                                                                       \
+        char empty[] = "";                                                                    \
+        char empty_prefix[] = {'\0', 'j', 'u', 'n', 'k', '\0'};                             \
+        char normal[] = "{\"name\":\"value\"}";                                           \
+        char non_utf8[] = {(char)0xff, '\0'};                                                \
+        char first_nul[] = {'x', '\0', 't', 'a', 'i', 'l', '\0'};                           \
+        const char *result;                                                                    \
+        result = fn(NULL);                                                                     \
+        check_bool(prefix "_null", result != NULL && strcmp(result, "{}") == 0, true);      \
+        result = fn(empty);                                                                    \
+        check_bool(prefix "_empty", result != NULL && strcmp(result, "{}") == 0, true);     \
+        result = fn(empty_prefix);                                                             \
+        check_bool(prefix "_empty_prefix", result != NULL && strcmp(result, "{}") == 0,     \
+                   true);                                                                      \
+        result = fn(normal);                                                                   \
+        check_bool(prefix "_normal_pointer", result == normal, true);                        \
+        check_bool(prefix "_normal_nul", result != NULL && result[sizeof(normal) - 1] == '\0', \
+                   true);                                                                      \
+        result = fn(non_utf8);                                                                 \
+        check_bool(prefix "_non_utf8_pointer", result == non_utf8, true);                    \
+        check_bool(prefix "_non_utf8_nul", result != NULL && result[sizeof(non_utf8) - 1] == '\0', \
+                   true);                                                                      \
+        result = fn(first_nul);                                                                \
+        check_bool(prefix "_first_nul_pointer", result == first_nul, true);                  \
+        check_bool(prefix "_first_nul_nul", result != NULL && result[1] == '\0', true);     \
+    } while (0)
+
+    CHECK_STORE_SAFE_PROPS_CONTRACT("store_safe_props_v1", cbm_rs_store_safe_props_v1);
+    CHECK_STORE_SAFE_PROPS_CONTRACT("store_safe_props_public", cbm_store_safe_props);
+#ifdef CBM_USE_RUST_STORE_SAFE_PROPS_ONLY
+    CHECK_STORE_SAFE_PROPS_CONTRACT("store_safe_props_direct_public", cbm_store_safe_props);
+#endif
+#undef CHECK_STORE_SAFE_PROPS_CONTRACT
+}
+
 int main(void) {
+    test_cypher_label_alt_match_public_abi();
+    test_cypher_regex_shape_public_abi();
+    test_store_arch_aspect_filter_public_abi();
+    test_store_language_map_public_abi();
+    test_store_package_list_public_abi();
+    test_store_safe_props_public_abi();
     test_cli_version_exports();
 #ifdef CBM_USE_RUST_CLI_VERSION_ONLY
     test_cli_version_direct_exports();
@@ -7968,6 +8266,8 @@ int main(void) {
     test_rust_pipeline_pkgmap_exports();
     extern void test_rust_pipeline_configlink_exports(void);
     test_rust_pipeline_configlink_exports();
+    extern void test_rust_pipeline_similarity_file_ext_exports(void);
+    test_rust_pipeline_similarity_file_ext_exports();
     extern void test_rust_split_command_exports(void);
     test_rust_split_command_exports();
     extern void test_pipeline_split_command_public_abi(void);
@@ -8206,7 +8506,135 @@ void test_rust_pipeline_pkgmap_exports(void) {
     }
 }
 
+#include "../src/pipeline/similarity_file_ext.h"
+
+typedef const char *(*SimilarityFileExtFn)(const char *path);
+
+static void fail_similarity_file_ext_smoke(const char *case_name) {
+    fprintf(stderr, "Rust pipeline similarity file extension smoke test failed: %s\n", case_name);
+    exit(1);
+}
+
+static void check_similarity_file_ext_empty(const char *case_name, const char *value) {
+    if (value == NULL || value[0] != '\0') {
+        fail_similarity_file_ext_smoke(case_name);
+    }
+}
+
+static void check_similarity_file_ext_hit(const char *case_name, SimilarityFileExtFn fn,
+                                          const char *path, size_t offset,
+                                          const char *expected) {
+    const char *value = fn(path);
+
+    if (value == NULL || value != path + offset || strcmp(value, expected) != 0) {
+        fail_similarity_file_ext_smoke(case_name);
+    }
+}
+
+static void test_similarity_file_ext_contract(const char *prefix, SimilarityFileExtFn fn) {
+    static const char embedded_nul[] = "foo.rs\0.txt";
+    static const char utf8_extension[] = "\xE8\xB3\x87\xE6\x96\x99" "." "\xE6\xAA\x94";
+    static const char fullwidth_dot[] = "name" "\xEF\xBC\x8E" "txt";
+
+    check_similarity_file_ext_empty(prefix, fn(NULL));
+    check_similarity_file_ext_empty(prefix, fn(""));
+    check_similarity_file_ext_empty(prefix, fn("README"));
+    check_similarity_file_ext_empty(prefix, fn(fullwidth_dot));
+    check_similarity_file_ext_hit(prefix, fn, "a.b.c", 3, ".c");
+    check_similarity_file_ext_hit(prefix, fn, ".gitignore", 0, ".gitignore");
+    check_similarity_file_ext_hit(prefix, fn, "file.", 4, ".");
+    check_similarity_file_ext_hit(prefix, fn, "dir.name/file", 3, ".name/file");
+    check_similarity_file_ext_hit(prefix, fn, embedded_nul, 3, ".rs");
+    check_similarity_file_ext_hit(prefix, fn, utf8_extension, 6, "." "\xE6\xAA\x94");
+}
+
+void test_rust_pipeline_similarity_file_ext_exports(void) {
+    extern const char *cbm_rs_pipeline_similarity_file_ext_v1(const char *path);
+
+    test_similarity_file_ext_contract("similarity_file_ext_v1",
+                                      cbm_rs_pipeline_similarity_file_ext_v1);
+    test_similarity_file_ext_contract("similarity_file_ext_public",
+                                      cbm_pipeline_similarity_file_ext);
+
+#ifdef CBM_USE_RUST_PIPELINE_SIMILARITY_FILE_EXT_ONLY
+    {
+        static const char direct_path[] = "direct.rs";
+        const char *value = cbm_pipeline_similarity_file_ext(direct_path);
+
+        if (value == NULL || value != direct_path + 6 || strcmp(value, ".rs") != 0) {
+            fail_similarity_file_ext_smoke("similarity_file_ext_direct_public");
+        }
+        check_similarity_file_ext_empty("similarity_file_ext_direct_null",
+                                        cbm_pipeline_similarity_file_ext(NULL));
+    }
+#endif
+}
+
+#include "../src/pipeline/configlink_path_basename.h"
+
+static void test_pipeline_configlink_path_basename_public_abi(void) {
+    static const char empty[] = "";
+    static const char nested[] = "configs/app.yaml";
+    static const char trailing[] = "configs/";
+    static const char root[] = "/";
+    static const char bare[] = "package.json";
+    static const char first_nul[] = "configs/app.yaml\0ignored.toml";
+    const char *value;
+
+    value = cbm_pipeline_configlink_path_basename(NULL);
+    if (value == NULL || value[0] != '\0') {
+        fprintf(stderr, "Configlink path basename NULL contract failed\n");
+        exit(EXIT_FAILURE);
+    }
+
+    value = cbm_pipeline_configlink_path_basename(empty);
+    if (value != empty || value[0] != '\0') {
+        fprintf(stderr, "Configlink path basename empty borrow contract failed\n");
+        exit(EXIT_FAILURE);
+    }
+
+    value = cbm_pipeline_configlink_path_basename(nested);
+    if (value != nested + strlen("configs/") || strcmp(value, "app.yaml") != 0) {
+        fprintf(stderr, "Configlink path basename slash contract failed\n");
+        exit(EXIT_FAILURE);
+    }
+
+    value = cbm_pipeline_configlink_path_basename(first_nul);
+    if (value != first_nul + strlen("configs/") || strcmp(value, "app.yaml") != 0) {
+        fprintf(stderr, "Configlink path basename first-NUL contract failed\n");
+        exit(EXIT_FAILURE);
+    }
+
+    value = cbm_pipeline_configlink_path_basename(bare);
+    if (value != bare || strcmp(value, bare) != 0) {
+        fprintf(stderr, "Configlink path basename bare borrow contract failed\n");
+        exit(EXIT_FAILURE);
+    }
+
+    value = cbm_pipeline_configlink_path_basename(trailing);
+    if (value != trailing + strlen(trailing) || value[0] != '\0') {
+        fprintf(stderr, "Configlink path basename trailing slash contract failed\n");
+        exit(EXIT_FAILURE);
+    }
+
+    value = cbm_pipeline_configlink_path_basename(root);
+    if (value != root + strlen(root) || value[0] != '\0') {
+        fprintf(stderr, "Configlink path basename root slash contract failed\n");
+        exit(EXIT_FAILURE);
+    }
+
+#ifdef CBM_USE_RUST_PIPELINE_CONFIGLINK_PATH_BASENAME_ONLY
+    static const char direct[] = "direct.toml";
+    value = cbm_pipeline_configlink_path_basename(direct);
+    if (value != direct || strcmp(value, direct) != 0) {
+        fprintf(stderr, "Configlink path basename direct ABI failed\n");
+        exit(EXIT_FAILURE);
+    }
+#endif
+}
+
 void test_rust_pipeline_configlink_exports(void) {
+    test_pipeline_configlink_path_basename_public_abi();
     extern int cbm_rs_pipeline_configlink_is_manifest_file_v1(const char *basename);
     extern int cbm_rs_pipeline_configlink_is_dep_section_v1(const char *value);
     extern int cbm_rs_pipeline_configlink_is_cargo_dep_section_v1(const char *value);
@@ -8710,8 +9138,11 @@ void test_rust_pipeline_k8s_helpers_export(void) {
 }
 
 extern int cbm_rs_pipeline_incremental_edge_type_is_recomputed_v1(const char *edge_type);
+extern bool cbm_pipeline_incremental_edge_type_is_recomputed(const char *edge_type);
 
 void test_rust_pipeline_incremental_export(void) {
+    const char embedded_recomputed_edge[] = "SIMILAR_TO\0ignored";
+
     check_int("incremental_recomputed_similarity",
               cbm_rs_pipeline_incremental_edge_type_is_recomputed_v1("SIMILAR_TO"), 1);
     check_int("incremental_recomputed_semantic",
@@ -8726,13 +9157,47 @@ void test_rust_pipeline_incremental_export(void) {
               cbm_rs_pipeline_incremental_edge_type_is_recomputed_v1(""), 0);
     check_int("incremental_recomputed_null",
               cbm_rs_pipeline_incremental_edge_type_is_recomputed_v1(NULL), 0);
-#ifdef CBM_USE_RUST_PIPELINE_INCREMENTAL_EDGE_ONLY
-    check_bool("incremental_direct_similar",
+    check_int("incremental_recomputed_unknown",
+              cbm_rs_pipeline_incremental_edge_type_is_recomputed_v1("UNKNOWN"), 0);
+    check_int("incremental_recomputed_wrong_case",
+              cbm_rs_pipeline_incremental_edge_type_is_recomputed_v1("similar_to"), 0);
+    check_int("incremental_recomputed_prefix",
+              cbm_rs_pipeline_incremental_edge_type_is_recomputed_v1("xSIMILAR_TO"), 0);
+    check_int("incremental_recomputed_suffix",
+              cbm_rs_pipeline_incremental_edge_type_is_recomputed_v1("SIMILAR_TOx"), 0);
+    check_int("incremental_recomputed_embedded_nul",
+              cbm_rs_pipeline_incremental_edge_type_is_recomputed_v1(embedded_recomputed_edge), 1);
+
+    check_bool("incremental_bridge_similarity",
                cbm_pipeline_incremental_edge_type_is_recomputed("SIMILAR_TO"), true);
-    check_bool("incremental_direct_calls",
+    check_bool("incremental_bridge_semantic",
+               cbm_pipeline_incremental_edge_type_is_recomputed("SEMANTICALLY_RELATED"), true);
+    check_bool("incremental_bridge_file_changes",
+               cbm_pipeline_incremental_edge_type_is_recomputed("FILE_CHANGES_WITH"), true);
+    check_bool("incremental_bridge_data_flows",
+               cbm_pipeline_incremental_edge_type_is_recomputed("DATA_FLOWS"), true);
+    check_bool("incremental_bridge_calls",
                cbm_pipeline_incremental_edge_type_is_recomputed("CALLS"), false);
-    check_bool("incremental_direct_null", cbm_pipeline_incremental_edge_type_is_recomputed(NULL),
+    check_bool("incremental_bridge_empty", cbm_pipeline_incremental_edge_type_is_recomputed(""),
                false);
+    check_bool("incremental_bridge_null", cbm_pipeline_incremental_edge_type_is_recomputed(NULL),
+               false);
+    check_bool("incremental_bridge_unknown",
+               cbm_pipeline_incremental_edge_type_is_recomputed("UNKNOWN"), false);
+    check_bool("incremental_bridge_wrong_case",
+               cbm_pipeline_incremental_edge_type_is_recomputed("similar_to"), false);
+    check_bool("incremental_bridge_prefix",
+               cbm_pipeline_incremental_edge_type_is_recomputed("xSIMILAR_TO"), false);
+    check_bool("incremental_bridge_suffix",
+               cbm_pipeline_incremental_edge_type_is_recomputed("SIMILAR_TOx"), false);
+    check_bool("incremental_bridge_embedded_nul",
+               cbm_pipeline_incremental_edge_type_is_recomputed(embedded_recomputed_edge), true);
+
+#ifdef CBM_USE_RUST_PIPELINE_INCREMENTAL_EDGE_ONLY
+    check_bool("incremental_direct_public_symbol_similarity",
+               cbm_pipeline_incremental_edge_type_is_recomputed("SIMILAR_TO"), true);
+    check_bool("incremental_direct_public_symbol_embedded_nul",
+               cbm_pipeline_incremental_edge_type_is_recomputed(embedded_recomputed_edge), true);
 #endif
 }
 
@@ -9087,5 +9552,68 @@ void test_rust_semantic_token_classifiers_export(void) {
               0);
     check_int("semantic_camel_bridge_zero", cbm_semantic_is_camel_break("fooBar", 0) ? 1 : 0, 0);
     check_int("semantic_camel_bridge_null", cbm_semantic_is_camel_break(NULL, 1) ? 1 : 0, 0);
+
+    check_int("pipeline_is_env_var_name_valid", cbm_is_env_var_name("PATH") ? 1 : 0, 1);
+    check_int("pipeline_is_env_var_name_invalid", cbm_is_env_var_name("path") ? 1 : 0, 0);
+    check_int("pipeline_is_env_var_name_null", cbm_is_env_var_name(NULL) ? 1 : 0, 0);
+
+    char normbuf[64];
+    check_int("pipeline_normalize_config_key_basic",
+              cbm_normalize_config_key("foo-bar", normbuf, sizeof(normbuf)), 2);
+    check_int("pipeline_has_config_extension_toml", cbm_has_config_extension("config.toml") ? 1 : 0,
+              1);
+    check_int("pipeline_has_config_extension_txt", cbm_has_config_extension("file.txt") ? 1 : 0, 0);
+    check_int("discover_trailing_sep_slash", cbm_discover_has_trailing_sep("/path/to/dir/") ? 1 : 0,
+              1);
+    check_int("discover_trailing_sep_none", cbm_discover_has_trailing_sep("/path/to/file") ? 1 : 0,
+              0);
+
+    {
+        extern bool cbm_pipeline_try_include_flag(cbm_compile_flags_t *f, const char **args, int argc, int *i, const char *directory);
+        extern bool cbm_pipeline_try_define_flag(cbm_compile_flags_t *f, const char **args, int argc, int *i);
+
+        cbm_compile_flags_t flags = {0};
+        flags.include_paths = calloc(4, sizeof(char *));
+        flags.defines = calloc(4, sizeof(char *));
+
+        const char *inc_args[] = {"-I/usr/include", "-isystem", "/usr/local/include"};
+        int i = 0;
+        check_int("try_include_flag_1", cbm_pipeline_try_include_flag(&flags, inc_args, 3, &i, "/tmp") ? 1 : 0, 1);
+        check_int("try_include_count_1", flags.include_count, 1);
+        check_str("try_include_path_1", flags.include_paths[0], "/usr/include");
+
+        i = 1;
+        check_int("try_include_flag_2", cbm_pipeline_try_include_flag(&flags, inc_args, 3, &i, "/tmp") ? 1 : 0, 1);
+        check_int("try_include_count_2", flags.include_count, 2);
+        check_str("try_include_path_2", flags.include_paths[1], "/usr/local/include");
+
+        const char *def_args[] = {"-DDEBUG=1", "-D", "RELEASE"};
+        i = 0;
+        check_int("try_define_flag_1", cbm_pipeline_try_define_flag(&flags, def_args, 3, &i) ? 1 : 0, 1);
+        check_int("try_define_count_1", flags.define_count, 1);
+        check_str("try_define_val_1", flags.defines[0], "DEBUG=1");
+
+        i = 1;
+        check_int("try_define_flag_2", cbm_pipeline_try_define_flag(&flags, def_args, 3, &i) ? 1 : 0, 1);
+        check_int("try_define_count_2", flags.define_count, 2);
+        check_str("try_define_val_2", flags.defines[1], "RELEASE");
+
+        for (int k = 0; k < flags.include_count; k++) free(flags.include_paths[k]);
+        free(flags.include_paths);
+        for (int k = 0; k < flags.define_count; k++) free(flags.defines[k]);
+        free(flags.defines);
+    }
+
+    {
+        extern const char *cbm_pipeline_cross_repo_json_str_prop(const char *json, const char *key, char *buf, size_t bufsz);
+        extern void cbm_pipeline_cross_repo_build_props(char *buf, size_t bufsz, const char *target_project, const char *target_function, const char *target_file, const char *url_or_channel, const char *extra_key, const char *extra_val);
+
+        char buf[256];
+        const char *json = "{\"url_path\":\"/api/v1/user\",\"method\":\"GET\"}";
+        check_str("cross_repo_json_str_prop", cbm_pipeline_cross_repo_json_str_prop(json, "url_path", buf, sizeof(buf)), "/api/v1/user");
+
+        cbm_pipeline_cross_repo_build_props(buf, sizeof(buf), "proj_b", "get_user", "user.c", "/api/v1/user", "url_path", "GET");
+        check_str("cross_repo_build_props", buf, "{\"target_project\":\"proj_b\",\"target_function\":\"get_user\",\"target_file\":\"user.c\",\"url_path\":\"/api/v1/user\",\"transport\":\"GET\"}");
+    }
 }
 #include "cbm.h"

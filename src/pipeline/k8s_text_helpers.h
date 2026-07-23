@@ -10,7 +10,6 @@
  */
 const char *cbm_pipeline_k8s_basename(const char *path);
 int cbm_pipeline_k8s_indent(const char *line);
-int cbm_pipeline_k8s_split_kv(const char *text, char *key, size_t key_sz, char *val,
-                              size_t val_sz);
+int cbm_pipeline_k8s_split_kv(const char *text, char *key, size_t key_sz, char *val, size_t val_sz);
 
 #endif

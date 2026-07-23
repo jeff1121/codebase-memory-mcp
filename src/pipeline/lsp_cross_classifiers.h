@@ -5,8 +5,7 @@
 
 #include <stdbool.h>
 
-_Static_assert(sizeof(CBMLanguage) == sizeof(int),
-               "CBMLanguage 必須與 Rust c_int 的 ABI 寬度一致");
+_Static_assert(sizeof(CBMLanguage) == sizeof(int), "CBMLanguage 必須與 Rust c_int 的 ABI 寬度一致");
 
 /* 偵測 TypeScript 方言旗標。三個 output 指標必須非 NULL。 */
 void cbm_pxc_ts_modes(CBMLanguage lang, const char *rel_path, bool *out_js, bool *out_jsx,

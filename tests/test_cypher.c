@@ -2544,6 +2544,72 @@ TEST(cypher_multi_prop_projection_no_alias) {
 
 /* ══════════════════════════════════════════════════════════════════ */
 
+TEST(cypher_exec_relationship_label_alternation_non_seed) {
+    cbm_store_t *store = cbm_store_open_memory();
+    ASSERT_NOT_NULL(store);
+    ASSERT_EQ(cbm_store_upsert_project(store, "label-alt", "/tmp/label-alt"), CBM_STORE_OK);
+
+    cbm_node_t source = {.project = "label-alt",
+                         .label = "Function",
+                         .name = "Source",
+                         .qualified_name = "label_alt.Source",
+                         .file_path = "label_alt.c"};
+    cbm_node_t function_target = {.project = "label-alt",
+                                  .label = "Function",
+                                  .name = "FunctionTarget",
+                                  .qualified_name = "label_alt.FunctionTarget",
+                                  .file_path = "label_alt.c"};
+    cbm_node_t module_target = {.project = "label-alt",
+                                .label = "Module",
+                                .name = "ModuleTarget",
+                                .qualified_name = "label_alt.ModuleTarget",
+                                .file_path = "label_alt.c"};
+    cbm_node_t class_target = {.project = "label-alt",
+                               .label = "Class",
+                               .name = "ClassTarget",
+                               .qualified_name = "label_alt.ClassTarget",
+                               .file_path = "label_alt.c"};
+    int64_t source_id = cbm_store_upsert_node(store, &source);
+    int64_t function_target_id = cbm_store_upsert_node(store, &function_target);
+    int64_t module_target_id = cbm_store_upsert_node(store, &module_target);
+    int64_t class_target_id = cbm_store_upsert_node(store, &class_target);
+    ASSERT_TRUE(source_id > 0);
+    ASSERT_TRUE(function_target_id > 0);
+    ASSERT_TRUE(module_target_id > 0);
+    ASSERT_TRUE(class_target_id > 0);
+
+    cbm_edge_t function_edge = {.project = "label-alt",
+                                 .source_id = source_id,
+                                 .target_id = function_target_id,
+                                 .type = "CALLS"};
+    cbm_edge_t module_edge = {.project = "label-alt",
+                               .source_id = source_id,
+                               .target_id = module_target_id,
+                               .type = "CALLS"};
+    cbm_edge_t class_edge = {.project = "label-alt",
+                              .source_id = source_id,
+                              .target_id = class_target_id,
+                              .type = "CALLS"};
+    (void)cbm_store_insert_edge(store, &function_edge);
+    (void)cbm_store_insert_edge(store, &module_edge);
+    (void)cbm_store_insert_edge(store, &class_edge);
+
+    cbm_cypher_result_t result = {0};
+    int rc = cbm_cypher_execute(store,
+                                "MATCH (a:Function {name: \"Source\"})-[:CALLS]->(b:Function|Module) "
+                                "RETURN b.name ORDER BY b.name",
+                                "label-alt", 0, &result);
+    ASSERT_EQ(rc, 0);
+    ASSERT_NULL(result.error);
+    ASSERT_EQ(result.row_count, 2);
+    ASSERT_STR_EQ(result.rows[0][0], "FunctionTarget");
+    ASSERT_STR_EQ(result.rows[1][0], "ModuleTarget");
+
+    cbm_cypher_result_free(&result);
+    cbm_store_close(store);
+    PASS();
+}
+
 SUITE(cypher) {
     /* Lexer */
     RUN_TEST(cypher_lex_simple_match);
@@ -2611,6 +2677,7 @@ SUITE(cypher) {
     RUN_TEST(cypher_exec_with_distinct_issue238);
     RUN_TEST(cypher_exec_where_label_test_issue241);
     RUN_TEST(cypher_exec_label_alternation_issue242);
+    RUN_TEST(cypher_exec_relationship_label_alternation_non_seed);
     RUN_TEST(cypher_exec_count_distinct_issue239);
     RUN_TEST(cypher_exec_unsupported_func_errors_issue373);
     RUN_TEST(cypher_exec_unknown_func_return_errors);

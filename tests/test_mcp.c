@@ -22,8 +22,17 @@
 #include <mcp/sanitize_ascii_in_place.h>
 #include <mcp/sanitize_utf8_lossy.h>
 #include <mcp/architecture_aspect_wanted.h>
+#include <mcp/strip_root_prefix.h>
+#include <mcp/search_pick_tightest.h>
+#include <mcp/search_pick_resolved.h>
+#include <mcp/method_kind.h>
 #include <mcp/bm25_file_pattern_like.h>
 #include <mcp/bm25_build_match.h>
+#include <mcp/tools_page_bounds.h>
+#include <mcp/content_length_header_matches.h>
+#include <mcp/content_length_header_is_blank.h>
+#include <mcp/ping_result.h>
+#include <mcp/method_not_found_error.h>
 #include <store/store.h>
 #include <yyjson/yyjson.h>
 #include <stdint.h>
@@ -1895,6 +1904,76 @@ TEST(architecture_aspect_wanted_contract) {
     PASS();
 }
 
+TEST(strip_root_prefix_offset_contract) {
+    const char path_first_nul[] = {'/', 'r', 'e', 'p', 'o', '/', 'a', '.', 'c', '\0', 'x'};
+
+    ASSERT_EQ(cbm_mcp_strip_root_prefix_offset(NULL, "/repo", 5), 0);
+    ASSERT_EQ(cbm_mcp_strip_root_prefix_offset("/repo/a.c", NULL, 5), 0);
+    ASSERT_EQ(cbm_mcp_strip_root_prefix_offset("/repo/src/a.c", "/repo", 5), 6);
+    ASSERT_EQ(cbm_mcp_strip_root_prefix_offset("/repo", "/repo", 5), 5);
+    ASSERT_EQ(cbm_mcp_strip_root_prefix_offset("/repo/submarine.c", "/repo/sub", 9), 9);
+    ASSERT_EQ(cbm_mcp_strip_root_prefix_offset("/repo/src/a.c", "/repo/", 6), 6);
+    ASSERT_EQ(cbm_mcp_strip_root_prefix_offset("/other/a.c", "/repo", 5), 0);
+    ASSERT_EQ(cbm_mcp_strip_root_prefix_offset("/repo", "/repo-long", 10), 0);
+    ASSERT_EQ(cbm_mcp_strip_root_prefix_offset("/repo/a.c", "/repo", 0), 1);
+    ASSERT_EQ(cbm_mcp_strip_root_prefix_offset(path_first_nul, "/repo", 5), 6);
+    PASS();
+}
+
+
+TEST(method_kind_contract) {
+    const char ping_first_nul[] = {'p', 'i', 'n', 'g', '\0', 'x'};
+
+    ASSERT_EQ(cbm_mcp_method_kind(NULL), CBM_MCP_METHOD_UNKNOWN);
+    ASSERT_EQ(cbm_mcp_method_kind(""), CBM_MCP_METHOD_UNKNOWN);
+    ASSERT_EQ(cbm_mcp_method_kind("initialize"), CBM_MCP_METHOD_INITIALIZE);
+    ASSERT_EQ(cbm_mcp_method_kind("ping"), CBM_MCP_METHOD_PING);
+    ASSERT_EQ(cbm_mcp_method_kind("tools/list"), CBM_MCP_METHOD_TOOLS_LIST);
+    ASSERT_EQ(cbm_mcp_method_kind("tools/call"), CBM_MCP_METHOD_TOOLS_CALL);
+    ASSERT_EQ(cbm_mcp_method_kind("notifications/cancelled"),
+              CBM_MCP_METHOD_NOTIFICATIONS_CANCELLED);
+    ASSERT_EQ(cbm_mcp_method_kind("Initialize"), CBM_MCP_METHOD_UNKNOWN);
+    ASSERT_EQ(cbm_mcp_method_kind("tools/list "), CBM_MCP_METHOD_UNKNOWN);
+    ASSERT_EQ(cbm_mcp_method_kind(" ping"), CBM_MCP_METHOD_UNKNOWN);
+    ASSERT_EQ(cbm_mcp_method_kind("unknown/method"), CBM_MCP_METHOD_UNKNOWN);
+    ASSERT_EQ(cbm_mcp_method_kind(ping_first_nul), CBM_MCP_METHOD_PING);
+    PASS();
+}
+
+TEST(search_pick_resolved_index_contract) {
+    long unique[] = {10, 20, 15};
+    long tie[] = {20, 10, 20};
+    bool ambiguous = true;
+
+    ASSERT_EQ(cbm_mcp_search_pick_resolved_index(NULL, 0, NULL), -1);
+    ASSERT_EQ(cbm_mcp_search_pick_resolved_index(NULL, 0, &ambiguous), -1);
+    ASSERT_FALSE(ambiguous);
+    ASSERT_EQ(cbm_mcp_search_pick_resolved_index(NULL, 3, &ambiguous), -1);
+    ASSERT_FALSE(ambiguous);
+    ASSERT_EQ(cbm_mcp_search_pick_resolved_index(unique, 3, &ambiguous), 1);
+    ASSERT_FALSE(ambiguous);
+    ASSERT_EQ(cbm_mcp_search_pick_resolved_index(tie, 3, &ambiguous), 0);
+    ASSERT_TRUE(ambiguous);
+    PASS();
+}
+
+TEST(search_pick_tightest_index_contract) {
+    int empty[] = {0};
+    int all_miss[] = {-1, -1};
+    int unique[] = {10, 5, 20};
+    int tie[] = {3, 3, 5};
+    int mixed[] = {-1, 7, -1};
+
+    ASSERT_EQ(cbm_mcp_search_pick_tightest_index(NULL, 0), -1);
+    ASSERT_EQ(cbm_mcp_search_pick_tightest_index(NULL, 3), -1);
+    ASSERT_EQ(cbm_mcp_search_pick_tightest_index(empty, 0), -1);
+    ASSERT_EQ(cbm_mcp_search_pick_tightest_index(all_miss, 2), -1);
+    ASSERT_EQ(cbm_mcp_search_pick_tightest_index(unique, 3), 1);
+    ASSERT_EQ(cbm_mcp_search_pick_tightest_index(tie, 3), 0);
+    ASSERT_EQ(cbm_mcp_search_pick_tightest_index(mixed, 3), 1);
+    PASS();
+}
+
 TEST(bm25_file_pattern_like_contract) {
     const char first_nul[] = {'*', '.', 'g', 'o', '\0', 'x'};
     char buf[32];
@@ -3197,6 +3276,68 @@ TEST(parse_file_uri_zero_size) {
     PASS();
 }
 
+TEST(mcp_tools_page_bounds_contract) {
+    CbmRsMcpToolsPageBoundsV1 bounds = {0};
+    ASSERT_EQ(cbm_mcp_tools_page_bounds(0, 10, true, 14, NULL), -1);
+    ASSERT_EQ(cbm_mcp_tools_page_bounds(0, 5, true, 14, &bounds), 0);
+    ASSERT_EQ(bounds.start, 0);
+    ASSERT_EQ(bounds.end, 5);
+    ASSERT_EQ(bounds.has_next, 1);
+    ASSERT_EQ(bounds.next_cursor, 5);
+    ASSERT_EQ(cbm_mcp_tools_page_bounds(-5, 5, true, 14, &bounds), 0);
+    ASSERT_EQ(bounds.start, 0);
+    ASSERT_EQ(cbm_mcp_tools_page_bounds(20, 5, true, 14, &bounds), 0);
+    ASSERT_EQ(bounds.start, 14);
+    ASSERT_EQ(bounds.end, 14);
+    ASSERT_EQ(bounds.has_next, 0);
+    ASSERT_EQ(cbm_mcp_tools_page_bounds(0, -1, true, 14, &bounds), 0);
+    ASSERT_EQ(bounds.end, 14);
+    ASSERT_EQ(cbm_mcp_tools_page_bounds(0, 5, false, 14, &bounds), 0);
+    ASSERT_EQ(bounds.has_next, 0);
+    PASS();
+}
+
+TEST(mcp_content_length_header_matches_contract) {
+    ASSERT_TRUE(cbm_mcp_content_length_header_matches("Content-Length: 42"));
+    ASSERT_TRUE(cbm_mcp_content_length_header_matches("Content-Length:42"));
+    ASSERT_TRUE(cbm_mcp_content_length_header_matches("Content-Length:"));
+    ASSERT_FALSE(cbm_mcp_content_length_header_matches("content-length: 42"));
+    ASSERT_FALSE(cbm_mcp_content_length_header_matches(" Content-Length:42"));
+    ASSERT_FALSE(cbm_mcp_content_length_header_matches("Content-Type: application/json"));
+    ASSERT_FALSE(cbm_mcp_content_length_header_matches(""));
+    ASSERT_FALSE(cbm_mcp_content_length_header_matches(NULL));
+    PASS();
+}
+
+TEST(mcp_content_length_header_is_blank_contract) {
+    ASSERT_TRUE(cbm_mcp_content_length_header_is_blank(""));
+    ASSERT_TRUE(cbm_mcp_content_length_header_is_blank("\n"));
+    ASSERT_TRUE(cbm_mcp_content_length_header_is_blank("\r\n"));
+    ASSERT_TRUE(cbm_mcp_content_length_header_is_blank("\r\r\n"));
+    ASSERT_FALSE(cbm_mcp_content_length_header_is_blank(" "));
+    ASSERT_FALSE(cbm_mcp_content_length_header_is_blank(" \r\n"));
+    ASSERT_FALSE(cbm_mcp_content_length_header_is_blank("Content-Type: application/json\r\n"));
+    ASSERT_FALSE(cbm_mcp_content_length_header_is_blank(NULL));
+    PASS();
+}
+
+TEST(mcp_ping_result_contract) {
+    char buf[16] = {0};
+    ASSERT_EQ(cbm_mcp_ping_result(buf, sizeof(buf)), 2);
+    ASSERT_STR_EQ(buf, "{}");
+    ASSERT_EQ(cbm_mcp_ping_result(NULL, 0), 2);
+    PASS();
+}
+
+TEST(mcp_method_not_found_error_contract) {
+    char buf[64] = {0};
+    const char *expected = "{\"code\":-32601,\"message\":\"Method not found\"}";
+    ASSERT_EQ(cbm_mcp_method_not_found_error(buf, sizeof(buf)), strlen(expected));
+    ASSERT_STR_EQ(buf, expected);
+    ASSERT_EQ(cbm_mcp_method_not_found_error(NULL, 0), strlen(expected));
+    PASS();
+}
+
 /* ══════════════════════════════════════════════════════════════════
  *  SERVER HANDLE — EDGE CASES
  * ══════════════════════════════════════════════════════════════════ */
@@ -4090,7 +4231,11 @@ SUITE(mcp) {
     RUN_TEST(project_db_file_name_contract);
     RUN_TEST(sanitize_ascii_in_place_contract);
     RUN_TEST(sanitize_utf8_lossy_contract);
+    RUN_TEST(method_kind_contract);
     RUN_TEST(architecture_aspect_wanted_contract);
+    RUN_TEST(strip_root_prefix_offset_contract);
+    RUN_TEST(search_pick_resolved_index_contract);
+    RUN_TEST(search_pick_tightest_index_contract);
     RUN_TEST(bm25_file_pattern_like_contract);
     RUN_TEST(bm25_build_match_contract);
     RUN_TEST(search_code_sanitizes_non_ascii_source_bytes);
@@ -4128,6 +4273,11 @@ SUITE(mcp) {
     RUN_TEST(parse_file_uri_spaces_in_path);
     RUN_TEST(parse_file_uri_null_out_path);
     RUN_TEST(parse_file_uri_zero_size);
+    RUN_TEST(mcp_tools_page_bounds_contract);
+    RUN_TEST(mcp_content_length_header_matches_contract);
+    RUN_TEST(mcp_content_length_header_is_blank_contract);
+    RUN_TEST(mcp_ping_result_contract);
+    RUN_TEST(mcp_method_not_found_error_contract);
 
     /* Poll/getline FILE* buffering fix */
 #ifndef _WIN32

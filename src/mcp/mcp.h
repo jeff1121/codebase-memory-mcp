@@ -147,7 +147,8 @@ struct cbm_pipeline *cbm_mcp_server_active_pipeline(cbm_mcp_server_t *srv);
 
 /* Parse a file:// URI and extract the filesystem path.
  * Writes to out_path (up to out_size bytes). Returns true on success.
- * On Windows, strips leading / from /C:/path. */
+ * On Windows, strips leading / from /C:/path.
+ * 實作與契約細節見 mcp/parse_file_uri.h（獨立 CU；Rust opt-in／ONLY 可接管）。 */
 bool cbm_parse_file_uri(const char *uri, char *out_path, int out_size);
 
 #endif /* CBM_MCP_H */

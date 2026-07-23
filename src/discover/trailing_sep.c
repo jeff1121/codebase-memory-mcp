@@ -2,12 +2,12 @@
 
 #include <string.h>
 
-#if defined(CBM_USE_RUST_DISCOVER_TRAILING_SEP)
+#if defined(CBM_USE_RUST_DISCOVER_TRAILING_SEP) || defined(CBM_USE_RUST_DISCOVER_TRAILING_SEP_ONLY)
 extern int cbm_rs_discover_has_trailing_sep_v1(const char *value);
 #endif
 
 bool cbm_discover_has_trailing_sep(const char *value) {
-#if defined(CBM_USE_RUST_DISCOVER_TRAILING_SEP)
+#if defined(CBM_USE_RUST_DISCOVER_TRAILING_SEP) || defined(CBM_USE_RUST_DISCOVER_TRAILING_SEP_ONLY)
     return cbm_rs_discover_has_trailing_sep_v1(value) != 0;
 #else
     if (!value) {

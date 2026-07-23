@@ -63,6 +63,10 @@ enum {
 
 #define SLEN(s) (sizeof(s) - 1)
 #include "store/store.h"
+#include "store/language_map.h"
+#include "store/arch_aspect_filter.h"
+#include "store/package_list.h"
+#include "store/safe_props.h"
 #include "foundation/platform.h"
 #include "foundation/compat.h"
 #include "foundation/log.h"
@@ -85,10 +89,6 @@ extern size_t cbm_rs_store_strip_case_flag_v1(char *buf, size_t bufsize, const c
 #ifdef CBM_USE_RUST_STORE_FILE_EXT
 extern size_t cbm_rs_store_file_ext_lower_v1(char *buf, size_t bufsize, const char *path);
 #endif
-#if defined(CBM_USE_RUST_STORE_LANGUAGE_MAP) || defined(CBM_USE_RUST_STORE_LANGUAGE_MAP_ONLY)
-extern int cbm_rs_store_ext_lang_kind_v1(const char *ext);
-#endif
-
 extern const char *cbm_store_file_ext(const char *path);
 extern bool cbm_store_arch_path_prepare(const char *path, char *norm_out, size_t norm_sz,
                                         char *like_out, size_t like_sz);
@@ -194,11 +194,6 @@ static int exec_sql(cbm_store_t *s, const char *sql) {
 /* Safe string: returns "" if NULL. */
 static const char *safe_str(const char *s) {
     return s ? s : "";
-}
-
-/* Safe properties: returns "{}" if NULL. */
-static const char *safe_props(const char *s) {
-    return (s && s[0]) ? s : "{}";
 }
 
 /* Duplicate a string onto the heap. */
@@ -1056,7 +1051,7 @@ int64_t cbm_store_upsert_node(cbm_store_t *s, const cbm_node_t *n) {
     bind_text(stmt, ST_COL_5, safe_str(n->file_path));
     sqlite3_bind_int(stmt, ST_COL_6, n->start_line);
     sqlite3_bind_int(stmt, ST_COL_7, n->end_line);
-    bind_text(stmt, ST_COL_8, safe_props(n->properties_json));
+    bind_text(stmt, ST_COL_8, cbm_store_safe_props(n->properties_json));
 
     int rc = sqlite3_step(stmt);
     if (rc == SQLITE_ROW) {
@@ -1374,7 +1369,7 @@ int64_t cbm_store_insert_edge(cbm_store_t *s, const cbm_edge_t *e) {
     sqlite3_bind_int64(stmt, PAIR_LEN, e->source_id);
     sqlite3_bind_int64(stmt, CBM_SZ_3, e->target_id);
     bind_text(stmt, ST_COL_4, safe_str(e->type));
-    bind_text(stmt, ST_COL_5, safe_props(e->properties_json));
+    bind_text(stmt, ST_COL_5, cbm_store_safe_props(e->properties_json));
 
     int rc = sqlite3_step(stmt);
     if (rc == SQLITE_ROW) {
@@ -3199,59 +3194,6 @@ void cbm_store_schema_free(cbm_schema_info_t *out) {
 
 /* ── Architecture helpers ───────────────────────────────────────── */
 
-/* File extension → language name mapping (table-driven) */
-typedef struct {
-    const char *ext;
-    const char *lang;
-} ext_lang_entry_t;
-
-static const ext_lang_entry_t ext_lang_table[] = {
-    {".py", "Python"},     {".go", "Go"},          {".js", "JavaScript"}, {".jsx", "JavaScript"},
-    {".ts", "TypeScript"}, {".tsx", "TypeScript"}, {".rs", "Rust"},       {".java", "Java"},
-    {".cpp", "C++"},       {".cc", "C++"},         {".cxx", "C++"},       {".c", "C"},
-    {".h", "C"},           {".cs", "C#"},          {".php", "PHP"},       {".lua", "Lua"},
-    {".scala", "Scala"},   {".kt", "Kotlin"},      {".rb", "Ruby"},       {".sh", "Bash"},
-    {".bash", "Bash"},     {".zig", "Zig"},        {".ex", "Elixir"},     {".exs", "Elixir"},
-    {".hs", "Haskell"},    {".ml", "OCaml"},       {".mli", "OCaml"},     {".html", "HTML"},
-    {".css", "CSS"},       {".yaml", "YAML"},      {".yml", "YAML"},      {".toml", "TOML"},
-    {".hcl", "HCL"},       {".tf", "HCL"},         {".sql", "SQL"},       {".erl", "Erlang"},
-    {".swift", "Swift"},   {".dart", "Dart"},      {".groovy", "Groovy"}, {".pl", "Perl"},
-    {".r", "R"},           {".scss", "SCSS"},      {".vue", "Vue"},       {".svelte", "Svelte"},
-    {NULL, NULL},
-};
-
-#ifndef CBM_USE_RUST_STORE_LANGUAGE_MAP_ONLY
-static const char *ext_to_lang_c(const char *ext) {
-    if (!ext) {
-        return NULL;
-    }
-    for (const ext_lang_entry_t *e = ext_lang_table; e->ext; e++) {
-        if (strcmp(ext, e->ext) == 0) {
-            return e->lang;
-        }
-    }
-    return NULL;
-}
-#endif
-
-static const char *ext_to_lang(const char *ext) {
-#ifdef CBM_USE_RUST_STORE_LANGUAGE_MAP_ONLY
-    int kind = cbm_rs_store_ext_lang_kind_v1(ext);
-    if (kind >= 0 && (size_t)kind < (sizeof(ext_lang_table) / sizeof(ext_lang_table[0])) - 1U) {
-        return ext_lang_table[kind].lang;
-    }
-    return NULL;
-#else
-#ifdef CBM_USE_RUST_STORE_LANGUAGE_MAP
-    int kind = cbm_rs_store_ext_lang_kind_v1(ext);
-    if (kind >= 0 && (size_t)kind < (sizeof(ext_lang_table) / sizeof(ext_lang_table[0])) - 1U) {
-        return ext_lang_table[kind].lang;
-    }
-#endif
-    return ext_to_lang_c(ext);
-#endif
-}
-
 /* ── Architecture aspect implementations ───────────────────────── */
 
 static int arch_languages(cbm_store_t *s, const char *project, const char *path,
@@ -3284,7 +3226,7 @@ static int arch_languages(cbm_store_t *s, const char *project, const char *path,
     while (sqlite3_step(stmt) == SQLITE_ROW) {
         const char *fp = (const char *)sqlite3_column_text(stmt, 0);
         const char *ext = cbm_store_file_ext(fp);
-        const char *lang = ext_to_lang(ext);
+        const char *lang = cbm_store_ext_to_lang(ext);
         if (!lang) {
             continue;
         }
@@ -3886,16 +3828,6 @@ static int find_or_add_pkg(char **all_pkgs, int *npkgs, int max_pkgs, const char
     return CBM_NOT_FOUND;
 }
 
-/* Check if a package name appears in an array. */
-static bool pkg_in_list(const char *pkg, char **list, int count) {
-    for (int j = 0; j < count; j++) {
-        if (strcmp(pkg, list[j]) == 0) {
-            return true;
-        }
-    }
-    return false;
-}
-
 /* Collect package names from nodes matching a SQL query (must use ?1 = project). */
 static int collect_pkg_names(cbm_store_t *s, const char *sql, const char *project, const char *path,
                              char **pkgs, int max_pkgs) {
@@ -3981,8 +3913,8 @@ static int arch_layers(cbm_store_t *s, const char *project, const char *path,
     out->layers = (npkgs > 0) ? calloc(npkgs, sizeof(cbm_package_layer_t)) : NULL;
     out->layer_count = npkgs;
     for (int i = 0; i < npkgs; i++) {
-        bool has_route = pkg_in_list(all_pkgs[i], route_pkgs, nrpkgs);
-        bool has_entry = pkg_in_list(all_pkgs[i], entry_pkgs, nepkgs);
+        bool has_route = cbm_store_package_list_contains(all_pkgs[i], route_pkgs, nrpkgs);
+        bool has_entry = cbm_store_package_list_contains(all_pkgs[i], entry_pkgs, nepkgs);
         const char *layer;
         const char *reason;
         classify_layer(all_pkgs[i], fan_in[i], fan_out[i], has_route, has_entry, &layer, &reason);
@@ -5113,58 +5045,43 @@ static int arch_clusters(cbm_store_t *s, const char *project, const char *path,
 
 /* ── GetArchitecture dispatch ──────────────────────────────────── */
 
-static bool want_aspect(const char **aspects, int aspect_count, const char *name) {
-    if (!aspects || aspect_count == 0) {
-        return true;
-    }
-    for (int i = 0; i < aspect_count; i++) {
-        if (strcmp(aspects[i], "all") == 0) {
-            return true;
-        }
-        if (strcmp(aspects[i], name) == 0) {
-            return true;
-        }
-    }
-    return false;
-}
-
 int cbm_store_get_architecture(cbm_store_t *s, const char *project, const char *path,
                                const char **aspects, int aspect_count,
                                cbm_architecture_info_t *out) {
     memset(out, 0, sizeof(*out));
     int rc;
 
-    if (want_aspect(aspects, aspect_count, "languages")) {
+    if (cbm_store_arch_wants_aspect(aspects, aspect_count, "languages")) {
         rc = arch_languages(s, project, path, out);
         if (rc != CBM_STORE_OK) {
             return rc;
         }
     }
-    if (want_aspect(aspects, aspect_count, "packages")) {
+    if (cbm_store_arch_wants_aspect(aspects, aspect_count, "packages")) {
         rc = arch_packages(s, project, path, out);
         if (rc != CBM_STORE_OK) {
             return rc;
         }
     }
-    if (want_aspect(aspects, aspect_count, "entry_points")) {
+    if (cbm_store_arch_wants_aspect(aspects, aspect_count, "entry_points")) {
         rc = arch_entry_points(s, project, path, out);
         if (rc != CBM_STORE_OK) {
             return rc;
         }
     }
-    if (want_aspect(aspects, aspect_count, "routes")) {
+    if (cbm_store_arch_wants_aspect(aspects, aspect_count, "routes")) {
         rc = arch_routes(s, project, path, out);
         if (rc != CBM_STORE_OK) {
             return rc;
         }
     }
-    if (want_aspect(aspects, aspect_count, "hotspots")) {
+    if (cbm_store_arch_wants_aspect(aspects, aspect_count, "hotspots")) {
         rc = arch_hotspots(s, project, path, out);
         if (rc != CBM_STORE_OK) {
             return rc;
         }
     }
-    if (want_aspect(aspects, aspect_count, "boundaries")) {
+    if (cbm_store_arch_wants_aspect(aspects, aspect_count, "boundaries")) {
         cbm_cross_pkg_boundary_t *barr = NULL;
         int bcount = 0;
         rc = arch_boundaries(s, project, path, &barr, &bcount);
@@ -5174,19 +5091,19 @@ int cbm_store_get_architecture(cbm_store_t *s, const char *project, const char *
         out->boundaries = barr;
         out->boundary_count = bcount;
     }
-    if (want_aspect(aspects, aspect_count, "layers")) {
+    if (cbm_store_arch_wants_aspect(aspects, aspect_count, "layers")) {
         rc = arch_layers(s, project, path, out);
         if (rc != CBM_STORE_OK) {
             return rc;
         }
     }
-    if (want_aspect(aspects, aspect_count, "file_tree")) {
+    if (cbm_store_arch_wants_aspect(aspects, aspect_count, "file_tree")) {
         rc = arch_file_tree(s, project, path, out);
         if (rc != CBM_STORE_OK) {
             return rc;
         }
     }
-    if (want_aspect(aspects, aspect_count, "clusters")) {
+    if (cbm_store_arch_wants_aspect(aspects, aspect_count, "clusters")) {
         rc = arch_clusters(s, project, path, out);
         if (rc != CBM_STORE_OK) {
             return rc;

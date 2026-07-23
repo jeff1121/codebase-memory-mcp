@@ -61,6 +61,17 @@ enum {
 #include "mcp/sanitize_ascii_in_place.h"
 #include "mcp/sanitize_utf8_lossy.h"
 #include "mcp/architecture_aspect_wanted.h"
+#include "mcp/strip_root_prefix.h"
+#include "mcp/search_pick_tightest.h"
+#include "mcp/search_pick_resolved.h"
+#include "mcp/method_kind.h"
+#include "mcp/parse_file_uri.h"
+#include "mcp/tools_page_bounds.h"
+#include "mcp/tools_cursor_offset.h"
+#include "mcp/content_length_header_matches.h"
+#include "mcp/content_length_header_is_blank.h"
+#include "mcp/ping_result.h"
+#include "mcp/method_not_found_error.h"
 #include "mcp/bm25_file_pattern_like.h"
 #include "mcp/bm25_build_match.h"
 #include "store/store.h"
@@ -158,15 +169,6 @@ static char *yy_doc_to_str(yyjson_mut_doc *doc) {
  *  JSON-RPC PARSING
  * ══════════════════════════════════════════════════════════════════ */
 
-enum {
-    CBM_MCP_METHOD_UNKNOWN = 0,
-    CBM_MCP_METHOD_INITIALIZE = 1,
-    CBM_MCP_METHOD_PING = 2,
-    CBM_MCP_METHOD_TOOLS_LIST = 3,
-    CBM_MCP_METHOD_TOOLS_CALL = 4,
-    CBM_MCP_METHOD_NOTIFICATIONS_CANCELLED = 5,
-};
-
 #if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
 enum {
     CBM_RS_MCP_ID_NONE = 0,
@@ -186,13 +188,6 @@ typedef struct {
     size_t params_len;
 } CbmRsMcpJsonRpcParseOutV1;
 
-typedef struct {
-    int start;
-    int end;
-    int has_next;
-    int next_cursor;
-} CbmRsMcpToolsPageBoundsV1;
-
 extern int cbm_rs_mcp_jsonrpc_parse_v1(const unsigned char *input, int len,
                                        CbmRsMcpJsonRpcParseOutV1 *out, char *jsonrpc_buf,
                                        size_t jsonrpc_bufsize, char *method_buf,
@@ -210,8 +205,6 @@ extern size_t cbm_rs_mcp_tool_input_schema_v1(char *buf, size_t bufsize, int ind
 extern size_t cbm_rs_mcp_tool_output_schema_v1(char *buf, size_t bufsize);
 extern size_t cbm_rs_mcp_tools_list_json_v1(char *buf, size_t bufsize, int offset, int limit,
                                             int include_next_cursor);
-extern int cbm_rs_mcp_tools_page_bounds_v1(int offset, int limit, int include_next_cursor,
-                                           int tool_count, CbmRsMcpToolsPageBoundsV1 *out);
 extern int cbm_rs_mcp_content_length_header_is_blank_v1(const char *line);
 extern int cbm_rs_mcp_content_length_header_matches_v1(const char *line);
 extern long long cbm_rs_mcp_content_length_raw_v1(const char *line);
@@ -230,11 +223,6 @@ extern int cbm_rs_mcp_get_int_arg_v1(const unsigned char *input, int len, const 
 extern int cbm_rs_mcp_get_bool_arg_v1(const unsigned char *input, int len, const char *key);
 extern int cbm_rs_mcp_edge_type_valid_v1(const char *input);
 
-extern size_t cbm_rs_mcp_strip_root_prefix_offset_v1(const char *path, const char *root,
-                                                     size_t root_len);
-extern int cbm_rs_mcp_search_pick_resolved_index_v1(const long *scores, int count,
-                                                    int *ambiguous_out);
-extern int cbm_rs_mcp_search_pick_tightest_index_v1(const int *spans, int count);
 extern size_t cbm_rs_mcp_adr_sections_json_v1(char *buf, size_t bufsize, const char *content);
 extern size_t cbm_rs_mcp_bm25_file_pattern_like_v1(char *buf, size_t bufsize, const char *input);
 extern int cbm_rs_mcp_cancel_request_matches_v1(const char *params_json, int64_t active_id,
@@ -247,8 +235,6 @@ extern size_t cbm_rs_mcp_jsonrpc_format_response_v1(char *buf, size_t bufsize, i
 extern size_t cbm_rs_mcp_text_result_v1(char *buf, size_t bufsize, const char *text, int is_error);
 extern int cbm_rs_mcp_content_length_v1(const char *line, int max_len);
 extern size_t cbm_rs_mcp_content_length_response_v1(char *buf, size_t bufsize, const char *resp);
-extern size_t cbm_rs_mcp_parse_file_uri_v1(char *buf, size_t bufsize, const char *uri);
-extern int cbm_rs_mcp_method_kind_v1(const char *method);
 extern size_t cbm_rs_mcp_method_not_found_error_v1(char *buf, size_t bufsize);
 extern size_t cbm_rs_mcp_parse_error_message_v1(char *buf, size_t bufsize);
 extern size_t cbm_rs_mcp_ping_result_v1(char *buf, size_t bufsize);
@@ -864,13 +850,9 @@ static char *cbm_mcp_tools_list_range(int offset, int limit, bool include_next_c
 
     yyjson_mut_val *tools = yyjson_mut_arr(doc);
 
-#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
     CbmRsMcpToolsPageBoundsV1 bounds = {0};
-    if (cbm_rs_mcp_tools_page_bounds_v1(offset, limit, include_next_cursor ? 1 : 0, TOOL_COUNT,
-                                        &bounds) == 0) {
-        offset = bounds.start;
-        int end = bounds.end;
-        for (int i = offset; i < end; i++) {
+    if (cbm_mcp_tools_page_bounds(offset, limit, include_next_cursor, TOOL_COUNT, &bounds) == 0) {
+        for (int i = bounds.start; i < bounds.end; i++) {
             mcp_add_tool_def(doc, tools, i);
         }
 
@@ -885,37 +867,9 @@ static char *cbm_mcp_tools_list_range(int offset, int limit, bool include_next_c
         yyjson_mut_doc_free(doc);
         return out;
     }
-#endif
 
-    if (offset < 0) {
-        offset = 0;
-    }
-    if (offset > TOOL_COUNT) {
-        offset = TOOL_COUNT;
-    }
-    if (limit < 0 || limit > TOOL_COUNT) {
-        limit = TOOL_COUNT;
-    }
-
-    int end = offset + limit;
-    if (end > TOOL_COUNT) {
-        end = TOOL_COUNT;
-    }
-
-    for (int i = offset; i < end; i++) {
-        mcp_add_tool_def(doc, tools, i);
-    }
-
-    yyjson_mut_obj_add_val(doc, root, "tools", tools);
-    if (include_next_cursor && end < TOOL_COUNT) {
-        char cursor[32];
-        snprintf(cursor, sizeof(cursor), "%d", end);
-        yyjson_mut_obj_add_strcpy(doc, root, "nextCursor", cursor);
-    }
-
-    char *out = yy_doc_to_str(doc);
     yyjson_mut_doc_free(doc);
-    return out;
+    return NULL;
 }
 
 char *cbm_mcp_tools_list(void) {
@@ -944,39 +898,7 @@ const char *cbm_mcp_tool_input_schema(const char *tool_name) {
 }
 
 static int mcp_tools_cursor_offset(const char *params_json) {
-#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
-    return cbm_rs_mcp_tools_cursor_offset_v1(params_json, TOOL_COUNT);
-#else
-    if (!params_json) {
-        return 0;
-    }
-
-    yyjson_doc *doc = yyjson_read(params_json, strlen(params_json), 0);
-    if (!doc) {
-        return 0;
-    }
-
-    int offset = 0;
-    yyjson_val *root = yyjson_doc_get_root(doc);
-    yyjson_val *cursor = root ? yyjson_obj_get(root, "cursor") : NULL;
-    if (cursor) {
-        offset = TOOL_COUNT;
-        if (yyjson_is_str(cursor)) {
-            const char *cursor_str = yyjson_get_str(cursor);
-            if (cursor_str && *cursor_str != '\0') {
-                char *endptr = NULL;
-                errno = 0;
-                long parsed = strtol(cursor_str, &endptr, 10);
-                if (endptr && *endptr == '\0' && errno == 0 && parsed >= 0) {
-                    offset = parsed > TOOL_COUNT ? TOOL_COUNT : (int)parsed;
-                }
-            }
-        }
-    }
-
-    yyjson_doc_free(doc);
-    return offset;
-#endif
+    return cbm_mcp_tools_cursor_offset(params_json, TOOL_COUNT);
 }
 
 static char *cbm_mcp_tools_list_page(const char *params_json) {
@@ -3128,43 +3050,36 @@ static int pick_resolved_node(const cbm_node_t *nodes, int count, bool *ambiguou
     if (count <= 1) {
         return 0;
     }
-#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
     long *scores = malloc((size_t)count * sizeof(*scores));
-    if (scores) {
+    if (!scores) {
+        /* OOM：streaming fallback 與 public picker 相同 argmax + tie 契約。 */
+        int best = 0;
+        long best_score = cbm_mcp_node_resolution_score(nodes[0].label, nodes[0].start_line,
+                                                         nodes[0].end_line);
+        for (int i = 1; i < count; i++) {
+            long s = cbm_mcp_node_resolution_score(nodes[i].label, nodes[i].start_line,
+                                                   nodes[i].end_line);
+            if (s > best_score) {
+                best_score = s;
+                best = i;
+            }
+        }
+        int top_count = 0;
         for (int i = 0; i < count; i++) {
-            scores[i] = cbm_mcp_node_resolution_score(nodes[i].label, nodes[i].start_line,
-                                                       nodes[i].end_line);
+            if (cbm_mcp_node_resolution_score(nodes[i].label, nodes[i].start_line,
+                                              nodes[i].end_line) == best_score) {
+                top_count++;
+            }
         }
-        int ambiguous_i = 0;
-        int best = cbm_rs_mcp_search_pick_resolved_index_v1(scores, count, &ambiguous_i);
-        free(scores);
-        if (best >= 0 && best < count) {
-            *ambiguous = (ambiguous_i != 0);
-            return best;
-        }
+        *ambiguous = (top_count > 1);
+        return best;
     }
-#endif
-    int best = 0;
-    long best_score = cbm_mcp_node_resolution_score(nodes[0].label, nodes[0].start_line,
-                                                     nodes[0].end_line);
-    for (int i = 1; i < count; i++) {
-        long s = cbm_mcp_node_resolution_score(nodes[i].label, nodes[i].start_line,
-                                               nodes[i].end_line);
-        if (s > best_score) {
-            best_score = s;
-            best = i;
-        }
-    }
-    int top_count = 0;
     for (int i = 0; i < count; i++) {
-        if (cbm_mcp_node_resolution_score(nodes[i].label, nodes[i].start_line, nodes[i].end_line) ==
-            best_score) {
-            top_count++;
-        }
+        scores[i] = cbm_mcp_node_resolution_score(nodes[i].label, nodes[i].start_line,
+                                                   nodes[i].end_line);
     }
-    if (top_count > 1) {
-        *ambiguous = true;
-    }
+    int best = cbm_mcp_search_pick_resolved_index(scores, count, ambiguous);
+    free(scores);
     return best;
 }
 
@@ -4413,17 +4328,7 @@ static char *assemble_search_output(search_result_t *sr, int sr_count, grep_matc
  * and return a dynamically-allocated grep_match_t array. */
 /* Strip root path prefix from a file path. */
 static const char *strip_root_prefix(const char *path, const char *root, size_t root_len) {
-#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
-    return path + cbm_rs_mcp_strip_root_prefix_offset_v1(path, root, root_len);
-#endif
-    if (strncmp(path, root, root_len) != 0) {
-        return path;
-    }
-    const char *p = path + root_len;
-    if (*p == '/') {
-        p++;
-    }
-    return p;
+    return path + cbm_mcp_strip_root_prefix_offset(path, root, root_len);
 }
 
 static grep_match_t *collect_grep_matches(FILE *fp, const char *root_path, size_t root_len,
@@ -4484,26 +4389,26 @@ static grep_match_t *collect_grep_matches(FILE *fp, const char *root_path, size_
 }
 
 /* Find the tightest node containing a line in a file. Returns index or -1.
- * span 純計算：search_line_span.c（true-source selectable CU） */
+ * span 純計算：search_line_span.c；index pick：search_pick_tightest.c */
 static int find_tightest_node(cbm_node_t *nodes, int count, int line) {
-#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
+    if (count <= 0 || !nodes) {
+        return CBM_NOT_FOUND;
+    }
     int *spans = malloc((size_t)count * sizeof(*spans));
     if (spans) {
         for (int j = 0; j < count; j++) {
             spans[j] = cbm_mcp_search_line_match_span(nodes[j].start_line, nodes[j].end_line, line);
         }
-        int best = cbm_rs_mcp_search_pick_tightest_index_v1(spans, count);
+        int best = cbm_mcp_search_pick_tightest_index(spans, count);
         free(spans);
-        if (best >= 0 && best < count) {
-            return best;
-        }
+        return best;
     }
-#endif
+    /* OOM：streaming fallback，契約與 public picker 對齊（span >= 0、INT_MAX）。 */
     int best = CBM_NOT_FOUND;
-    int best_span = MAX_LINE_SPAN;
+    int best_span = INT_MAX;
     for (int j = 0; j < count; j++) {
         int span = cbm_mcp_search_line_match_span(nodes[j].start_line, nodes[j].end_line, line);
-        if (span != CBM_NOT_FOUND && span < best_span) {
+        if (span >= 0 && span < best_span) {
             best = j;
             best_span = span;
         }
@@ -5747,13 +5652,8 @@ char *cbm_mcp_server_handle(cbm_mcp_server_t *srv, const char *line) {
 
     /* Notifications (no id) → handle cancellation, then no response */
     if (!req.has_id) {
-        bool is_cancelled = false;
-#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
-        is_cancelled =
-            cbm_rs_mcp_method_kind_v1(req.method) == CBM_MCP_METHOD_NOTIFICATIONS_CANCELLED;
-#else
-        is_cancelled = req.method && strcmp(req.method, "notifications/cancelled") == 0;
-#endif
+        bool is_cancelled =
+            cbm_mcp_method_kind(req.method) == CBM_MCP_METHOD_NOTIFICATIONS_CANCELLED;
         if (is_cancelled) {
             if (srv->active_pipeline &&
                 cbm_mcp_cancel_request_matches(req.params_raw, srv->active_request_id,
@@ -5771,20 +5671,7 @@ char *cbm_mcp_server_handle(cbm_mcp_server_t *srv, const char *line) {
     char *result_json = NULL;
     bool request_logged = false;
 
-    int method_kind = CBM_MCP_METHOD_UNKNOWN;
-#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
-    method_kind = cbm_rs_mcp_method_kind_v1(req.method);
-#else
-    if (strcmp(req.method, "initialize") == 0) {
-        method_kind = CBM_MCP_METHOD_INITIALIZE;
-    } else if (strcmp(req.method, "ping") == 0) {
-        method_kind = CBM_MCP_METHOD_PING;
-    } else if (strcmp(req.method, "tools/list") == 0) {
-        method_kind = CBM_MCP_METHOD_TOOLS_LIST;
-    } else if (strcmp(req.method, "tools/call") == 0) {
-        method_kind = CBM_MCP_METHOD_TOOLS_CALL;
-    }
-#endif
+    int method_kind = cbm_mcp_method_kind(req.method);
 
     if (method_kind == CBM_MCP_METHOD_INITIALIZE) {
         result_json = cbm_mcp_initialize_response(req.params_raw);
@@ -5792,15 +5679,9 @@ char *cbm_mcp_server_handle(cbm_mcp_server_t *srv, const char *line) {
         detect_session(srv);
         maybe_auto_index(srv);
     } else if (method_kind == CBM_MCP_METHOD_PING) {
-#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
-        char ping_result[8];
-        size_t ping_len = cbm_rs_mcp_ping_result_v1(ping_result, sizeof(ping_result));
-        result_json = (ping_len != SIZE_MAX && ping_len < sizeof(ping_result))
-                          ? heap_strdup(ping_result)
-                          : heap_strdup("{}");
-#else
-        result_json = heap_strdup("{}");
-#endif
+        char ping_buf[16];
+        size_t ping_len = cbm_mcp_ping_result(ping_buf, sizeof(ping_buf));
+        result_json = (ping_len < sizeof(ping_buf)) ? heap_strdup(ping_buf) : heap_strdup("{}");
     } else if (method_kind == CBM_MCP_METHOD_TOOLS_LIST) {
         result_json = cbm_mcp_tools_list_page(req.params_raw);
     } else if (method_kind == CBM_MCP_METHOD_TOOLS_CALL) {
@@ -5848,16 +5729,11 @@ char *cbm_mcp_server_handle(cbm_mcp_server_t *srv, const char *line) {
     } else {
         /* Echo the original id (string or numeric, issue #253) on the error. */
         char err_obj[160];
-#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
-        size_t err_len = cbm_rs_mcp_method_not_found_error_v1(err_obj, sizeof(err_obj));
-        if (err_len == SIZE_MAX || err_len >= sizeof(err_obj)) {
+        size_t err_len = cbm_mcp_method_not_found_error(err_obj, sizeof(err_obj));
+        if (err_len >= sizeof(err_obj)) {
             snprintf(err_obj, sizeof(err_obj), "{\"code\":%d,\"message\":\"Method not found\"}",
                      JSONRPC_METHOD_NOT_FOUND);
         }
-#else
-        snprintf(err_obj, sizeof(err_obj), "{\"code\":%d,\"message\":\"Method not found\"}",
-                 JSONRPC_METHOD_NOT_FOUND);
-#endif
         cbm_jsonrpc_response_t err_resp = {
             .id = req.id,
             .id_str = req.id_str,
@@ -5895,19 +5771,9 @@ char *cbm_mcp_server_handle(cbm_mcp_server_t *srv, const char *line) {
 static void consume_content_length_headers(FILE *in, char **line, size_t *cap) {
     /* Skip blank line(s) between header and body */
     while (cbm_getline(line, cap, in) > 0) {
-#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
-        if (cbm_rs_mcp_content_length_header_is_blank_v1(*line)) {
+        if (cbm_mcp_content_length_header_is_blank(*line)) {
             break;
         }
-#else
-        size_t hlen = strlen(*line);
-        while (hlen > 0 && ((*line)[hlen - SKIP_ONE] == '\n' || (*line)[hlen - SKIP_ONE] == '\r')) {
-            (*line)[--hlen] = '\0';
-        }
-        if (hlen == 0) {
-            break;
-        }
-#endif
     }
 }
 
@@ -6120,8 +5986,8 @@ int cbm_mcp_server_run(cbm_mcp_server_t *srv, FILE *in, FILE *out) {
         }
 
         /* Content-Length framing (LSP-style transport) */
+        if (cbm_mcp_content_length_header_matches(line)) {
 #if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
-        if (cbm_rs_mcp_content_length_header_matches_v1(line)) {
             const long long max_content_len =
                 MCP_DEFAULT_LIMIT * (long long)CBM_SZ_1K * (long long)CBM_SZ_1K;
             int content_len = cbm_rs_mcp_content_length_v1(line, (int)max_content_len);
@@ -6133,10 +5999,7 @@ int cbm_mcp_server_run(cbm_mcp_server_t *srv, FILE *in, FILE *out) {
                     skip_content_length_frame(in, &line, &cap, (size_t)raw_content_len);
                 }
             }
-            continue;
-        }
 #else
-        if (strncmp(line, "Content-Length:", SLEN("Content-Length:")) == 0) {
             const long max_content_len = MCP_DEFAULT_LIMIT * CBM_SZ_1K * CBM_SZ_1K;
             long content_len = strtol(line + MCP_CONTENT_PREFIX, NULL, CBM_DECIMAL_BASE);
             if (content_len > 0 && content_len <= max_content_len) {
@@ -6144,9 +6007,9 @@ int cbm_mcp_server_run(cbm_mcp_server_t *srv, FILE *in, FILE *out) {
             } else if (content_len > max_content_len) {
                 skip_content_length_frame(in, &line, &cap, (size_t)content_len);
             }
+#endif
             continue;
         }
-#endif
 
         char *resp = cbm_mcp_server_handle(srv, line);
         if (resp) {
@@ -6160,41 +6023,4 @@ int cbm_mcp_server_run(cbm_mcp_server_t *srv, FILE *in, FILE *out) {
     return 0;
 }
 
-/* ── cbm_parse_file_uri ──────────────────────────────────────── */
-
-bool cbm_parse_file_uri(const char *uri, char *out_path, int out_size) {
-    if (!uri || !out_path || out_size <= 0) {
-        if (out_path && out_size > 0) {
-            out_path[0] = '\0';
-        }
-        return false;
-    }
-
-#if defined(CBM_USE_RUST_MCP_CODEC) || defined(CBM_USE_RUST_MCP_CODEC_ONLY)
-    size_t parsed_len = cbm_rs_mcp_parse_file_uri_v1(out_path, (size_t)out_size, uri);
-    if (parsed_len != SIZE_MAX) {
-        return true;
-    }
-    out_path[0] = '\0';
-    return false;
-#else
-    /* Must start with file:// */
-    if (strncmp(uri, "file://", SLEN("file://")) != 0) {
-        out_path[0] = '\0';
-        return false;
-    }
-
-    const char *path = uri + MCP_URI_PREFIX;
-
-    /* On Windows, file:///C:/path → /C:/path. Strip leading / before drive letter. */
-    if (path[0] == '/' && path[SKIP_ONE] &&
-        ((path[SKIP_ONE] >= 'A' && path[SKIP_ONE] <= 'Z') ||
-         (path[SKIP_ONE] >= 'a' && path[SKIP_ONE] <= 'z')) &&
-        path[PAIR_LEN] == ':') {
-        path++; /* skip the leading / */
-    }
-
-    snprintf(out_path, out_size, "%s", path);
-    return true;
-#endif
-}
+/* cbm_parse_file_uri：實作見 parse_file_uri.c（public bridge）。 */

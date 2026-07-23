@@ -45,7 +45,16 @@ mod tests {
         ] {
             assert!(edge_type_is_recomputed(Some(edge_type)));
         }
-        assert!(!edge_type_is_recomputed(Some(b"CALLS")));
+
+        for edge_type in [
+            b"".as_slice(),
+            b"CALLS".as_slice(),
+            b"similar_to".as_slice(),
+            b"PREFIX_SIMILAR_TO".as_slice(),
+            b"SIMILAR_TO_SUFFIX".as_slice(),
+        ] {
+            assert!(!edge_type_is_recomputed(Some(edge_type)));
+        }
         assert!(!edge_type_is_recomputed(None));
     }
 

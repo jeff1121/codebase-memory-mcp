@@ -81,6 +81,17 @@ pub fn lowercase_into(value: Option<&[u8]>, output_size: usize) -> Vec<u8> {
         .collect()
 }
 
+#[must_use]
+pub fn path_basename_offset(path: Option<&[u8]>) -> usize {
+    path.unwrap_or_default()
+        .split(|byte| *byte == 0)
+        .next()
+        .unwrap_or_default()
+        .iter()
+        .rposition(|byte| *byte == b'/')
+        .map_or(0, |index| index + 1)
+}
+
 fn ascii_lower(value: &[u8]) -> Vec<u8> {
     value.iter().map(u8::to_ascii_lowercase).collect()
 }
@@ -124,5 +135,19 @@ mod tests {
             0.0
         );
         assert_eq!(lowercase_into(Some(b"SerdeCore"), 5), b"serd");
+    }
+
+    #[test]
+    fn finds_path_basename_after_last_ascii_slash() {
+        assert_eq!(path_basename_offset(None), 0);
+        assert_eq!(path_basename_offset(Some(b"")), 0);
+        assert_eq!(path_basename_offset(Some(b"Cargo.toml")), 0);
+        assert_eq!(path_basename_offset(Some(b"config/Cargo.toml")), 7);
+        assert_eq!(path_basename_offset(Some(b"config/")), 7);
+        assert_eq!(path_basename_offset(Some(b"config\\Cargo.toml")), 0);
+        assert_eq!(
+            path_basename_offset(Some(b"config/Cargo.toml\0ignored/path")),
+            7
+        );
     }
 }

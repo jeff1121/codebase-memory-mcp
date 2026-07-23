@@ -12,7 +12,6 @@
  * NUL 結尾可放入 bufsz 時回傳 true；若 bufsz 大於零但容量不足，仍會寫入
  * NUL 結尾的截斷前綴並回傳 false。
  */
-bool cbm_pipeline_artifact_path(char* buf, size_t bufsz, const char* repo_path,
-                                const char* name);
+bool cbm_pipeline_artifact_path(char *buf, size_t bufsz, const char *repo_path, const char *name);
 
 #endif
